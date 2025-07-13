@@ -1,0 +1,23 @@
+# name: test/sql/duck_tails.test
+# description: test duck_tails extension
+# group: [sql]
+
+# Before we load the extension, this will fail
+statement error
+SELECT duck_tails('Sam');
+----
+Catalog Error: Scalar Function with name duck_tails does not exist!
+
+# Require statement will ensure this test is run with this extension loaded
+require duck_tails
+
+# Confirm the extension works
+query I
+SELECT duck_tails('Sam');
+----
+DuckTails Sam 🐥
+
+query I
+SELECT duck_tails_openssl_version('Michael') ILIKE 'DuckTails Michael, my linked OpenSSL version is OpenSSL%';
+----
+true

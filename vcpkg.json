@@ -1,6 +1,7 @@
 {
         "dependencies": [
-                "openssl"
+                "openssl",
+                "libgit2"
         ],
         "vcpkg-configuration": {
                 "overlay-ports": [
