@@ -5,7 +5,8 @@
     "name": "test_db"
   },
   "api": {
-    "version": "v1",
-    "timeout": 30
+    "version": "v2",
+    "timeout": 60,
+    "retries": 3
   }
 }
