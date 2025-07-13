@@ -1,0 +1,6 @@
+date,product,amount,region
+2024-01-01,Widget A,100,North
+2024-01-02,Widget B,150,South
+2024-01-03,Widget A,200,East
+2024-01-04,Widget C,75,West
+2024-01-05,Widget B,125,North
