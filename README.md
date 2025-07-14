@@ -26,20 +26,23 @@ SELECT * FROM read_csv('git://metrics.csv@v1.0.0');
 ```
 
 ### 📊 Git Table Functions
-Query your git repository metadata directly:
+Query your git repository metadata directly with clean, simple syntax:
 
 ```sql
--- View commit history
+-- View commit history (defaults to current directory)
 SELECT commit_hash, author_name, message, author_date 
-FROM git_log('.');
+FROM git_log();
 
 -- List all branches
 SELECT branch_name, commit_hash, is_current 
-FROM git_branches('.');
+FROM git_branches();
 
 -- Show all tags
 SELECT tag_name, commit_hash, tagger_date 
-FROM git_tags('.');
+FROM git_tags();
+
+-- Or specify a different repository path
+SELECT * FROM git_log('/path/to/repo');
 ```
 
 ### 🔄 Version-Aware Analysis
@@ -57,7 +60,7 @@ SELECT
     c.commit_hash,
     c.author_date,
     (SELECT COUNT(*) FROM read_csv('git://metrics.csv@' || c.commit_hash)) as metric_count
-FROM git_log('.') c
+FROM git_log() c
 WHERE c.author_date > '2024-01-01'
 ORDER BY c.author_date;
 ```
@@ -108,21 +111,21 @@ make test
 -- Load the extension
 LOAD 'duck_tails';
 
--- Query git history
-SELECT * FROM git_log('.') LIMIT 5;
+-- Query git history (clean syntax - no arguments needed!)
+SELECT * FROM git_log() LIMIT 5;
 
 -- Access version-controlled data
 SELECT * FROM read_csv('git://test/data/sales.csv@HEAD');
 ```
 
 ### Testing
-Duck Tails includes a comprehensive test suite with **74 test assertions** covering all functionality:
+Duck Tails includes a comprehensive test suite with **82 test assertions** covering all functionality:
 
 ```bash
 # Run all tests
 make test
 
-# Expected output: All tests passed (74 assertions in 3 test cases)
+# Expected output: All tests passed (82 assertions in 4 test cases)
 ```
 
 ## 📋 Examples
@@ -149,7 +152,7 @@ SELECT
     COUNT(*) as commit_count,
     MIN(author_date) as first_commit,
     MAX(author_date) as latest_commit
-FROM git_log('.')
+FROM git_log()
 GROUP BY author_name
 ORDER BY commit_count DESC;
 ```
@@ -182,7 +185,7 @@ SELECT
     g.author_date,
     g.message,
     r.diff_text
-FROM git_log('.') g
+FROM git_log() g
 CROSS JOIN read_git_diff('git://config.json@' || g.commit_hash || '~1', 
                         'git://config.json@' || g.commit_hash) r
 WHERE length(r.diff_text) > 0  -- Only commits that changed config
@@ -207,7 +210,8 @@ Duck Tails implements a custom DuckDB FileSystem that intercepts `git://` URLs a
 - **RAII Design**: Smart pointer usage throughout for memory safety
 - **Error Resilient**: Comprehensive error handling for missing repos/revisions
 - **Mixed File Systems**: Support for local + git://, S3 + git://, and other combinations
-- **Test Coverage**: 74 test assertions ensuring production readiness
+- **Zero-Argument Functions**: Clean syntax defaulting to current directory
+- **Test Coverage**: 82 test assertions ensuring production readiness
 
 ## 🛣️ Roadmap
 
@@ -264,20 +268,21 @@ All new features should include comprehensive tests. Our test suite is designed 
 - **Real File Integration**: Support for local files, git:// files, and mixed scenarios
 - **Memory Management**: Efficient blob loading with seek operations
 - **Error Handling**: Robust error handling for all edge cases
-- **Test Coverage**: 74 comprehensive test assertions across 3 test suites
+- **Test Coverage**: 82 comprehensive test assertions across 4 test suites
 - **Documentation**: Complete with examples and architecture guide
 
 ### 🎯 Innovation Highlights
 - **First DuckDB extension** to integrate version control with analytical queries
 - **Version-aware data analysis** enabling temporal data comparisons
 - **Memory-backed FileSystem** with full seek support for git content
-- **Intelligent diff capabilities** with mixed file system support  
+- **Intelligent diff capabilities** with mixed file system support
+- **Zero-argument functions** for clean, intuitive SQL syntax
 - **Production-grade architecture** following DuckDB best practices
 
 ### 📊 Metrics
-- **3 test suites** with 74 assertions covering all functionality
+- **4 test suites** with 82 assertions covering all functionality
 - **6 core components**: GitFileSystem, GitFileHandle, GitPath, Table Functions, TextDiff, Real File Integration
-- **7 functions implemented**: git_log, git_branches, git_tags, diff_text, read_git_diff, text_diff_lines, text_diff
+- **10 functions implemented**: git_log, git_branches, git_tags (both 0 and 1 arg), diff_text, read_git_diff, text_diff_lines, text_diff
 - **100% libgit2 integration** via vcpkg dependency management
 
 ## 📜 License
