@@ -3,6 +3,7 @@
 #include "duck_tails_extension.hpp"
 #include "git_filesystem.hpp"
 #include "git_functions.hpp"
+#include "text_diff.hpp"
 #include "duckdb.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
@@ -25,6 +26,9 @@ static void LoadInternal(DatabaseInstance &instance) {
 	
 	// Register git table functions
 	RegisterGitFunctions(instance);
+	
+	// Register TextDiff type and functions (Phase 2)
+	RegisterTextDiffType(instance);
 }
 
 void DuckTailsExtension::Load(DuckDB &db) {
