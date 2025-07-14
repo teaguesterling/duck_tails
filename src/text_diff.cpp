@@ -293,6 +293,122 @@ static void TextDiffLinesFunction(ClientContext &context, TableFunctionInput &da
     output.SetCardinality(output_idx);
 }
 
+//===--------------------------------------------------------------------===//
+// read_git_diff table function  
+//===--------------------------------------------------------------------===//
+
+// Bind data to store function arguments
+struct ReadGitDiffBindData : public FunctionData {
+    string path1;
+    string path2;
+    bool include_metadata;
+    
+    ReadGitDiffBindData(string p1, string p2, bool metadata) 
+        : path1(std::move(p1)), path2(std::move(p2)), include_metadata(metadata) {}
+    
+    unique_ptr<FunctionData> Copy() const override {
+        return make_uniq<ReadGitDiffBindData>(path1, path2, include_metadata);
+    }
+    
+    bool Equals(const FunctionData &other) const override {
+        auto &other_data = other.Cast<ReadGitDiffBindData>();
+        return path1 == other_data.path1 && path2 == other_data.path2 && include_metadata == other_data.include_metadata;
+    }
+};
+
+// Global state for execution
+struct ReadGitDiffData : public GlobalTableFunctionState {
+    string diff_text;
+    string path1;
+    string path2;
+    bool include_metadata;
+    bool returned_row = false;
+    
+    ReadGitDiffData(string diff, string p1, string p2, bool metadata) 
+        : diff_text(std::move(diff)), path1(std::move(p1)), path2(std::move(p2)), include_metadata(metadata) {}
+};
+
+static unique_ptr<FunctionData> ReadGitDiffBind(ClientContext &context, TableFunctionBindInput &input,
+                                                vector<LogicalType> &return_types, vector<string> &names) {
+    // Parse arguments from input.inputs
+    string path1 = input.inputs[0].ToString();
+    string path2;
+    
+    if (input.inputs.size() > 1) {
+        // Two-argument version: diff between two paths
+        path2 = input.inputs[1].ToString();
+    } else {
+        // Single-argument version: diff against HEAD
+        path2 = path1 + "@HEAD";  // Default comparison
+    }
+    
+    // Basic return columns
+    return_types = {LogicalType::VARCHAR};
+    names = {"diff_text"};
+    
+    // TODO: Add metadata columns when include_metadata parameter is implemented
+    // For now, also include basic path info
+    return_types.push_back(LogicalType::VARCHAR);
+    return_types.push_back(LogicalType::VARCHAR);
+    names.push_back("path1");
+    names.push_back("path2");
+    
+    // Store arguments in bind data
+    return make_uniq<ReadGitDiffBindData>(path1, path2, true);
+}
+
+static unique_ptr<GlobalTableFunctionState> ReadGitDiffInit(ClientContext &context, TableFunctionInitInput &input) {
+    // Get arguments from bind data
+    auto &bind_data = input.bind_data->Cast<ReadGitDiffBindData>();
+    string path1 = bind_data.path1;
+    string path2 = bind_data.path2;
+    
+    try {
+        // Smart path detection logic
+        string content1, content2;
+        
+        // For now, simple implementation - will enhance with real file reading
+        if (StringUtil::StartsWith(path1, "git://") || StringUtil::StartsWith(path2, "git://")) {
+            // At least one git path - simulate git diff
+            content1 = "Content from: " + path1;
+            content2 = "Content from: " + path2;
+        } else {
+            // Regular files - simulate file reading
+            content1 = "File content from: " + path1;
+            content2 = "File content from: " + path2;
+        }
+        
+        // Create diff using our TextDiff implementation
+        auto diff = TextDiff::CreateDiff(content1, content2);
+        string diff_text = diff.ToString();
+        
+        return make_uniq<ReadGitDiffData>(std::move(diff_text), path1, path2, bind_data.include_metadata);
+        
+    } catch (const std::exception &e) {
+        // Return error in diff_text for now
+        string error_diff = "Error: " + string(e.what());
+        return make_uniq<ReadGitDiffData>(std::move(error_diff), path1, path2, bind_data.include_metadata);
+    }
+}
+
+static void ReadGitDiffFunction(ClientContext &context, TableFunctionInput &data_p, DataChunk &output) {
+    auto &data = data_p.global_state->Cast<ReadGitDiffData>();
+    
+    if (data.returned_row) {
+        // We only return one row
+        output.SetCardinality(0);
+        return;
+    }
+    
+    // Return the diff data
+    output.SetValue(0, 0, Value(data.diff_text));
+    output.SetValue(1, 0, Value(data.path1));
+    output.SetValue(2, 0, Value(data.path2));
+    
+    data.returned_row = true;
+    output.SetCardinality(1);
+}
+
 void RegisterTextDiffType(DatabaseInstance &db) {
     // Register text_diff function
     auto text_diff_func = ScalarFunction("text_diff", 
@@ -318,6 +434,15 @@ void RegisterTextDiffType(DatabaseInstance &db) {
     // Register text_diff_lines table function
     TableFunction lines_func("text_diff_lines", {LogicalType::VARCHAR}, TextDiffLinesFunction, TextDiffLinesBind, TextDiffLinesInit);
     ExtensionUtil::RegisterFunction(db, lines_func);
+    
+    // Register read_git_diff table function (Phase 2 main function)
+    // Single-argument version
+    TableFunction read_git_diff_func_1("read_git_diff", {LogicalType::VARCHAR}, ReadGitDiffFunction, ReadGitDiffBind, ReadGitDiffInit);
+    ExtensionUtil::RegisterFunction(db, read_git_diff_func_1);
+    
+    // Two-argument version
+    TableFunction read_git_diff_func_2("read_git_diff", {LogicalType::VARCHAR, LogicalType::VARCHAR}, ReadGitDiffFunction, ReadGitDiffBind, ReadGitDiffInit);
+    ExtensionUtil::RegisterFunction(db, read_git_diff_func_2);
 }
 
 } // namespace duckdb
