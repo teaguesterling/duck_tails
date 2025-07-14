@@ -25,6 +25,14 @@ public:
     
     void Close() override;
     
+    // FileHandle interface methods for git files
+    int64_t Read(void *buffer, idx_t nr_bytes);
+    void Write(void *buffer, idx_t nr_bytes);
+    int64_t GetFileSize();
+    void Seek(idx_t location);
+    idx_t SeekPosition();
+    void Reset();
+    
     // Public accessors for GitFileSystem to use
     const string& GetContent() const { return *content_; }
     idx_t GetPosition() const { return position_; }
@@ -55,6 +63,17 @@ public:
     int64_t GetFileSize(FileHandle &handle) override;
     
     time_t GetLastModifiedTime(FileHandle &handle) override;
+    
+    // File handle properties required by DuckDB
+    bool CanSeek() override;
+    bool OnDiskFile(FileHandle &handle) override;
+    bool IsPipe(const string &filename, optional_ptr<FileOpener> opener = nullptr) override;
+    
+    // File operations delegation to GitFileHandle
+    int64_t Read(FileHandle &handle, void *buffer, int64_t nr_bytes) override;
+    void Seek(FileHandle &handle, idx_t location) override;
+    idx_t SeekPosition(FileHandle &handle) override;
+    void Reset(FileHandle &handle) override;
     
 private:
     // Git repository management

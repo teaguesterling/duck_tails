@@ -3,6 +3,7 @@
 #include "duckdb/common/exception.hpp"
 #include <regex>
 #include <fnmatch.h>
+#include <cstring>
 
 namespace duckdb {
 
@@ -28,20 +29,10 @@ GitPath GitPath::Parse(const string &git_url) {
         result.revision = "HEAD";
     }
     
-    // Find first slash to separate repo path from file path
-    size_t slash_pos = url.find('/');
-    if (slash_pos != string::npos) {
-        result.repository_path = url.substr(0, slash_pos);
-        result.file_path = url.substr(slash_pos + 1);
-    } else {
-        result.repository_path = url;
-        result.file_path = "";
-    }
-    
-    // If repo path is empty, use current directory
-    if (result.repository_path.empty()) {
-        result.repository_path = ".";
-    }
+    // For now, assume the entire remaining path is a file path relative to current directory
+    // TODO: In future, implement smarter repository detection
+    result.repository_path = ".";
+    result.file_path = url;
     
     return result;
 }
@@ -67,6 +58,40 @@ GitFileHandle::GitFileHandle(FileSystem &file_system, const string &path, shared
 
 void GitFileHandle::Close() {
     // No-op for read-only git files (content is managed by shared_ptr)
+}
+
+int64_t GitFileHandle::Read(void *buffer, idx_t nr_bytes) {
+    if (!content_ || position_ >= content_->size()) {
+        return 0;  // EOF
+    }
+    
+    idx_t bytes_to_read = std::min(nr_bytes, content_->size() - position_);
+    std::memcpy(buffer, content_->data() + position_, bytes_to_read);
+    position_ += bytes_to_read;
+    
+    return static_cast<int64_t>(bytes_to_read);
+}
+
+void GitFileHandle::Write(void *buffer, idx_t nr_bytes) {
+    throw InternalException("GitFileHandle: Write operations not supported");
+}
+
+int64_t GitFileHandle::GetFileSize() {
+    return content_ ? static_cast<int64_t>(content_->size()) : 0;
+}
+
+void GitFileHandle::Seek(idx_t location) {
+    if (content_) {
+        position_ = std::min(location, content_->size());
+    }
+}
+
+idx_t GitFileHandle::SeekPosition() {
+    return position_;
+}
+
+void GitFileHandle::Reset() {
+    position_ = 0;
 }
 
 //===--------------------------------------------------------------------===//
@@ -143,12 +168,48 @@ bool GitFileSystem::FileExists(const string &filename, optional_ptr<FileOpener> 
 }
 
 int64_t GitFileSystem::GetFileSize(FileHandle &handle) {
-    return handle.GetFileSize();
+    auto &git_handle = handle.Cast<GitFileHandle>();
+    return git_handle.GetFileSize();
 }
 
 time_t GitFileSystem::GetLastModifiedTime(FileHandle &handle) {
     // For git files, return current time since git objects are immutable
     return time(nullptr);
+}
+
+bool GitFileSystem::CanSeek() {
+    // Git files are memory-backed, so seeking is supported
+    return true;
+}
+
+bool GitFileSystem::OnDiskFile(FileHandle &handle) {
+    // Git files are loaded into memory, not on-disk files
+    return false;
+}
+
+bool GitFileSystem::IsPipe(const string &filename, optional_ptr<FileOpener> opener) {
+    // Git files are never pipes
+    return false;
+}
+
+int64_t GitFileSystem::Read(FileHandle &handle, void *buffer, int64_t nr_bytes) {
+    auto &git_handle = handle.Cast<GitFileHandle>();
+    return git_handle.Read(buffer, static_cast<idx_t>(nr_bytes));
+}
+
+void GitFileSystem::Seek(FileHandle &handle, idx_t location) {
+    auto &git_handle = handle.Cast<GitFileHandle>();
+    git_handle.Seek(location);
+}
+
+idx_t GitFileSystem::SeekPosition(FileHandle &handle) {
+    auto &git_handle = handle.Cast<GitFileHandle>();
+    return git_handle.SeekPosition();
+}
+
+void GitFileSystem::Reset(FileHandle &handle) {
+    auto &git_handle = handle.Cast<GitFileHandle>();
+    git_handle.Reset();
 }
 
 
@@ -261,8 +322,8 @@ vector<OpenFileInfo> GitFileSystem::ListFiles(git_repository *repo, const string
 //===--------------------------------------------------------------------===//
 
 void RegisterGitFileSystem(DatabaseInstance &db) {
-    auto git_fs = make_uniq<GitFileSystem>();
-    db.GetFileSystem().RegisterSubSystem(std::move(git_fs));
+    auto &fs = FileSystem::GetFileSystem(db);
+    fs.RegisterSubSystem(make_uniq<GitFileSystem>());
 }
 
 } // namespace duckdb

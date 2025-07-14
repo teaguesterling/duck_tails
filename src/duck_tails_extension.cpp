@@ -18,20 +18,6 @@
 
 namespace duckdb {
 
-inline void DuckTailsScalarFun(DataChunk &args, ExpressionState &state, Vector &result) {
-	auto &name_vector = args.data[0];
-	UnaryExecutor::Execute<string_t, string_t>(name_vector, result, args.size(), [&](string_t name) {
-		return StringVector::AddString(result, "DuckTails " + name.GetString() + " 🐥");
-	});
-}
-
-inline void DuckTailsOpenSSLVersionScalarFun(DataChunk &args, ExpressionState &state, Vector &result) {
-	auto &name_vector = args.data[0];
-	UnaryExecutor::Execute<string_t, string_t>(name_vector, result, args.size(), [&](string_t name) {
-		return StringVector::AddString(result, "DuckTails " + name.GetString() + ", my linked OpenSSL version is " +
-		                                           OPENSSL_VERSION_TEXT);
-	});
-}
 
 static void LoadInternal(DatabaseInstance &instance) {
 	// Register git filesystem
@@ -39,15 +25,6 @@ static void LoadInternal(DatabaseInstance &instance) {
 	
 	// Register git table functions
 	RegisterGitFunctions(instance);
-	
-	// Register a scalar function
-	auto duck_tails_scalar_function = ScalarFunction("duck_tails", {LogicalType::VARCHAR}, LogicalType::VARCHAR, DuckTailsScalarFun);
-	ExtensionUtil::RegisterFunction(instance, duck_tails_scalar_function);
-
-	// Register another scalar function
-	auto duck_tails_openssl_version_scalar_function = ScalarFunction("duck_tails_openssl_version", {LogicalType::VARCHAR},
-	                                                            LogicalType::VARCHAR, DuckTailsOpenSSLVersionScalarFun);
-	ExtensionUtil::RegisterFunction(instance, duck_tails_openssl_version_scalar_function);
 }
 
 void DuckTailsExtension::Load(DuckDB &db) {
