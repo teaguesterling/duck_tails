@@ -69,8 +69,14 @@ ORDER BY c.author_date;
 Smart text diffing capabilities with real file integration:
 
 ```sql
--- Pure text diffing
+-- Pure text diffing (string result)
 SELECT diff_text('Hello World', 'Hello DuckDB');
+
+-- Text diffing (original function name)
+SELECT text_diff('Hello World', 'Hello DuckDB');
+
+-- Single file diff against HEAD (convenient shorthand)
+SELECT * FROM read_git_diff('file.txt');
 
 -- File-based diffing with local files
 SELECT * FROM read_git_diff('file1.txt', 'file2.txt');
@@ -83,6 +89,9 @@ SELECT * FROM read_git_diff('local.txt', 'git://file@HEAD');
 
 -- Structured diff analysis
 SELECT * FROM text_diff_lines(diff_text('old content', 'new content'));
+
+-- Diff statistics and metrics
+SELECT * FROM text_diff_stats('old content', 'new content');
 ```
 
 ## 🚀 Quick Start
@@ -95,7 +104,7 @@ SELECT * FROM text_diff_lines(diff_text('old content', 'new content'));
 ### Building
 ```bash
 # Clone and build
-git clone <repository-url>
+git clone https://github.com/teaguesterling/duck_tails.git
 cd duck_tails
 make
 
@@ -192,6 +201,34 @@ WHERE length(r.diff_text) > 0  -- Only commits that changed config
 LIMIT 10;
 ```
 
+### Advanced Use Cases
+```sql
+-- Find commits that introduced large changes
+SELECT 
+    g.commit_hash, 
+    g.message,
+    length(r.diff_text) as change_size
+FROM git_log() g
+CROSS JOIN read_git_diff('git://src/@' || g.commit_hash || '~1', 
+                        'git://src/@' || g.commit_hash) r
+WHERE length(r.diff_text) > 1000
+ORDER BY change_size DESC
+LIMIT 5;
+
+-- Compare data schema evolution
+SELECT 
+    'v1.0' as version,
+    column_name,
+    column_type  
+FROM describe(SELECT * FROM read_csv('git://data.csv@v1.0') LIMIT 0)
+UNION ALL
+SELECT 
+    'v2.0' as version,
+    column_name,
+    column_type
+FROM describe(SELECT * FROM read_csv('git://data.csv@v2.0') LIMIT 0);
+```
+
 ## 🏗️ Architecture
 
 Duck Tails implements a custom DuckDB FileSystem that intercepts `git://` URLs and translates them into libgit2 operations:
@@ -242,7 +279,7 @@ Duck Tails is built with modern C++, DuckDB's extension framework, and libgit2.
 ### Development Setup
 ```bash
 # Clone with DuckDB submodule
-git clone --recursive <repository-url>
+git clone --recursive https://github.com/teaguesterling/duck_tails.git
 cd duck_tails
 
 # Build and test
@@ -282,7 +319,7 @@ All new features should include comprehensive tests. Our test suite is designed 
 ### 📊 Metrics
 - **4 test suites** with 82 assertions covering all functionality
 - **6 core components**: GitFileSystem, GitFileHandle, GitPath, Table Functions, TextDiff, Real File Integration
-- **10 functions implemented**: git_log, git_branches, git_tags (both 0 and 1 arg), diff_text, read_git_diff, text_diff_lines, text_diff
+- **11 functions implemented**: git_log, git_branches, git_tags (both 0 and 1 arg), diff_text, read_git_diff (1 and 2 arg), text_diff_lines, text_diff, text_diff_stats
 - **100% libgit2 integration** via vcpkg dependency management
 
 ## 📜 License
