@@ -1,0 +1,59 @@
+# name: test/sql/duck_tails_zero_args.test
+# description: Test zero-argument versions of git functions
+# group: [duck_tails]
+
+require duck_tails
+
+# Test git_log() with no arguments defaults to current directory
+query I
+SELECT COUNT(*) > 0 as has_commits FROM git_log();
+----
+true
+
+# Test git_branches() with no arguments defaults to current directory
+query I
+SELECT COUNT(*) > 0 as has_branches FROM git_branches();
+----
+true
+
+# Test git_tags() with no arguments defaults to current directory  
+query I
+SELECT COUNT(*) >= 0 as has_tags_or_empty FROM git_tags();
+----
+true
+
+# Test that zero-argument and single-argument versions return same results
+query I
+SELECT 
+    (SELECT COUNT(*) FROM git_log()) = (SELECT COUNT(*) FROM git_log('.')) as same_log_count;
+----
+true
+
+query I  
+SELECT 
+    (SELECT COUNT(*) FROM git_branches()) = (SELECT COUNT(*) FROM git_branches('.')) as same_branch_count;
+----
+true
+
+query I
+SELECT 
+    (SELECT COUNT(*) FROM git_tags()) = (SELECT COUNT(*) FROM git_tags('.')) as same_tag_count;
+----
+true
+
+# Test zero-argument functions work in complex queries
+query I
+SELECT COUNT(*) > 0 as has_recent_commits 
+FROM git_log() 
+WHERE author_date > '2020-01-01';
+----
+true
+
+# Test zero-argument functions work with joins
+query I
+SELECT COUNT(*) > 0 as has_data
+FROM git_log() l
+JOIN git_branches() b ON l.commit_hash = b.commit_hash
+LIMIT 1;
+----
+true

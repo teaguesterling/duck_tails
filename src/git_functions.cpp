@@ -376,21 +376,39 @@ void GitTagsFunction(ClientContext &context, TableFunctionInput &data_p, DataChu
 //===--------------------------------------------------------------------===//
 
 void RegisterGitLogFunction(DatabaseInstance &db) {
+    // Single-argument version (existing)
     TableFunction git_log_func("git_log", {LogicalType::VARCHAR}, GitLogFunction, GitLogBind, GitLogInitGlobal);
     git_log_func.named_parameters["repo_path"] = LogicalType::VARCHAR;
     ExtensionUtil::RegisterFunction(db, git_log_func);
+    
+    // Zero-argument version (defaults to current directory)
+    TableFunction git_log_func_zero("git_log", {}, GitLogFunction, GitLogBind, GitLogInitGlobal);
+    git_log_func_zero.named_parameters["repo_path"] = LogicalType::VARCHAR;
+    ExtensionUtil::RegisterFunction(db, git_log_func_zero);
 }
 
 void RegisterGitBranchesFunction(DatabaseInstance &db) {
+    // Single-argument version (existing)
     TableFunction git_branches_func("git_branches", {LogicalType::VARCHAR}, GitBranchesFunction, GitBranchesBind, GitBranchesInitGlobal);
     git_branches_func.named_parameters["repo_path"] = LogicalType::VARCHAR;
     ExtensionUtil::RegisterFunction(db, git_branches_func);
+    
+    // Zero-argument version (defaults to current directory)
+    TableFunction git_branches_func_zero("git_branches", {}, GitBranchesFunction, GitBranchesBind, GitBranchesInitGlobal);
+    git_branches_func_zero.named_parameters["repo_path"] = LogicalType::VARCHAR;
+    ExtensionUtil::RegisterFunction(db, git_branches_func_zero);
 }
 
 void RegisterGitTagsFunction(DatabaseInstance &db) {
+    // Single-argument version (existing)
     TableFunction git_tags_func("git_tags", {LogicalType::VARCHAR}, GitTagsFunction, GitTagsBind, GitTagsInitGlobal);
     git_tags_func.named_parameters["repo_path"] = LogicalType::VARCHAR;
     ExtensionUtil::RegisterFunction(db, git_tags_func);
+    
+    // Zero-argument version (defaults to current directory)
+    TableFunction git_tags_func_zero("git_tags", {}, GitTagsFunction, GitTagsBind, GitTagsInitGlobal);
+    git_tags_func_zero.named_parameters["repo_path"] = LogicalType::VARCHAR;
+    ExtensionUtil::RegisterFunction(db, git_tags_func_zero);
 }
 
 void RegisterGitFunctions(DatabaseInstance &db) {
