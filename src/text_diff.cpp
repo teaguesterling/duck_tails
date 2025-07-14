@@ -3,6 +3,9 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/value.hpp"
 #include "duckdb/main/extension_util.hpp"
+#include "duckdb/main/client_context.hpp"
+#include "duckdb/common/file_system.hpp"
+#include "duckdb/common/file_opener.hpp"
 #include <algorithm>
 #include <sstream>
 
@@ -364,18 +367,33 @@ static unique_ptr<GlobalTableFunctionState> ReadGitDiffInit(ClientContext &conte
     string path2 = bind_data.path2;
     
     try {
-        // Smart path detection logic
+        // Read actual file content using DuckDB filesystem
+        auto &fs = FileSystem::GetFileSystem(context);
+        
         string content1, content2;
         
-        // For now, simple implementation - will enhance with real file reading
-        if (StringUtil::StartsWith(path1, "git://") || StringUtil::StartsWith(path2, "git://")) {
-            // At least one git path - simulate git diff
-            content1 = "Content from: " + path1;
-            content2 = "Content from: " + path2;
-        } else {
-            // Regular files - simulate file reading
-            content1 = "File content from: " + path1;
-            content2 = "File content from: " + path2;
+        // Read first file
+        try {
+            auto file_handle1 = fs.OpenFile(path1, FileFlags::FILE_FLAGS_READ);
+            auto file_size1 = file_handle1->GetFileSize();
+            auto buffer1 = make_unsafe_uniq_array<data_t>(file_size1);
+            file_handle1->Read(buffer1.get(), file_size1);
+            file_handle1->Close();
+            content1 = string(reinterpret_cast<const char*>(buffer1.get()), file_size1);
+        } catch (const std::exception &e) {
+            throw IOException("Failed to read file '%s': %s", path1, e.what());
+        }
+        
+        // Read second file
+        try {
+            auto file_handle2 = fs.OpenFile(path2, FileFlags::FILE_FLAGS_READ);
+            auto file_size2 = file_handle2->GetFileSize();
+            auto buffer2 = make_unsafe_uniq_array<data_t>(file_size2);
+            file_handle2->Read(buffer2.get(), file_size2);
+            file_handle2->Close();
+            content2 = string(reinterpret_cast<const char*>(buffer2.get()), file_size2);
+        } catch (const std::exception &e) {
+            throw IOException("Failed to read file '%s': %s", path2, e.what());
         }
         
         // Create diff using our TextDiff implementation
