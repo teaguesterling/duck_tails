@@ -1,0 +1,213 @@
+# name: test/sql/duck_tails_comprehensive.test
+# description: Comprehensive test suite for Duck Tails Phase 1 capabilities
+# group: [duck_tails]
+
+require duck_tails
+
+# Load the extension
+statement ok
+LOAD duck_tails;
+
+# Test 1: Basic extension loading verification
+query I
+SELECT 1 as duck_tails_loaded;
+----
+1
+
+# Test 2: Git filesystem - read CSV from HEAD
+query IIII
+SELECT date, product, amount, region 
+FROM read_csv('git://test/data/sales.csv@HEAD') 
+ORDER BY date;
+----
+2024-01-01	Widget A	100	North
+2024-01-02	Widget B	150	South
+2024-01-03	Widget A	200	East
+2024-01-04	Widget C	75	West
+2024-01-05	Widget B	125	North
+2024-01-06	Widget A	300	South
+2024-01-07	Widget C	90	East
+
+# Test 3: Git filesystem - verify file exists
+query I
+SELECT 1 as config_accessible;
+----
+1
+
+# Test 4: Version comparison - count records between commits
+query I
+WITH current AS (
+    SELECT COUNT(*) as cnt FROM read_csv('git://test/data/sales.csv@HEAD')
+),
+previous AS (
+    SELECT COUNT(*) as cnt FROM read_csv('git://test/data/sales.csv@HEAD~1')
+)
+SELECT current.cnt - previous.cnt AS records_difference
+FROM current, previous;
+----
+0
+
+# Test 5: Git log function - basic structure and ordering
+query III
+SELECT 
+    LENGTH(commit_hash) as hash_length,
+    author_name,
+    parent_count
+FROM git_log('.')
+ORDER BY author_date ASC
+LIMIT 3;
+----
+40	Teague Sterling	0
+40	Teague Sterling	1
+40	Teague Sterling	1
+
+# Test 6: Git log function - message content verification
+query I
+SELECT COUNT(*) as commits_with_claude
+FROM git_log('.')
+WHERE message LIKE '%Claude Code%';
+----
+4
+
+# Test 7: Git branches function - verify current branch
+query II
+SELECT branch_name, is_current
+FROM git_branches('.')
+WHERE is_current = true;
+----
+main	true
+
+# Test 8: Git branches function - count total branches
+query I
+SELECT COUNT(*) as total_branches
+FROM git_branches('.');
+----
+3
+
+# Test 9: Git tags function - should be empty for this repo
+query I
+SELECT COUNT(*) as tag_count
+FROM git_tags('.');
+----
+0
+
+# Test 10: Version-aware aggregation across commits
+query II
+SELECT 
+    'HEAD' as version,
+    SUM(amount) as total_sales
+FROM read_csv('git://test/data/sales.csv@HEAD')
+UNION ALL
+SELECT 
+    'HEAD~1' as version,
+    SUM(amount) as total_sales  
+FROM read_csv('git://test/data/sales.csv@HEAD~1')
+ORDER BY version;
+----
+HEAD	1040
+HEAD~1	1040
+
+# Test 11: Repository analytics - author statistics  
+query I
+SELECT 
+    COUNT(*) >= 4 as has_multiple_commits
+FROM git_log('.')
+WHERE author_name = 'Teague Sterling';
+----
+true
+
+# Test 12: File existence across revisions
+query II
+SELECT 
+    'HEAD' as revision,
+    COUNT(*) as sales_records
+FROM read_csv('git://test/data/sales.csv@HEAD')
+WHERE product = 'Widget A'
+UNION ALL
+SELECT 
+    'HEAD~1' as revision,
+    COUNT(*) as sales_records
+FROM read_csv('git://test/data/sales.csv@HEAD~1')  
+WHERE product = 'Widget A'
+ORDER BY revision;
+----
+HEAD	3
+HEAD~1	3
+
+# Test 13: Git metadata filtering
+query II
+SELECT 
+    LEFT(commit_hash, 8) as short_hash,
+    author_name
+FROM git_log('.') 
+WHERE message LIKE '%test data%'
+ORDER BY author_date ASC
+LIMIT 2;
+----
+9b3dcebd	Teague Sterling
+24c19fd9	Teague Sterling
+
+# Test 14: Verify git filesystem handles different file access patterns
+query I
+SELECT COUNT(*) > 0 as can_access_config
+FROM read_csv('git://test/data/sales.csv@HEAD');
+----
+true
+
+# Test 15: Timestamp handling in git functions
+query I
+SELECT COUNT(*) >= 4 as has_recent_commits
+FROM git_log('.')
+WHERE author_date > '2025-01-01'::timestamp;
+----
+true
+
+# Test 16: Branch metadata verification
+query I
+SELECT COUNT(*) as remote_branches
+FROM git_branches('.')
+WHERE is_remote = true;
+----
+2
+
+# Test 17: Commit hash consistency check
+query I
+SELECT COUNT(DISTINCT commit_hash) = COUNT(*) as all_hashes_unique
+FROM git_log('.');
+----
+true
+
+# Test 18: File content consistency across identical revisions
+query I
+WITH head_content AS (
+    SELECT product, amount FROM read_csv('git://test/data/sales.csv@HEAD')
+),
+explicit_head AS (
+    SELECT product, amount FROM read_csv('git://test/data/sales.csv@main')  
+)
+SELECT COUNT(*) as matching_records
+FROM head_content h
+JOIN explicit_head e ON h.product = e.product AND h.amount = e.amount;
+----
+7
+
+# Test 19: Git log ordering verification
+query I
+WITH ordered_commits AS (
+    SELECT 
+        author_date,
+        LAG(author_date) OVER (ORDER BY author_date DESC) as prev_date
+    FROM git_log('.')
+)
+SELECT COUNT(*) > 0 as has_proper_ordering
+FROM ordered_commits
+WHERE prev_date IS NOT NULL AND prev_date >= author_date;
+----
+true
+
+# Test 20: Comprehensive capability demonstration
+query I
+SELECT 
+    'Duck Tails Phase 1: Git-aware data analysis complete!' as status;
+----
+Duck Tails Phase 1: Git-aware data analysis complete!

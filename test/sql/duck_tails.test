@@ -1,23 +1,30 @@
 # name: test/sql/duck_tails.test
-# description: test duck_tails extension
-# group: [sql]
+# description: test duck_tails extension git functionality
+# group: [duck_tails]
 
-# Before we load the extension, this will fail
+# Before we load the extension, git functions will fail
 statement error
-SELECT duck_tails('Sam');
+SELECT * FROM git_log('.');
 ----
-Catalog Error: Scalar Function with name duck_tails does not exist!
+Catalog Error: Table Function with name git_log does not exist!
 
 # Require statement will ensure this test is run with this extension loaded
 require duck_tails
 
-# Confirm the extension works
+# Test git_log function works
 query I
-SELECT duck_tails('Sam');
+SELECT COUNT(*) > 0 as has_commits FROM git_log('.');
 ----
-DuckTails Sam 🐥
+true
 
+# Test git_branches function works  
 query I
-SELECT duck_tails_openssl_version('Michael') ILIKE 'DuckTails Michael, my linked OpenSSL version is OpenSSL%';
+SELECT COUNT(*) > 0 as has_branches FROM git_branches('.');
+----
+true
+
+# Test git filesystem works
+query I
+SELECT COUNT(*) > 0 as has_data FROM read_csv('git://test/data/sales.csv@HEAD');
 ----
 true
