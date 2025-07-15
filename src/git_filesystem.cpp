@@ -65,7 +65,7 @@ int64_t GitFileHandle::Read(void *buffer, idx_t nr_bytes) {
         return 0;  // EOF
     }
     
-    idx_t bytes_to_read = std::min(nr_bytes, content_->size() - position_);
+    idx_t bytes_to_read = std::min(nr_bytes, static_cast<idx_t>(content_->size()) - position_);
     std::memcpy(buffer, content_->data() + position_, bytes_to_read);
     position_ += bytes_to_read;
     
@@ -82,7 +82,7 @@ int64_t GitFileHandle::GetFileSize() {
 
 void GitFileHandle::Seek(idx_t location) {
     if (content_) {
-        position_ = std::min(location, content_->size());
+        position_ = std::min(location, static_cast<idx_t>(content_->size()));
     }
 }
 
