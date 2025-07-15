@@ -6,6 +6,3 @@
 	path = extension-ci-tools
 	url = https://github.com/duckdb/extension-ci-tools
 	branch = main
-[submodule "test/fixtures/test_repo"]
-	path = test/fixtures/test_repo
-	url = ./test/fixtures/test_repo

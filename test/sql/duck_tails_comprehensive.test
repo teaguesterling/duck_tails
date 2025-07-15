@@ -53,7 +53,7 @@ SELECT
     LENGTH(commit_hash) as hash_length,
     author_name,
     parent_count
-FROM git_log('test/fixtures/test_repo')
+FROM git_log('duckdb')
 ORDER BY author_date ASC
 LIMIT 3;
 ----
@@ -63,7 +63,7 @@ LIMIT 3;
 # Test 6: Git log function - message content verification
 query I
 SELECT COUNT(*) >= 1 as has_initial_commit
-FROM git_log('test/fixtures/test_repo')
+FROM git_log('duckdb')
 WHERE message LIKE '%Initial%';
 ----
 true
@@ -71,7 +71,7 @@ true
 # Test 7: Git branches function - verify current branch
 query II
 SELECT branch_name, is_current
-FROM git_branches('test/fixtures/test_repo')
+FROM git_branches('duckdb')
 WHERE is_current = true;
 ----
 main	true
@@ -79,14 +79,14 @@ main	true
 # Test 8: Git branches function - count total branches
 query I
 SELECT COUNT(*) as total_branches
-FROM git_branches('test/fixtures/test_repo');
+FROM git_branches('duckdb');
 ----
 2
 
 # Test 9: Git tags function - check if we can count tags
 query I
 SELECT COUNT(*) >= 0 as has_tags_or_empty
-FROM git_tags('test/fixtures/test_repo');
+FROM git_tags('duckdb');
 ----
 true
 
@@ -110,7 +110,7 @@ HEAD~1	1040
 query I
 SELECT 
     COUNT(*) >= 2 as has_multiple_commits
-FROM git_log('test/fixtures/test_repo')
+FROM git_log('duckdb')
 WHERE author_name = 'Test User';
 ----
 true
@@ -136,7 +136,7 @@ HEAD~1	3
 # Test 13: Git metadata filtering
 query I
 SELECT COUNT(*) >= 1 as has_feature_commits
-FROM git_log('test/fixtures/test_repo') 
+FROM git_log('duckdb') 
 WHERE message LIKE '%feature%';
 ----
 true
@@ -151,7 +151,7 @@ true
 # Test 15: Timestamp handling in git functions
 query I
 SELECT COUNT(*) >= 2 as has_recent_commits
-FROM git_log('test/fixtures/test_repo')
+FROM git_log('duckdb')
 WHERE author_date > '2020-01-01'::timestamp;
 ----
 true
@@ -159,7 +159,7 @@ true
 # Test 16: Branch metadata verification
 query I
 SELECT COUNT(*) as remote_branches
-FROM git_branches('test/fixtures/test_repo')
+FROM git_branches('duckdb')
 WHERE is_remote = true;
 ----
 0
@@ -167,7 +167,7 @@ WHERE is_remote = true;
 # Test 17: Commit hash consistency check
 query I
 SELECT COUNT(DISTINCT commit_hash) = COUNT(*) as all_hashes_unique
-FROM git_log('test/fixtures/test_repo');
+FROM git_log('duckdb');
 ----
 true
 
@@ -191,7 +191,7 @@ WITH ordered_commits AS (
     SELECT 
         author_date,
         LAG(author_date) OVER (ORDER BY author_date DESC) as prev_date
-    FROM git_log('test/fixtures/test_repo')
+    FROM git_log('duckdb')
 )
 SELECT COUNT(*) > 0 as has_proper_ordering
 FROM ordered_commits
