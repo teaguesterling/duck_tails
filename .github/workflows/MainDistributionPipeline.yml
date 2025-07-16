@@ -20,7 +20,7 @@ jobs:
       duckdb_version: main
       ci_tools_version: main
       extension_name: duck_tails
-      exclude_archs: 'wasm_mvp;wasm_eh;wasm_threads'
+      exclude_archs: 'wasm_mvp;wasm_eh;wasm_threads;linux_arm64'
 
   duckdb-stable-build:
     name: Build extension binaries
@@ -29,7 +29,7 @@ jobs:
       duckdb_version: v1.3.2
       ci_tools_version: v1.3.2
       extension_name: duck_tails
-      exclude_archs: 'wasm_mvp;wasm_eh;wasm_threads'
+      exclude_archs: 'wasm_mvp;wasm_eh;wasm_threads;linux_arm64'
 
   code-quality-check:
     name: Code Quality Check
