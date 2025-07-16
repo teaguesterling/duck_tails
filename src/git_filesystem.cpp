@@ -2,7 +2,6 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/exception.hpp"
 #include <regex>
-#include <fnmatch.h>
 #include <cstring>
 
 namespace duckdb {
