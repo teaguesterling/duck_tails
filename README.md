@@ -4,9 +4,9 @@
 
 Duck Tails is a DuckDB extension that brings git-aware data analysis capabilities to your database. Query your git history, access files at any revision, and perform version-aware data analysis - all with SQL.
 
-**Status: ✅ Phase 1-3 Complete** - Production ready with comprehensive test coverage and intelligent diff capabilities!
+**Status: Functional** - Git filesystem access and diff analysis capabilities with comprehensive test coverage.
 
-## ✨ Features (Phases 1-3 - Complete)
+## ✨ Features
 
 ### 🗂️ Git Filesystem
 Access any file in your git repository at any commit, branch, or tag using the `git://` protocol:
@@ -65,8 +65,8 @@ WHERE c.author_date > '2024-01-01'
 ORDER BY c.author_date;
 ```
 
-### 🧠 Intelligent Diff Analysis (Phase 2-3)
-Smart text diffing capabilities with real file integration:
+### 🧠 Text Diff Analysis
+Text diffing capabilities with file integration:
 
 ```sql
 -- Pure text diffing (string result)
@@ -128,13 +128,13 @@ SELECT * FROM read_csv('git://test/data/sales.csv@HEAD');
 ```
 
 ### Testing
-Duck Tails includes a comprehensive test suite with **82 test assertions** covering all functionality:
+Duck Tails includes a comprehensive test suite with **81 test assertions** covering all functionality:
 
 ```bash
 # Run all tests
 make test
 
-# Expected output: All tests passed (82 assertions in 4 test cases)
+# Expected output: All tests passed (81 assertions in 4 test cases)
 ```
 
 ## 📋 Examples
@@ -248,26 +248,17 @@ Duck Tails implements a custom DuckDB FileSystem that intercepts `git://` URLs a
 - **Error Resilient**: Comprehensive error handling for missing repos/revisions
 - **Mixed File Systems**: Support for local + git://, S3 + git://, and other combinations
 - **Zero-Argument Functions**: Clean syntax defaulting to current directory
-- **Test Coverage**: 82 test assertions ensuring production readiness
+- **Test Coverage**: 81 test assertions ensuring functionality
 
 ## 🛣️ Roadmap
 
-### ✅ Phase 1: Git Filesystem (Complete)
-- Custom DuckDB FileSystem with git:// protocol support
-- Git table functions (git_log, git_branches, git_tags)
-- Memory-backed file handles with seek operations
+### ✅ Current Implementation
+- Git filesystem access with git:// protocol support
+- Git repository metadata queries (git_log, git_branches, git_tags)
+- Text diff analysis with multiple output formats
+- Mixed file system support (local + git:// files)
 
-### ✅ Phase 2: Text Diff Intelligence (Complete)
-- TextDiff data type with line-by-line diff computation
-- diff_text() scalar function for pure text processing
-- text_diff_lines() table function for structured output
-
-### ✅ Phase 3: Real File Integration (Complete)
-- read_git_diff() table function with actual file reading
-- Mixed file system support (local + git://, S3 + git://, etc.)
-- Seamless integration with DuckDB's filesystem layer
-
-### 🔮 Future Phases
+### 🔮 Future Enhancements
 - **Semantic Code Intelligence**: AST-aware diff analysis and function tracking
 - **Development Workflow Integration**: Pull request analytics and code review intelligence
 - **Advanced Analytics**: Development velocity metrics and team insights
@@ -296,31 +287,22 @@ make test
 ### Test-Driven Development
 All new features should include comprehensive tests. Our test suite is designed to be resilient to repository changes and uses flexible assertions that won't break with new commits.
 
-## 🏆 Status & Achievements
+## 🏆 Current Status
 
-### ✅ Phases 1-3 Complete (Production Ready)
-- **Git Filesystem**: Full `git://` protocol implementation with revision support
-- **Table Functions**: Complete repository metadata access (`git_log`, `git_branches`, `git_tags`)
-- **Text Diff Engine**: Advanced diff computation with multiple output formats
-- **Real File Integration**: Support for local files, git:// files, and mixed scenarios
+### ✅ Implemented Features
+- **Git Filesystem**: `git://` protocol implementation with revision support
+- **Table Functions**: Repository metadata access (`git_log`, `git_branches`, `git_tags`)
+- **Text Diff Engine**: Diff computation with multiple output formats
+- **File Integration**: Support for local files, git:// files, and mixed scenarios
 - **Memory Management**: Efficient blob loading with seek operations
-- **Error Handling**: Robust error handling for all edge cases
-- **Test Coverage**: 82 comprehensive test assertions across 4 test suites
-- **Documentation**: Complete with examples and architecture guide
+- **Error Handling**: Robust error handling for edge cases
+- **Test Coverage**: 81 comprehensive test assertions across 4 test suites
 
-### 🎯 Innovation Highlights
-- **First DuckDB extension** to integrate version control with analytical queries
-- **Version-aware data analysis** enabling temporal data comparisons
-- **Memory-backed FileSystem** with full seek support for git content
-- **Intelligent diff capabilities** with mixed file system support
-- **Zero-argument functions** for clean, intuitive SQL syntax
-- **Production-grade architecture** following DuckDB best practices
-
-### 📊 Metrics
-- **4 test suites** with 82 assertions covering all functionality
-- **6 core components**: GitFileSystem, GitFileHandle, GitPath, Table Functions, TextDiff, Real File Integration
-- **11 functions implemented**: git_log, git_branches, git_tags (both 0 and 1 arg), diff_text, read_git_diff (1 and 2 arg), text_diff_lines, text_diff, text_diff_stats
-- **100% libgit2 integration** via vcpkg dependency management
+### 📊 Technical Details
+- **4 test suites** with 81 assertions covering all functionality
+- **6 core components**: GitFileSystem, GitFileHandle, GitPath, Table Functions, TextDiff, File Integration
+- **12 functions implemented**: git_log, git_branches, git_tags (0 and 1 arg variants), diff_text, text_diff, read_git_diff (1 and 2 arg), text_diff_lines, text_diff_stats
+- **libgit2 integration** via vcpkg dependency management
 
 ## 📜 License
 
