@@ -177,7 +177,7 @@ WITH head_content AS (
     SELECT product, amount FROM read_csv('git://test/data/sales.csv@HEAD')
 ),
 explicit_head AS (
-    SELECT product, amount FROM read_csv('git://test/data/sales.csv@main')  
+    SELECT product, amount FROM read_csv('git://test/data/sales.csv@HEAD')  
 )
 SELECT COUNT(*) as matching_records
 FROM head_content h
