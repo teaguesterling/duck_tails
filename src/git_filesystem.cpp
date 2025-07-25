@@ -3,6 +3,10 @@
 #include "duckdb/common/exception.hpp"
 #include <regex>
 #include <cstring>
+#include <sstream>
+#include <unordered_map>
+#include <fstream>
+#include <iostream>
 
 namespace duckdb {
 
@@ -130,6 +134,29 @@ unique_ptr<FileHandle> GitFileSystem::OpenFile(const string &path, FileOpenFlags
         auto commit_obj = ResolveRevision(repo, git_path.revision);
         auto content = GetBlobContent(repo, git_path.file_path, commit_obj);
         
+        // Check if this is an LFS pointer file
+        if (IsLFSPointer(content)) {
+            auto lfs_info = ParseLFSPointer(content);
+            
+            // For now, try to resolve from local LFS cache
+            string lfs_object_path = BuildLFSObjectPath(repo, lfs_info.oid);
+            
+            // Check if the LFS object exists locally
+            std::ifstream lfs_file(lfs_object_path, std::ios::binary);
+            if (lfs_file.good()) {
+                // Read the actual LFS object content
+                std::ostringstream buffer;
+                buffer << lfs_file.rdbuf();
+                auto lfs_content = buffer.str();
+                
+                auto content_ptr = make_shared_ptr<string>(std::move(lfs_content));
+                return make_uniq<GitFileHandle>(*this, path, content_ptr, flags);
+            } else {
+                throw IOException("LFS object not found locally: %s. Run 'git lfs pull' to download LFS objects.", lfs_info.oid);
+            }
+        }
+        
+        // Regular git file - use existing flow
         auto content_ptr = make_shared_ptr<string>(std::move(content));
         return make_uniq<GitFileHandle>(*this, path, content_ptr, flags);
         
@@ -314,6 +341,102 @@ vector<OpenFileInfo> GitFileSystem::ListFiles(git_repository *repo, const string
     }
     
     return results;
+}
+
+//===--------------------------------------------------------------------===//
+// LFS Support Implementation
+//===--------------------------------------------------------------------===//
+
+bool GitFileSystem::IsLFSPointer(const string &content) {
+    // LFS pointer files are small text files with specific format
+    if (content.size() > 1024) {
+        return false;  // LFS pointers are typically < 200 bytes
+    }
+    
+    // Check for LFS signature
+    return content.find("version https://git-lfs.github.com/spec/v1") == 0 &&
+           content.find("oid sha256:") != string::npos &&
+           content.find("size ") != string::npos;
+}
+
+LFSInfo GitFileSystem::ParseLFSPointer(const string &pointer_content) {
+    LFSInfo lfs_info;
+    
+    // Parse line by line
+    std::istringstream stream(pointer_content);
+    string line;
+    
+    while (std::getline(stream, line)) {
+        if (StringUtil::StartsWith(line, "version ")) {
+            lfs_info.version = line.substr(8);  // Skip "version "
+        } else if (StringUtil::StartsWith(line, "oid sha256:")) {
+            lfs_info.oid = line.substr(11);  // Skip "oid sha256:"
+        } else if (StringUtil::StartsWith(line, "size ")) {
+            try {
+                lfs_info.size = std::stoll(line.substr(5));  // Skip "size "
+            } catch (const std::exception &e) {
+                throw IOException("Invalid LFS pointer: invalid size value");
+            }
+        }
+    }
+    
+    // Validate required fields  
+    if (lfs_info.oid.empty() || lfs_info.size <= 0) {
+        throw IOException("Invalid LFS pointer: missing required fields");
+    }
+    
+    return lfs_info;
+}
+
+string GitFileSystem::BuildLFSObjectPath(git_repository *repo, const string &oid) {
+    if (oid.length() < 4) {
+        throw IOException("Invalid LFS OID: too short");
+    }
+    
+    const char* repo_path = git_repository_path(repo);
+    if (!repo_path) {
+        throw IOException("Could not get repository path");
+    }
+    
+    // Build path: .git/lfs/objects/ab/cd/abcd1234...
+    string lfs_path = string(repo_path) + "lfs/objects/" + 
+                      oid.substr(0, 2) + "/" + 
+                      oid.substr(2, 2) + "/" + 
+                      oid;
+    
+    return lfs_path;
+}
+
+LFSConfig GitFileSystem::ReadLFSConfig(git_repository *repo) {
+    LFSConfig config;
+    
+    // Try to read .lfsconfig file in repository root
+    const char* workdir = git_repository_workdir(repo);
+    if (workdir) {
+        string config_path = string(workdir) + ".lfsconfig";
+        
+        // For now, implement basic config reading
+        // TODO: Implement proper git config parsing
+        
+        // Default: construct LFS URL from git remote
+        git_remote* remote = nullptr;
+        int error = git_remote_lookup(&remote, repo, "origin");
+        if (error == 0) {
+            const char* url = git_remote_url(remote);
+            if (url) {
+                string git_url(url);
+                // Convert git URL to LFS URL: append .git/info/lfs
+                if (StringUtil::EndsWith(git_url, ".git")) {
+                    config.lfs_url = git_url + "/info/lfs";
+                } else {
+                    config.lfs_url = git_url + ".git/info/lfs";
+                }
+            }
+            git_remote_free(remote);
+        }
+    }
+    
+    return config;
 }
 
 //===--------------------------------------------------------------------===//
