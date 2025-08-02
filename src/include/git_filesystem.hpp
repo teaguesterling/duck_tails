@@ -2,10 +2,12 @@
 
 #include "duckdb.hpp"
 #include "duckdb/common/file_system.hpp"
+#include "duckdb/common/local_file_system.hpp"
 #include "duckdb/common/exception.hpp"
 #include <git2.h>
 #include <memory>
 #include <string>
+#include <fstream>
 
 namespace duckdb {
 
@@ -88,6 +90,7 @@ public:
     idx_t SeekPosition();
     void Reset();
     
+    
     // Public accessors for GitFileSystem to use
     const string& GetContent() const { return *content_; }
     idx_t GetPosition() const { return position_; }
@@ -105,7 +108,7 @@ private:
 class GitLFSFileHandle : public FileHandle {
 public:
     GitLFSFileHandle(FileSystem &file_system, const string &path, LFSInfo lfs_info, 
-                     FileOpenFlags flags, optional_ptr<FileOpener> opener);
+                     FileOpenFlags flags, optional_ptr<FileOpener> opener, git_repository *repo);
     ~GitLFSFileHandle() override = default;
     
     void Close() override;
@@ -125,10 +128,13 @@ private:
     void EnsureRemoteHandleOpened();
     string ResolveLFSDownloadURL();
     LFSConfig ReadLFSConfig();
+    string BuildLFSObjectPath(const string &oid);
     
     LFSInfo lfs_info_;
     unique_ptr<FileHandle> remote_handle_;
+    unique_ptr<LocalFileSystem> local_fs_;
     optional_ptr<FileOpener> opener_;
+    git_repository *repo_;
     bool remote_handle_opened_ = false;
     string download_url_;
 };
