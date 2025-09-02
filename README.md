@@ -9,40 +9,54 @@ Duck Tails is a DuckDB extension that brings git-aware data analysis capabilitie
 ## ✨ Features
 
 ### 🗂️ Git Filesystem
-Access any file in your git repository at any commit, branch, or tag using the `git://` protocol:
+Access any file in your git repository at any commit, branch, or tag using the `git://` protocol with flexible repository path support:
 
 ```sql
--- Read a CSV file from the current HEAD
+-- Read a CSV file from the current repository
 SELECT * FROM read_csv('git://data/sales.csv@HEAD');
+
+-- Access files from sibling repositories
+SELECT * FROM read_csv('git://../other-repo/config.json@HEAD');
+
+-- Work with absolute repository paths
+SELECT * FROM read_csv('git:///path/to/project/data.csv@HEAD');
 
 -- Compare data between commits
 SELECT * FROM read_csv('git://data/sales.csv@HEAD~1');
 
--- Access files from a specific branch
+-- Access files from specific branches and tags
 SELECT * FROM read_csv('git://config.json@feature-branch');
-
--- Load data from a tagged release
 SELECT * FROM read_csv('git://metrics.csv@v1.0.0');
 ```
 
 ### 📊 Git Table Functions
-Query your git repository metadata directly with clean, simple syntax:
+Query your git repository metadata directly with flexible repository path support:
 
 ```sql
 -- View commit history (defaults to current directory)
-SELECT commit_hash, author_name, message, author_date 
+SELECT repo_path, commit_hash, author_name, message, author_date 
 FROM git_log();
 
--- List all branches
-SELECT branch_name, commit_hash, is_current 
+-- List all branches with repository context
+SELECT repo_path, branch_name, commit_hash, is_current 
 FROM git_branches();
 
 -- Show all tags
-SELECT tag_name, commit_hash, tagger_date 
+SELECT repo_path, tag_name, commit_hash, tagger_date 
 FROM git_tags();
 
--- Or specify a different repository path
-SELECT * FROM git_log('/path/to/repo');
+-- Query different repositories
+SELECT * FROM git_log('../other-project');
+SELECT * FROM git_log('/absolute/path/to/repo');
+
+-- Multi-repository analysis
+SELECT repo_path, COUNT(*) as commit_count 
+FROM (
+    SELECT * FROM git_log('.')
+    UNION ALL 
+    SELECT * FROM git_log('../other-repo')
+) 
+GROUP BY repo_path;
 ```
 
 ### 🔄 Version-Aware Analysis
@@ -128,13 +142,13 @@ SELECT * FROM read_csv('git://test/data/sales.csv@HEAD');
 ```
 
 ### Testing
-Duck Tails includes a comprehensive test suite with **81 test assertions** covering all functionality:
+Duck Tails includes a comprehensive test suite with **176 test assertions across 10 test cases** covering all functionality:
 
 ```bash
 # Run all tests
 make test
 
-# Expected output: All tests passed (81 assertions in 4 test cases)
+# Expected output: All tests passed (176 assertions in 10 test cases)
 ```
 
 ## 📋 Examples
@@ -157,13 +171,26 @@ FROM read_csv('git://sales.csv@v2.0');
 ```sql
 -- Most active contributors
 SELECT 
+    repo_path,
     author_name,
     COUNT(*) as commit_count,
     MIN(author_date) as first_commit,
     MAX(author_date) as latest_commit
 FROM git_log()
-GROUP BY author_name
+GROUP BY repo_path, author_name
 ORDER BY commit_count DESC;
+
+-- Cross-repository activity comparison
+SELECT 
+    repo_path,
+    COUNT(*) as total_commits,
+    COUNT(DISTINCT author_name) as contributor_count
+FROM (
+    SELECT * FROM git_log('.')
+    UNION ALL
+    SELECT * FROM git_log('../other-project')
+) 
+GROUP BY repo_path;
 ```
 
 ### Configuration Drift Detection
@@ -242,19 +269,24 @@ Duck Tails implements a custom DuckDB FileSystem that intercepts `git://` URLs a
 - **vcpkg Integration**: Robust dependency management for cross-platform libgit2 builds
 
 ### Key Technical Features
+- **Flexible Repository Paths**: Support for relative (`../other-repo`), absolute (`/path/to/repo`), and current directory access
+- **Smart Repository Discovery**: Automatic git repository detection using libgit2 with proper error handling
+- **Repository Context**: All git functions include `repo_path` column showing which repository each result comes from
 - **Memory Efficient**: Files loaded on-demand into memory for fast access
 - **Seek Support**: Full random access within git blob content
 - **RAII Design**: Smart pointer usage throughout for memory safety
-- **Error Resilient**: Comprehensive error handling for missing repos/revisions
+- **Error Resilient**: Clear error messages ("No git repository found") with comprehensive edge case handling
 - **Mixed File Systems**: Support for local + git://, S3 + git://, and other combinations
 - **Zero-Argument Functions**: Clean syntax defaulting to current directory
-- **Test Coverage**: 81 test assertions ensuring functionality
+- **Comprehensive Test Coverage**: Full test suite ensuring functionality
 
 ## 🛣️ Roadmap
 
 ### ✅ Current Implementation
 - Git filesystem access with git:// protocol support
-- Git repository metadata queries (git_log, git_branches, git_tags)
+- **Flexible repository path support** - relative, absolute, and current directory paths
+- **Smart repository discovery** - automatic git repository detection with proper error handling
+- Git repository metadata queries (git_log, git_branches, git_tags) with repository context
 - Text diff analysis with multiple output formats
 - Mixed file system support (local + git:// files)
 
@@ -291,17 +323,19 @@ All new features should include comprehensive tests. Our test suite is designed 
 
 ### ✅ Implemented Features
 - **Git Filesystem**: `git://` protocol implementation with revision support
-- **Table Functions**: Repository metadata access (`git_log`, `git_branches`, `git_tags`)
+- **Repository Path Support**: Flexible relative (`../repo`), absolute (`/path/to/repo`), and current directory access
+- **Smart Repository Discovery**: Automatic git repository detection using libgit2 with clear error messages
+- **Table Functions**: Repository metadata access (`git_log`, `git_branches`, `git_tags`) with repository context
 - **Text Diff Engine**: Diff computation with multiple output formats
 - **File Integration**: Support for local files, git:// files, and mixed scenarios
 - **Memory Management**: Efficient blob loading with seek operations
-- **Error Handling**: Robust error handling for edge cases
-- **Test Coverage**: 81 comprehensive test assertions across 4 test suites
+- **Error Handling**: Comprehensive edge case handling with user-friendly error messages
+- **Comprehensive Test Coverage**: Full test suite with extensive assertions
 
 ### 📊 Technical Details
-- **4 test suites** with 81 assertions covering all functionality
 - **6 core components**: GitFileSystem, GitFileHandle, GitPath, Table Functions, TextDiff, File Integration
-- **12 functions implemented**: git_log, git_branches, git_tags (0 and 1 arg variants), diff_text, text_diff, read_git_diff (1 and 2 arg), text_diff_lines, text_diff_stats
+- **8 functions implemented**: git_log, git_branches, git_tags (0 and 1 arg variants), diff_text, text_diff, read_git_diff (1 and 2 arg variants), text_diff_lines, text_diff_stats
+- **Repository path discovery**: Automatic git repository detection with relative/absolute path support
 - **libgit2 integration** via vcpkg dependency management
 
 ## 📜 License

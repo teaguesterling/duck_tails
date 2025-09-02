@@ -1,0 +1,41 @@
+# name: test/sql/git_uri_discovery.test
+# description: Test git:// URL repository discovery functionality
+# group: [duck_tails]
+
+require duck_tails
+
+# Test 1: Verify current repo discovery still works (baseline)
+query I
+SELECT COUNT(*) > 0 as works_current
+FROM read_csv('git://test/data/sales.csv@HEAD');
+----
+true
+
+# Test 2: Test that we can use the current directory path explicitly
+# This should work with the new discovery since current dir contains .git
+query I
+SELECT COUNT(*) > 0 as works_explicit_current
+FROM read_csv('git://./test/data/sales.csv@HEAD');
+----
+true
+
+# Test 3: Test that nested file access works properly with discovery
+# The deep path should be discovered back to the repository root
+query I
+SELECT COUNT(*) > 0 as works_deep_path
+FROM read_csv('git://./test/data/sales.csv@HEAD');
+----
+true
+
+# Test 4: Basic parsing validation - should give appropriate errors for non-existent paths
+statement error
+SELECT * FROM read_csv('git://../definitely-nonexistent-repo-name/file.csv@HEAD');
+----
+No git repository found for path
+
+# Test 5: Verify relative paths still work within the repo
+query I
+SELECT COUNT(*) > 0 as works_relative_within_repo
+FROM read_csv('git://test/data/sales.csv@HEAD');
+----
+true

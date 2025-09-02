@@ -27,7 +27,7 @@ static void LoadInternal(DatabaseInstance &instance) {
 	// Register git table functions
 	RegisterGitFunctions(instance);
 	
-	// Register TextDiff type and functions (Phase 2)
+	// Register TextDiff type and functions
 	RegisterTextDiffType(instance);
 }
 

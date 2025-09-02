@@ -1,0 +1,36 @@
+# name: test/sql/git_uri_relative_paths.test
+# description: Test git:// URL relative repository path parsing
+# group: [duck_tails]
+
+require duck_tails
+
+# Test 1: Verify current behavior still works (baseline)
+query I
+SELECT COUNT(*) > 0 as works_current
+FROM read_csv('git://test/data/sales.csv@HEAD');
+----
+true
+
+# Test 2: Test error handling for non-existent relative repo  
+statement error
+SELECT * FROM read_csv('git://../nonexistent-repo/file.csv@HEAD');
+----
+No git repository found for path
+
+# Test 3: Test error handling for non-existent file in relative repo path format  
+statement error
+SELECT * FROM read_csv('git://../some-repo/nonexistent-file.csv@HEAD');
+----
+No git repository found for path
+
+# Test 4: Test ./relative path format error handling for missing files
+statement error
+SELECT * FROM read_csv('git://./other-repo/file.csv@HEAD');
+----
+No files found that match the pattern
+
+# Test 5: Basic parsing validation - should not crash on complex relative paths  
+statement error
+SELECT * FROM read_csv('git://../../deep/path/repo/file.csv@HEAD');
+----
+No git repository found for path

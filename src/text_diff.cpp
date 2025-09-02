@@ -99,7 +99,7 @@ bool TextDiff::operator==(const TextDiff &other) const {
     return true;
 }
 
-// Serialization removed for Phase 2 simplicity - will use string representation
+// Using string representation for simplicity
 
 vector<string> TextDiff::SplitLines(const string &text) {
     vector<string> lines;
@@ -126,7 +126,7 @@ vector<string> TextDiff::SplitLines(const string &text) {
 vector<TextDiff::DiffLine> TextDiff::ComputeDiff(const vector<string> &old_lines, const vector<string> &new_lines) {
     vector<DiffLine> result;
     
-    // Simple diff algorithm - Myers algorithm would be better but this is sufficient for Phase 2
+    // Simple diff algorithm - Myers algorithm would be better but this is sufficient
     size_t old_idx = 0, new_idx = 0;
     
     while (old_idx < old_lines.size() || new_idx < new_lines.size()) {
@@ -435,7 +435,7 @@ void RegisterTextDiffType(DatabaseInstance &db) {
         TextDiffFunction);
     ExtensionUtil::RegisterFunction(db, text_diff_func);
     
-    // Register diff_text function (Phase 2 main function)
+    // Register diff_text function
     auto diff_text_func = ScalarFunction("diff_text", 
         {LogicalType::VARCHAR, LogicalType::VARCHAR}, 
         LogicalType::VARCHAR, 
@@ -453,7 +453,7 @@ void RegisterTextDiffType(DatabaseInstance &db) {
     TableFunction lines_func("text_diff_lines", {LogicalType::VARCHAR}, TextDiffLinesFunction, TextDiffLinesBind, TextDiffLinesInit);
     ExtensionUtil::RegisterFunction(db, lines_func);
     
-    // Register read_git_diff table function (Phase 2 main function)
+    // Register read_git_diff table function
     // Single-argument version
     TableFunction read_git_diff_func_1("read_git_diff", {LogicalType::VARCHAR}, ReadGitDiffFunction, ReadGitDiffBind, ReadGitDiffInit);
     ExtensionUtil::RegisterFunction(db, read_git_diff_func_1);

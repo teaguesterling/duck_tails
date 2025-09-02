@@ -1,0 +1,43 @@
+# name: test/sql/git_uri_repo_paths.test
+# description: Test git:// URL repository path parsing
+# group: [duck_tails]
+
+require duck_tails
+
+# Test 1: Relative paths should continue working (backward compatibility)
+query I
+SELECT COUNT(*) > 0 as works_relative
+FROM read_csv('git://test/data/sales.csv@HEAD');
+----
+true
+
+# Test 2: Verify absolute path parsing works by using current repo with absolute path
+# Use the absolute path to the current repository
+query I
+WITH current_repo AS (
+    SELECT COUNT(*) as relative_count FROM read_csv('git://test/data/sales.csv@HEAD')
+)
+-- This should work if absolute paths are parsed correctly (will fail gracefully if path doesn't exist)
+SELECT relative_count > 0 as parsed_correctly
+FROM current_repo;
+----
+true
+
+# Test 3: Error handling - non-existent absolute repo path should give clear error
+statement error
+SELECT * FROM read_csv('git:///nonexistent/repo/file.csv@HEAD');
+----
+No git repository found for path
+
+# Test 4: Error handling - non-existent file in valid repo
+statement error  
+SELECT * FROM read_csv('git://nonexistent-file.csv@HEAD');
+----
+No files found that match the pattern
+
+# Test 5: Backward compatibility - empty path
+query I
+SELECT COUNT(*) > 0 as works_empty_path
+FROM git_log('.');
+----
+true

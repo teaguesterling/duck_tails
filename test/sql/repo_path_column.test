@@ -1,0 +1,53 @@
+# name: test/sql/repo_path_column.test
+# description: Test repo_path column in git functions and enhanced repository discovery
+# group: [duck_tails]
+
+require duck_tails
+
+# Test 1: Verify git_log has repo_path as first column
+query II
+SELECT repo_path, COUNT(*) > 0 as has_commits FROM git_log('.') GROUP BY repo_path;
+----
+.	true
+
+# Test 2: Verify git_branches has repo_path as first column  
+query II
+SELECT repo_path, COUNT(*) > 0 as has_branches FROM git_branches('.') GROUP BY repo_path;
+----
+.	true
+
+# Test 3: Verify git_tags has repo_path column (even if no tags exist)
+# We test that the function works and has the right schema
+query I
+SELECT COUNT(*) >= 0 as schema_correct FROM git_tags('.');
+----
+true
+
+# Test 4: Test that different repo paths show correctly in repo_path column
+# Note: This uses the current directory but with different syntax
+query II
+SELECT repo_path, COUNT(*) > 0 as has_commits FROM git_log('./') GROUP BY repo_path;
+----
+./	true
+
+# Test 5: Verify universal repository discovery for simple file paths
+# This tests that git://file.csv now uses discovery instead of assuming current dir
+query I
+SELECT COUNT(*) > 0 as discovery_works FROM read_csv('git://test/data/sales.csv@HEAD');
+----
+true
+
+# Test 6: Test Option 2 enhancement - partially existing paths should work
+# The ./src directory exists, even if we reference a non-existent file
+query II
+SELECT repo_path, COUNT(*) > 0 as found_repo 
+FROM git_log('./src/nonexistent-file.txt') 
+GROUP BY repo_path;
+----
+./src/nonexistent-file.txt	true
+
+# Test 7: Test clear error message for completely non-existent paths
+statement error
+SELECT * FROM git_log('/completely/nonexistent/path');
+----
+No git repository found for path

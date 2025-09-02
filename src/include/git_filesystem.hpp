@@ -82,6 +82,7 @@ private:
     string GetBlobContent(git_repository *repo, const string &file_path, git_object *commit_obj);
     vector<OpenFileInfo> ListFiles(git_repository *repo, const string &pattern, git_object *commit_obj);
     
+    
     // Cache for opened repositories
     std::unordered_map<string, git_repository*> repo_cache_;
 };
