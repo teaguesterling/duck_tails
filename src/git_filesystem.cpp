@@ -17,25 +17,42 @@ namespace duckdb {
 GitPath GitPath::Parse(const string &git_url) {
     GitPath result;
     
+    printf("[DEBUG] GitPath::Parse input: '%s'\n", git_url.c_str());
+    fflush(stdout);
+    
     // Remove git:// prefix
     string url = git_url;
     if (StringUtil::StartsWith(url, "git://")) {
         url = url.substr(6);
     }
+    printf("[DEBUG] After removing git:// prefix: '%s'\n", url.c_str());
+    fflush(stdout);
     
     // Find @ symbol to separate path from revision
     size_t at_pos = url.find_last_of('@');
+    printf("[DEBUG] Found @ at position: %zu (npos=%zu)\n", at_pos, string::npos);
+    fflush(stdout);
+    
     if (at_pos != string::npos) {
         result.revision = url.substr(at_pos + 1);
         url = url.substr(0, at_pos);
+        printf("[DEBUG] Extracted revision: '%s', remaining url: '%s'\n", 
+               result.revision.c_str(), url.c_str());
+        fflush(stdout);
     } else {
         result.revision = "HEAD";
+        printf("[DEBUG] No @ found, defaulting to HEAD\n");
+        fflush(stdout);
     }
     
     // For now, assume the entire remaining path is a file path relative to current directory
     // TODO: In future, implement smarter repository detection
     result.repository_path = ".";
     result.file_path = url;
+    
+    printf("[DEBUG] Final GitPath: repo='%s', file='%s', revision='%s'\n", 
+           result.repository_path.c_str(), result.file_path.c_str(), result.revision.c_str());
+    fflush(stdout);
     
     return result;
 }
@@ -128,15 +145,26 @@ unique_ptr<FileHandle> GitFileSystem::OpenFile(const string &path, FileOpenFlags
     }
     
     auto git_path = GitPath::Parse(path);
+    printf("[DEBUG] OpenFile called with path: '%s'\n", path.c_str());
+    printf("[DEBUG] GitPath parsed: repo=%s, file=%s, revision=%s\n", 
+           git_path.repository_path.c_str(), git_path.file_path.c_str(), git_path.revision.c_str());
+    fflush(stdout);
     
     try {
         auto repo = OpenRepository(git_path.repository_path);
+        printf("[DEBUG] About to resolve revision: '%s'\n", git_path.revision.c_str());
+        fflush(stdout);
         auto commit_obj = ResolveRevision(repo, git_path.revision);
+        printf("[DEBUG] Commit resolved for revision: %s\n", git_path.revision.c_str());
+        fflush(stdout);
         auto content = GetBlobContent(repo, git_path.file_path, commit_obj);
         
         // Check if this is an LFS pointer file
         if (IsLFSPointer(content)) {
             auto lfs_info = ParseLFSPointer(content);
+            printf("[DEBUG] LFS file detected: path=%s, oid=%s, size=%ld\n", 
+                   path.c_str(), lfs_info.oid.c_str(), lfs_info.size);
+            fflush(stdout);
             
             // Use GitLFSFileHandle for streaming support (Phase 2)
             return make_uniq<GitLFSFileHandle>(*this, path, std::move(lfs_info), flags, opener, repo);
@@ -165,6 +193,8 @@ vector<OpenFileInfo> GitFileSystem::Glob(const string &pattern, FileOpener *open
 }
 
 bool GitFileSystem::FileExists(const string &filename, optional_ptr<FileOpener> opener) {
+    printf("[DEBUG] FileExists called with filename: '%s'\n", filename.c_str());
+    fflush(stdout);
     try {
         auto git_path = GitPath::Parse(filename);
         auto repo = OpenRepository(git_path.repository_path);
@@ -411,15 +441,22 @@ void GitLFSFileHandle::EnsureRemoteHandleOpened() {
     
     // First try local LFS cache
     string local_path = BuildLFSObjectPath(lfs_info_.oid);
+    printf("[DEBUG] EnsureRemoteHandleOpened: oid=%s, local_path=%s\n", 
+           lfs_info_.oid.c_str(), local_path.c_str());
+    fflush(stdout);
     
     // Use simple C++ file check instead of filesystem abstraction
     std::ifstream test_file(local_path);
     if (test_file.good()) {
         test_file.close();
+        printf("[DEBUG] Local LFS file found, opening: %s\n", local_path.c_str());
+        fflush(stdout);
         // File exists locally, use LocalFileSystem to open it  
         local_fs_ = make_uniq<LocalFileSystem>();
         remote_handle_ = local_fs_->OpenFile(local_path, flags, opener_);
     } else {
+        printf("[DEBUG] Local LFS file NOT found: %s\n", local_path.c_str());
+        fflush(stdout);
         // Try to get remote download URL and open via DuckDB filesystem
         download_url_ = ResolveLFSDownloadURL();
         remote_handle_ = file_system.OpenFile(download_url_, flags, opener_);
