@@ -9,7 +9,6 @@
 #include <vector>
 #include <unordered_map>
 #include <fstream>
-#include <iostream>
 
 namespace duckdb {
 
@@ -30,8 +29,7 @@ static string NormalizePath(const string &path);
 
 GitPath GitPath::Parse(const string &git_url) {
     GitPath result;
-    fflush(stdout);
-    
+
     // Remove git:// prefix
     string url = git_url;
     if (StringUtil::StartsWith(url, "git://")) {
@@ -591,8 +589,10 @@ static string FindGitRepository(const string &path) {
     if (current_path == "/" && IsGitRepository("/")) {
         return "/";
     }
-    
+
     throw IOException("No git repository found for path: %s", path);
+}
+
 //===--------------------------------------------------------------------===//
 // GitLFSFileHandle Implementation
 //===--------------------------------------------------------------------===//
