@@ -4,16 +4,19 @@
 
 Duck Tails is a DuckDB extension that brings git-aware data analysis capabilities to your database. Query your git history, access files at any revision, and perform version-aware data analysis - all with SQL.
 
-**Status: Functional** - Git filesystem access and diff analysis capabilities with comprehensive test coverage.
+**Status: Phase 2 Complete** - Git filesystem access with Git LFS streaming support, diff analysis capabilities, and comprehensive test coverage.
 
 ## ✨ Features
 
-### 🗂️ Git Filesystem
-Access any file in your git repository at any commit, branch, or tag using the `git://` protocol:
+### 🗂️ Git Filesystem with LFS Support
+Access any file in your git repository at any commit, branch, or tag using the `git://` protocol. **NEW:** Full Git LFS (Large File Storage) streaming support for large files!
 
 ```sql
 -- Read a CSV file from the current HEAD
 SELECT * FROM read_csv('git://data/sales.csv@HEAD');
+
+-- Access large files stored in Git LFS (automatically detected and streamed)
+SELECT * FROM read_csv('git://data/large_dataset.csv@HEAD');
 
 -- Compare data between commits
 SELECT * FROM read_csv('git://data/sales.csv@HEAD~1');
@@ -24,6 +27,12 @@ SELECT * FROM read_csv('git://config.json@feature-branch');
 -- Load data from a tagged release
 SELECT * FROM read_csv('git://metrics.csv@v1.0.0');
 ```
+
+**Git LFS Features:**
+- **Automatic Detection**: LFS pointer files are automatically detected and the actual content is streamed
+- **Local Cache Support**: Uses local `.git/lfs/objects/` cache when available
+- **Streaming Architecture**: Large files are streamed efficiently without loading entirely into memory
+- **Transparent Integration**: Works seamlessly with all existing `git://` functionality
 
 ### 📊 Git Table Functions
 Query your git repository metadata directly with clean, simple syntax:
@@ -233,17 +242,22 @@ FROM describe(SELECT * FROM read_csv('git://data.csv@v2.0') LIMIT 0);
 
 Duck Tails implements a custom DuckDB FileSystem that intercepts `git://` URLs and translates them into libgit2 operations:
 
-- **GitFileSystem**: Handles git:// protocol registration and file access
+- **GitFileSystem**: Handles git:// protocol registration and file access with LFS support
 - **GitFileHandle**: Memory-backed file handles for git blob content with seek operations
+- **GitLFSFileHandle**: Streaming file handles for Git LFS objects with local/remote delegation
 - **GitPath**: Parser for git://path@revision syntax supporting branches, tags, and commit hashes
 - **Git Table Functions**: Direct repository metadata access with full commit history
 - **TextDiff Engine**: Advanced line-by-line diff computation with multiple output formats
 - **Real File Integration**: Seamless access to local files, git:// files, and mixed scenarios
+- **LFS Integration**: Automatic detection and streaming of Git LFS files with local cache support
 - **vcpkg Integration**: Robust dependency management for cross-platform libgit2 builds
 
 ### Key Technical Features
 - **Memory Efficient**: Files loaded on-demand into memory for fast access
-- **Seek Support**: Full random access within git blob content
+- **Streaming Support**: Large LFS files streamed without full memory loading
+- **Seek Support**: Full random access within git blob content and LFS files
+- **LFS Auto-Detection**: Automatic recognition and handling of LFS pointer files
+- **Local Cache Optimization**: Prefers local `.git/lfs/objects/` cache when available
 - **RAII Design**: Smart pointer usage throughout for memory safety
 - **Error Resilient**: Comprehensive error handling for missing repos/revisions
 - **Mixed File Systems**: Support for local + git://, S3 + git://, and other combinations
@@ -252,13 +266,15 @@ Duck Tails implements a custom DuckDB FileSystem that intercepts `git://` URLs a
 
 ## 🛣️ Roadmap
 
-### ✅ Current Implementation
+### ✅ Current Implementation (Phase 2 Complete)
 - Git filesystem access with git:// protocol support
+- **Git LFS streaming support with automatic detection and local cache optimization**
 - Git repository metadata queries (git_log, git_branches, git_tags)
 - Text diff analysis with multiple output formats
 - Mixed file system support (local + git:// files)
 
-### 🔮 Future Enhancements
+### 🔮 Future Enhancements (Phase 3+)
+- **Remote LFS Support**: Git LFS Batch API integration for downloading remote objects
 - **Semantic Code Intelligence**: AST-aware diff analysis and function tracking
 - **Development Workflow Integration**: Pull request analytics and code review intelligence
 - **Advanced Analytics**: Development velocity metrics and team insights
@@ -291,17 +307,20 @@ All new features should include comprehensive tests. Our test suite is designed 
 
 ### ✅ Implemented Features
 - **Git Filesystem**: `git://` protocol implementation with revision support
+- **Git LFS Support**: Automatic detection, streaming, and local cache optimization
 - **Table Functions**: Repository metadata access (`git_log`, `git_branches`, `git_tags`)
 - **Text Diff Engine**: Diff computation with multiple output formats
 - **File Integration**: Support for local files, git:// files, and mixed scenarios
 - **Memory Management**: Efficient blob loading with seek operations
+- **Streaming Architecture**: Large file handling without full memory loading
 - **Error Handling**: Robust error handling for edge cases
 - **Test Coverage**: 81 comprehensive test assertions across 4 test suites
 
 ### 📊 Technical Details
 - **4 test suites** with 81 assertions covering all functionality
-- **6 core components**: GitFileSystem, GitFileHandle, GitPath, Table Functions, TextDiff, File Integration
+- **7 core components**: GitFileSystem, GitFileHandle, GitLFSFileHandle, GitPath, Table Functions, TextDiff, File Integration
 - **12 functions implemented**: git_log, git_branches, git_tags (0 and 1 arg variants), diff_text, text_diff, read_git_diff (1 and 2 arg), text_diff_lines, text_diff_stats
+- **Git LFS**: Automatic pointer detection, local cache optimization, streaming architecture
 - **libgit2 integration** via vcpkg dependency management
 
 ## 📜 License

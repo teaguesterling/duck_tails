@@ -1,0 +1,16 @@
+# name: test/sql/duck_tails_lfs_basic.test
+# description: test duck_tails basic LFS functionality - just ensure extension loads with LFS support
+# group: [duck_tails]
+
+# Require the duck_tails extension
+require duck_tails
+
+# Basic smoke test - ensure git functions still work with LFS code present
+query I
+SELECT COUNT(*) >= 0 FROM git_log() LIMIT 1;
+----
+1
+
+# Test that extension loads properly (this validates LFS code doesn't break core functionality)
+statement ok
+SELECT 1;

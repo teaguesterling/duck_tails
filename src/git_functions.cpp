@@ -1,6 +1,5 @@
 #include "git_functions.hpp"
 #include "duckdb/common/exception.hpp"
-#include "duckdb/main/extension_util.hpp"
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/parser/parsed_data/create_table_function_info.hpp"
 
@@ -375,46 +374,46 @@ void GitTagsFunction(ClientContext &context, TableFunctionInput &data_p, DataChu
 // Registration
 //===--------------------------------------------------------------------===//
 
-void RegisterGitLogFunction(DatabaseInstance &db) {
+void RegisterGitLogFunction(ExtensionLoader &loader) {
     // Single-argument version (existing)
     TableFunction git_log_func("git_log", {LogicalType::VARCHAR}, GitLogFunction, GitLogBind, GitLogInitGlobal);
     git_log_func.named_parameters["repo_path"] = LogicalType::VARCHAR;
-    ExtensionUtil::RegisterFunction(db, git_log_func);
-    
+    loader.RegisterFunction(git_log_func);
+
     // Zero-argument version (defaults to current directory)
     TableFunction git_log_func_zero("git_log", {}, GitLogFunction, GitLogBind, GitLogInitGlobal);
     git_log_func_zero.named_parameters["repo_path"] = LogicalType::VARCHAR;
-    ExtensionUtil::RegisterFunction(db, git_log_func_zero);
+    loader.RegisterFunction(git_log_func_zero);
 }
 
-void RegisterGitBranchesFunction(DatabaseInstance &db) {
+void RegisterGitBranchesFunction(ExtensionLoader &loader) {
     // Single-argument version (existing)
     TableFunction git_branches_func("git_branches", {LogicalType::VARCHAR}, GitBranchesFunction, GitBranchesBind, GitBranchesInitGlobal);
     git_branches_func.named_parameters["repo_path"] = LogicalType::VARCHAR;
-    ExtensionUtil::RegisterFunction(db, git_branches_func);
-    
+    loader.RegisterFunction(git_branches_func);
+
     // Zero-argument version (defaults to current directory)
     TableFunction git_branches_func_zero("git_branches", {}, GitBranchesFunction, GitBranchesBind, GitBranchesInitGlobal);
     git_branches_func_zero.named_parameters["repo_path"] = LogicalType::VARCHAR;
-    ExtensionUtil::RegisterFunction(db, git_branches_func_zero);
+    loader.RegisterFunction(git_branches_func_zero);
 }
 
-void RegisterGitTagsFunction(DatabaseInstance &db) {
+void RegisterGitTagsFunction(ExtensionLoader &loader) {
     // Single-argument version (existing)
     TableFunction git_tags_func("git_tags", {LogicalType::VARCHAR}, GitTagsFunction, GitTagsBind, GitTagsInitGlobal);
     git_tags_func.named_parameters["repo_path"] = LogicalType::VARCHAR;
-    ExtensionUtil::RegisterFunction(db, git_tags_func);
-    
+    loader.RegisterFunction(git_tags_func);
+
     // Zero-argument version (defaults to current directory)
     TableFunction git_tags_func_zero("git_tags", {}, GitTagsFunction, GitTagsBind, GitTagsInitGlobal);
     git_tags_func_zero.named_parameters["repo_path"] = LogicalType::VARCHAR;
-    ExtensionUtil::RegisterFunction(db, git_tags_func_zero);
+    loader.RegisterFunction(git_tags_func_zero);
 }
 
-void RegisterGitFunctions(DatabaseInstance &db) {
-    RegisterGitLogFunction(db);
-    RegisterGitBranchesFunction(db);
-    RegisterGitTagsFunction(db);
+void RegisterGitFunctions(ExtensionLoader &loader) {
+    RegisterGitLogFunction(loader);
+    RegisterGitBranchesFunction(loader);
+    RegisterGitTagsFunction(loader);
 }
 
 } // namespace duckdb

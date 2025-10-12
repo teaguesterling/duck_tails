@@ -56,9 +56,9 @@ unique_ptr<FunctionData> GitTagsBind(ClientContext &context, TableFunctionBindIn
 unique_ptr<GlobalTableFunctionState> GitTagsInitGlobal(ClientContext &context, TableFunctionInitInput &input);
 
 // Registration functions
-void RegisterGitLogFunction(DatabaseInstance &db);
-void RegisterGitBranchesFunction(DatabaseInstance &db);  
-void RegisterGitTagsFunction(DatabaseInstance &db);
-void RegisterGitFunctions(DatabaseInstance &db);
+void RegisterGitLogFunction(ExtensionLoader &loader);
+void RegisterGitBranchesFunction(ExtensionLoader &loader);
+void RegisterGitTagsFunction(ExtensionLoader &loader);
+void RegisterGitFunctions(ExtensionLoader &loader);
 
 } // namespace duckdb
