@@ -30,9 +30,6 @@ GitPath GitPath::Parse(const string &git_url) {
     
     // Find @ symbol to separate path from revision
     size_t at_pos = url.find_last_of('@');
-    printf("[DEBUG] Found @ at position: %zu (npos=%zu)\n", at_pos, string::npos);
-    fflush(stdout);
-    
     if (at_pos != string::npos) {
         result.revision = url.substr(at_pos + 1);
         url = url.substr(0, at_pos);

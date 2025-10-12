@@ -1,0 +1,52 @@
+# name: test/sql/reflog_syntax.test
+# description: Test git reflog syntax support in git:// URLs
+# group: [duck_tails]
+
+require duck_tails
+
+# Test 1: HEAD@{0} should work same as HEAD
+query I
+WITH head_current AS (
+    SELECT COUNT(*) as cnt FROM read_csv('git://test/data/sales.csv@HEAD')
+),
+head_reflog AS (
+    SELECT COUNT(*) as cnt FROM read_csv('git://test/data/sales.csv@HEAD@{0}')
+)
+SELECT head_current.cnt = head_reflog.cnt AS same_commit
+FROM head_current, head_reflog;
+----
+true
+
+# Test 2: Simple reflog access should return data
+query I
+SELECT COUNT(*) > 0 as has_data FROM read_csv('git://test/data/sales.csv@HEAD@{0}');
+----
+true
+
+# Test 3: Reflog syntax in git diff operations
+query I
+SELECT COUNT(*) >= 0 as diff_accessible
+FROM read_git_diff('git://README.md@HEAD@{0}', 'git://README.md@HEAD');
+----
+true
+
+# Test 4: Time-based reflog syntax (1.day.ago)
+query I
+SELECT COUNT(*) > 0 as day_ago_accessible 
+FROM read_csv('git://test/data/sales.csv@HEAD@{1.day.ago}');
+----
+true
+
+# Test 5: Numeric reflog syntax (2nd most recent)
+query I
+SELECT COUNT(*) > 0 as numeric_reflog_accessible 
+FROM read_csv('git://test/data/sales.csv@HEAD@{2}');
+----
+true
+
+# Test 6: Week-based reflog syntax 
+query I
+SELECT COUNT(*) > 0 as week_ago_accessible 
+FROM read_csv('git://test/data/sales.csv@HEAD@{1.week.ago}');
+----
+true
