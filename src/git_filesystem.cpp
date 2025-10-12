@@ -218,9 +218,9 @@ int64_t GitFileSystem::GetFileSize(FileHandle &handle) {
     }
 }
 
-time_t GitFileSystem::GetLastModifiedTime(FileHandle &handle) {
+timestamp_t GitFileSystem::GetLastModifiedTime(FileHandle &handle) {
     // For git files, return current time since git objects are immutable
-    return time(nullptr);
+    return Timestamp::GetCurrentTimestamp();
 }
 
 bool GitFileSystem::CanSeek() {
@@ -601,7 +601,8 @@ LFSConfig GitFileSystem::ReadLFSConfig(git_repository *repo) {
 // Registration
 //===--------------------------------------------------------------------===//
 
-void RegisterGitFileSystem(DatabaseInstance &db) {
+void RegisterGitFileSystem(ExtensionLoader &loader) {
+    auto &db = loader.GetDatabaseInstance();
     auto &fs = FileSystem::GetFileSystem(db);
     fs.RegisterSubSystem(make_uniq<GitFileSystem>());
 }

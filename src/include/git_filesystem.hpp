@@ -158,7 +158,7 @@ public:
     
     int64_t GetFileSize(FileHandle &handle) override;
     
-    time_t GetLastModifiedTime(FileHandle &handle) override;
+    timestamp_t GetLastModifiedTime(FileHandle &handle) override;
     
     // File handle properties required by DuckDB
     bool CanSeek() override;
@@ -189,6 +189,6 @@ private:
     std::unordered_map<string, git_repository*> repo_cache_;
 };
 
-void RegisterGitFileSystem(DatabaseInstance &db);
+void RegisterGitFileSystem(ExtensionLoader &loader);
 
 } // namespace duckdb

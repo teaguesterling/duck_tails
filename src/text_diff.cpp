@@ -2,7 +2,6 @@
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/value.hpp"
-#include "duckdb/main/extension_util.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/common/file_system.hpp"
 #include "duckdb/common/file_opener.hpp"
@@ -427,40 +426,40 @@ static void ReadGitDiffFunction(ClientContext &context, TableFunctionInput &data
     output.SetCardinality(1);
 }
 
-void RegisterTextDiffType(DatabaseInstance &db) {
+void RegisterTextDiffType(ExtensionLoader &loader) {
     // Register text_diff function
-    auto text_diff_func = ScalarFunction("text_diff", 
-        {LogicalType::VARCHAR, LogicalType::VARCHAR}, 
-        LogicalType::VARCHAR, 
+    auto text_diff_func = ScalarFunction("text_diff",
+        {LogicalType::VARCHAR, LogicalType::VARCHAR},
+        LogicalType::VARCHAR,
         TextDiffFunction);
-    ExtensionUtil::RegisterFunction(db, text_diff_func);
-    
+    loader.RegisterFunction(text_diff_func);
+
     // Register diff_text function (Phase 2 main function)
-    auto diff_text_func = ScalarFunction("diff_text", 
-        {LogicalType::VARCHAR, LogicalType::VARCHAR}, 
-        LogicalType::VARCHAR, 
+    auto diff_text_func = ScalarFunction("diff_text",
+        {LogicalType::VARCHAR, LogicalType::VARCHAR},
+        LogicalType::VARCHAR,
         DiffTextFunction);
-    ExtensionUtil::RegisterFunction(db, diff_text_func);
-    
+    loader.RegisterFunction(diff_text_func);
+
     // Register text_diff_stats function
     auto stats_func = ScalarFunction("text_diff_stats",
         {LogicalType::VARCHAR},
         LogicalType::VARCHAR,
         TextDiffStatsFunction);
-    ExtensionUtil::RegisterFunction(db, stats_func);
-    
+    loader.RegisterFunction(stats_func);
+
     // Register text_diff_lines table function
     TableFunction lines_func("text_diff_lines", {LogicalType::VARCHAR}, TextDiffLinesFunction, TextDiffLinesBind, TextDiffLinesInit);
-    ExtensionUtil::RegisterFunction(db, lines_func);
-    
+    loader.RegisterFunction(lines_func);
+
     // Register read_git_diff table function (Phase 2 main function)
     // Single-argument version
     TableFunction read_git_diff_func_1("read_git_diff", {LogicalType::VARCHAR}, ReadGitDiffFunction, ReadGitDiffBind, ReadGitDiffInit);
-    ExtensionUtil::RegisterFunction(db, read_git_diff_func_1);
-    
+    loader.RegisterFunction(read_git_diff_func_1);
+
     // Two-argument version
     TableFunction read_git_diff_func_2("read_git_diff", {LogicalType::VARCHAR, LogicalType::VARCHAR}, ReadGitDiffFunction, ReadGitDiffBind, ReadGitDiffInit);
-    ExtensionUtil::RegisterFunction(db, read_git_diff_func_2);
+    loader.RegisterFunction(read_git_diff_func_2);
 }
 
 } // namespace duckdb
