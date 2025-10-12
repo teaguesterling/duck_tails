@@ -1,0 +1,35 @@
+# name: test/sql/duck_tails_lfs_comprehensive.test
+# description: test duck_tails comprehensive LFS functionality
+# group: [duck_tails]
+
+# Require the duck_tails extension
+require duck_tails
+
+# Test LFS file detection and reading
+query III
+SELECT * FROM read_csv('git://test/data/large_dataset.csv');
+----
+1	Test	100
+2	LFS	200
+3	Data	300
+
+# Test LFS file size detection
+query I
+SELECT COUNT(*) FROM read_csv('git://test/data/large_dataset.csv');
+----
+3
+
+# Test that regular files still work (regression test)
+query I
+SELECT COUNT(*) FROM read_csv('git://test/data/sales.csv');
+----
+7
+
+# Test mixed queries with LFS and regular files
+query I
+SELECT 
+    (SELECT COUNT(*) FROM read_csv('git://test/data/large_dataset.csv')) +
+    (SELECT COUNT(*) FROM read_csv('git://test/data/sales.csv'))
+AS total_rows;
+----
+10

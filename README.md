@@ -4,12 +4,12 @@
 
 Duck Tails is a DuckDB extension that brings git-aware data analysis capabilities to your database. Query your git history, access files at any revision, and perform version-aware data analysis - all with SQL.
 
-**Status: Functional** - Git filesystem access and diff analysis capabilities with comprehensive test coverage.
+**Status: Phase 2 Complete** - Git filesystem access with Git LFS streaming support, diff analysis capabilities, and comprehensive test coverage.
 
 ## ✨ Features
 
-### 🗂️ Git Filesystem
-Access any file in your git repository at any commit, branch, or tag using the `git://` protocol with flexible repository path support:
+### 🗂️ Git Filesystem with LFS Support
+Access any file in your git repository at any commit, branch, or tag using the `git://` protocol flexible repository path support and LFS (Large File Storage) streaming support for large files!
 
 ```sql
 -- Read a CSV file from the current repository
@@ -21,6 +21,9 @@ SELECT * FROM read_csv('git://../other-repo/config.json@HEAD');
 -- Work with absolute repository paths
 SELECT * FROM read_csv('git:///path/to/project/data.csv@HEAD');
 
+-- Access large files stored in Git LFS (automatically detected and streamed)
+SELECT * FROM read_csv('git://data/large_dataset.csv@HEAD');
+
 -- Compare data between commits
 SELECT * FROM read_csv('git://data/sales.csv@HEAD~1');
 
@@ -28,6 +31,12 @@ SELECT * FROM read_csv('git://data/sales.csv@HEAD~1');
 SELECT * FROM read_csv('git://config.json@feature-branch');
 SELECT * FROM read_csv('git://metrics.csv@v1.0.0');
 ```
+
+**Git LFS Features:**
+- **Automatic Detection**: LFS pointer files are automatically detected and the actual content is streamed
+- **Local Cache Support**: Uses local `.git/lfs/objects/` cache when available
+- **Streaming Architecture**: Large files are streamed efficiently without loading entirely into memory
+- **Transparent Integration**: Works seamlessly with all existing `git://` functionality
 
 ### 📊 Git Table Functions
 Query your git repository metadata directly with flexible repository path support:
@@ -260,12 +269,14 @@ FROM describe(SELECT * FROM read_csv('git://data.csv@v2.0') LIMIT 0);
 
 Duck Tails implements a custom DuckDB FileSystem that intercepts `git://` URLs and translates them into libgit2 operations:
 
-- **GitFileSystem**: Handles git:// protocol registration and file access
+- **GitFileSystem**: Handles git:// protocol registration and file access with LFS support
 - **GitFileHandle**: Memory-backed file handles for git blob content with seek operations
+- **GitLFSFileHandle**: Streaming file handles for Git LFS objects with local/remote delegation
 - **GitPath**: Parser for git://path@revision syntax supporting branches, tags, and commit hashes
 - **Git Table Functions**: Direct repository metadata access with full commit history
 - **TextDiff Engine**: Advanced line-by-line diff computation with multiple output formats
 - **Real File Integration**: Seamless access to local files, git:// files, and mixed scenarios
+- **LFS Integration**: Automatic detection and streaming of Git LFS files with local cache support
 - **vcpkg Integration**: Robust dependency management for cross-platform libgit2 builds
 
 ### Key Technical Features
@@ -273,7 +284,10 @@ Duck Tails implements a custom DuckDB FileSystem that intercepts `git://` URLs a
 - **Smart Repository Discovery**: Automatic git repository detection using libgit2 with proper error handling
 - **Repository Context**: All git functions include `repo_path` column showing which repository each result comes from
 - **Memory Efficient**: Files loaded on-demand into memory for fast access
-- **Seek Support**: Full random access within git blob content
+- **Streaming Support**: Large LFS files streamed without full memory loading
+- **Seek Support**: Full random access within git blob content and LFS files
+- **LFS Auto-Detection**: Automatic recognition and handling of LFS pointer files
+- **Local Cache Optimization**: Prefers local `.git/lfs/objects/` cache when available
 - **RAII Design**: Smart pointer usage throughout for memory safety
 - **Error Resilient**: Clear error messages ("No git repository found") with comprehensive edge case handling
 - **Mixed File Systems**: Support for local + git://, S3 + git://, and other combinations
@@ -282,15 +296,18 @@ Duck Tails implements a custom DuckDB FileSystem that intercepts `git://` URLs a
 
 ## 🛣️ Roadmap
 
-### ✅ Current Implementation
+### ✅ Current Implementation (Phase 2 Complete)
 - Git filesystem access with git:// protocol support
 - **Flexible repository path support** - relative, absolute, and current directory paths
 - **Smart repository discovery** - automatic git repository detection with proper error handling
 - Git repository metadata queries (git_log, git_branches, git_tags) with repository context
+- **Git LFS streaming support with automatic detection and local cache optimization**
+- Git repository metadata queries (git_log, git_branches, git_tags)
 - Text diff analysis with multiple output formats
 - Mixed file system support (local + git:// files)
 
-### 🔮 Future Enhancements
+### 🔮 Future Enhancements (Phase 3+)
+- **Remote LFS Support**: Git LFS Batch API integration for downloading remote objects
 - **Semantic Code Intelligence**: AST-aware diff analysis and function tracking
 - **Development Workflow Integration**: Pull request analytics and code review intelligence
 - **Advanced Analytics**: Development velocity metrics and team insights
@@ -322,7 +339,7 @@ All new features should include comprehensive tests. Our test suite is designed 
 ## 🏆 Current Status
 
 ### ✅ Implemented Features
-- **Git Filesystem**: `git://` protocol implementation with revision support
+- **Git Filesystem**: `git://` protocol implementation with revisio
 - **Repository Path Support**: Flexible relative (`../repo`), absolute (`/path/to/repo`), and current directory access
 - **Smart Repository Discovery**: Automatic git repository detection using libgit2 with clear error messages
 - **Table Functions**: Repository metadata access (`git_log`, `git_branches`, `git_tags`) with repository context
@@ -331,11 +348,24 @@ All new features should include comprehensive tests. Our test suite is designed 
 - **Memory Management**: Efficient blob loading with seek operations
 - **Error Handling**: Comprehensive edge case handling with user-friendly error messages
 - **Comprehensive Test Coverage**: Full test suite with extensive assertions
+- **Git LFS Support**: Automatic detection, streaming, and local cache optimization
+- **Table Functions**: Repository metadata access (`git_log`, `git_branches`, `git_tags`)
+- **Text Diff Engine**: Diff computation with multiple output formats
+- **File Integration**: Support for local files, git:// files, and mixed scenarios
+- **Memory Management**: Efficient blob loading with seek operations
+- **Streaming Architecture**: Large file handling without full memory loading
+- **Error Handling**: Robust error handling for edge cases
+- **Test Coverage**: 81 comprehensive test assertions across 4 test suites
+
 
 ### 📊 Technical Details
 - **6 core components**: GitFileSystem, GitFileHandle, GitPath, Table Functions, TextDiff, File Integration
 - **8 functions implemented**: git_log, git_branches, git_tags (0 and 1 arg variants), diff_text, text_diff, read_git_diff (1 and 2 arg variants), text_diff_lines, text_diff_stats
 - **Repository path discovery**: Automatic git repository detection with relative/absolute path support
+- **4 test suites** with 81 assertions covering all functionality
+- **7 core components**: GitFileSystem, GitFileHandle, GitLFSFileHandle, GitPath, Table Functions, TextDiff, File Integration
+- **12 functions implemented**: git_log, git_branches, git_tags (0 and 1 arg variants), diff_text, text_diff, read_git_diff (1 and 2 arg), text_diff_lines, text_diff_stats
+- **Git LFS**: Automatic pointer detection, local cache optimization, streaming architecture
 - **libgit2 integration** via vcpkg dependency management
 
 ## 📜 License

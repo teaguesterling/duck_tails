@@ -85,6 +85,6 @@ private:
 extern LogicalType TextDiffType();
 
 // Type functions for DuckDB integration
-void RegisterTextDiffType(DatabaseInstance &db);
+void RegisterTextDiffType(ExtensionLoader &loader);
 
 } // namespace duckdb

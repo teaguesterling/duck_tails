@@ -8,7 +8,6 @@
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/function/scalar_function.hpp"
-#include "duckdb/main/extension_util.hpp"
 #include <duckdb/parser/parsed_data/create_scalar_function_info.hpp>
 
 // OpenSSL linked through vcpkg
@@ -20,19 +19,19 @@
 namespace duckdb {
 
 
-static void LoadInternal(DatabaseInstance &instance) {
+static void LoadInternal(ExtensionLoader &loader) {
 	// Register git filesystem
-	RegisterGitFileSystem(instance);
-	
+	RegisterGitFileSystem(loader);
+
 	// Register git table functions
-	RegisterGitFunctions(instance);
-	
-	// Register TextDiff type and functions
-	RegisterTextDiffType(instance);
+	RegisterGitFunctions(loader);
+
+	// Register TextDiff type and functions (Phase 2)
+	RegisterTextDiffType(loader);
 }
 
-void DuckTailsExtension::Load(DuckDB &db) {
-	LoadInternal(*db.instance);
+void DuckTailsExtension::Load(ExtensionLoader &loader) {
+	LoadInternal(loader);
 }
 std::string DuckTailsExtension::Name() {
 	return "duck_tails";
@@ -50,9 +49,8 @@ std::string DuckTailsExtension::Version() const {
 
 extern "C" {
 
-DUCKDB_EXTENSION_API void duck_tails_init(duckdb::DatabaseInstance &db) {
-	duckdb::DuckDB db_wrapper(db);
-	db_wrapper.LoadExtension<duckdb::DuckTailsExtension>();
+DUCKDB_CPP_EXTENSION_ENTRY(duck_tails, loader) {
+	duckdb::LoadInternal(loader);
 }
 
 DUCKDB_EXTENSION_API const char *duck_tails_version() {

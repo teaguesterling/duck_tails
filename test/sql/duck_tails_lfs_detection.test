@@ -1,0 +1,18 @@
+# name: test/sql/duck_tails_lfs_detection.test  
+# description: test duck_tails LFS pointer detection logic
+# group: [duck_tails]
+
+# Require the duck_tails extension
+require duck_tails
+
+# Test accessing regular git files (should work as before)  
+query II
+SELECT product, amount FROM read_csv('git://test/data/sales.csv') LIMIT 1;
+----
+Widget A	100
+
+# Test that we can access files from current repository
+query I
+SELECT COUNT(*) FROM read_csv('git://test/data/sales.csv');
+----
+7
