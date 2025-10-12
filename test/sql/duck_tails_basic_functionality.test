@@ -1,0 +1,47 @@
+# name: test/sql/duck_tails_basic_functionality.test
+# description: Basic functionality tests for Duck Tails git operations
+# group: [duck_tails]
+
+require duck_tails
+
+# Test diff_text function works
+query I
+SELECT length(diff_text('Hello World', 'Hello DuckDB')) > 0 as has_diff;
+----
+true
+
+# Test diff_text with identical strings returns NULL
+query I
+SELECT diff_text('same', 'same') IS NULL as is_null;
+----
+true
+
+# Test diff_text with different content
+query I
+SELECT diff_text('content', '') IS NOT NULL as has_diff;
+----
+true
+
+# Test read_git_diff single argument works
+query I
+SELECT COUNT(*) > 0 as has_rows FROM read_git_diff('test.txt');
+----
+true
+
+# Test read_git_diff two arguments works  
+query I
+SELECT COUNT(*) > 0 as has_rows FROM read_git_diff('file1.txt', 'file2.txt');
+----
+true
+
+# Test read_git_diff with git:// paths works
+query I
+SELECT COUNT(*) > 0 as has_rows FROM read_git_diff('git://README.md@HEAD', 'git://README.md@HEAD~1');
+----
+true
+
+# Test text_diff_lines function works
+query I
+SELECT COUNT(*) > 0 as has_rows FROM text_diff_lines('dummy');
+----
+true

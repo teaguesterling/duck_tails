@@ -98,7 +98,7 @@ bool TextDiff::operator==(const TextDiff &other) const {
     return true;
 }
 
-// Serialization removed for Phase 2 simplicity - will use string representation
+// Using string representation for simplicity
 
 vector<string> TextDiff::SplitLines(const string &text) {
     vector<string> lines;
@@ -125,7 +125,7 @@ vector<string> TextDiff::SplitLines(const string &text) {
 vector<TextDiff::DiffLine> TextDiff::ComputeDiff(const vector<string> &old_lines, const vector<string> &new_lines) {
     vector<DiffLine> result;
     
-    // Simple diff algorithm - Myers algorithm would be better but this is sufficient for Phase 2
+    // Simple diff algorithm - Myers algorithm would be better but this is sufficient
     size_t old_idx = 0, new_idx = 0;
     
     while (old_idx < old_lines.size() || new_idx < new_lines.size()) {

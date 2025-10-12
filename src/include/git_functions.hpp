@@ -8,10 +8,11 @@ namespace duckdb {
 
 // Git log table function
 struct GitLogFunctionData : public TableFunctionData {
-    explicit GitLogFunctionData(const string &repo_path);
+    explicit GitLogFunctionData(const string &repo_path, const string &resolved_repo_path);
     ~GitLogFunctionData();
     
     string repo_path;
+    string resolved_repo_path;
     git_repository *repo;
     git_revwalk *walker;
     bool initialized;
@@ -24,10 +25,11 @@ unique_ptr<GlobalTableFunctionState> GitLogInitGlobal(ClientContext &context, Ta
 
 // Git branches table function  
 struct GitBranchesFunctionData : public TableFunctionData {
-    explicit GitBranchesFunctionData(const string &repo_path);
+    explicit GitBranchesFunctionData(const string &repo_path, const string &resolved_repo_path);
     ~GitBranchesFunctionData();
     
     string repo_path;
+    string resolved_repo_path;
     git_repository *repo;
     git_branch_iterator *iterator;
     bool initialized;
@@ -40,10 +42,11 @@ unique_ptr<GlobalTableFunctionState> GitBranchesInitGlobal(ClientContext &contex
 
 // Git tags table function
 struct GitTagsFunctionData : public TableFunctionData {
-    explicit GitTagsFunctionData(const string &repo_path);
+    explicit GitTagsFunctionData(const string &repo_path, const string &resolved_repo_path);
     ~GitTagsFunctionData();
     
     string repo_path;
+    string resolved_repo_path;
     git_repository *repo;
     vector<string> tag_names;
     idx_t current_index;

@@ -3,7 +3,10 @@
 #include "duckdb/common/exception.hpp"
 #include <regex>
 #include <cstring>
-#include <sstream>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <climits>
+#include <vector>
 #include <unordered_map>
 #include <fstream>
 #include <iostream>
@@ -11,13 +14,22 @@
 namespace duckdb {
 
 //===--------------------------------------------------------------------===//
+// Forward declarations for repository discovery functions
+//===--------------------------------------------------------------------===//
+
+static string FindGitRepository(const string &path);
+static bool IsGitRepository(const string &path);
+static bool PathExists(const string &path);
+static string GetDirectoryFromPath(const string &path);
+static string GetParentDirectory(const string &path);
+static string NormalizePath(const string &path);
+
+//===--------------------------------------------------------------------===//
 // GitPath Implementation
 //===--------------------------------------------------------------------===//
 
 GitPath GitPath::Parse(const string &git_url) {
     GitPath result;
-    
-    printf("[DEBUG] GitPath::Parse input: '%s'\n", git_url.c_str());
     fflush(stdout);
     
     // Remove git:// prefix
@@ -25,32 +37,64 @@ GitPath GitPath::Parse(const string &git_url) {
     if (StringUtil::StartsWith(url, "git://")) {
         url = url.substr(6);
     }
-    printf("[DEBUG] After removing git:// prefix: '%s'\n", url.c_str());
-    fflush(stdout);
     
     // Find @ symbol to separate path from revision
     size_t at_pos = url.find_last_of('@');
     if (at_pos != string::npos) {
         result.revision = url.substr(at_pos + 1);
         url = url.substr(0, at_pos);
-        printf("[DEBUG] Extracted revision: '%s', remaining url: '%s'\n", 
-               result.revision.c_str(), url.c_str());
-        fflush(stdout);
     } else {
         result.revision = "HEAD";
-        printf("[DEBUG] No @ found, defaulting to HEAD\n");
-        fflush(stdout);
     }
     
-    // For now, assume the entire remaining path is a file path relative to current directory
-    // TODO: In future, implement smarter repository detection
-    result.repository_path = ".";
-    result.file_path = url;
-    
-    printf("[DEBUG] Final GitPath: repo='%s', file='%s', revision='%s'\n", 
-           result.repository_path.c_str(), result.file_path.c_str(), result.revision.c_str());
-    fflush(stdout);
-    
+    // Parse repository path and file path - use discovery for ALL paths
+    if (url.empty()) {
+        result.repository_path = ".";
+        result.file_path = "";
+    } else {
+        // Use repository discovery for ALL paths (simple and complex)
+        try {
+            result.repository_path = FindGitRepository(url);
+            
+            // Normalize the URL path for consistent file path calculation
+            string normalized_url = NormalizePath(url);
+            
+            // Calculate file path relative to discovered repository using normalized paths
+            if (result.repository_path == "/") {
+                if (normalized_url.length() > 1) {
+                    result.file_path = normalized_url.substr(1);
+                } else {
+                    result.file_path = "";
+                }
+            } else if (result.repository_path == ".") {
+                // For current directory, use original relative path
+                result.file_path = url;
+            } else {
+                // Remove repository path prefix to get relative file path
+                string repo_prefix = result.repository_path;
+                if (!repo_prefix.empty() && repo_prefix.back() != '/') {
+                    repo_prefix += "/";
+                }
+                
+                if (normalized_url.length() >= repo_prefix.length() && 
+                    normalized_url.substr(0, repo_prefix.length()) == repo_prefix) {
+                    result.file_path = normalized_url.substr(repo_prefix.length());
+                } else {
+                    // Use original relative path if normalized doesn't match
+                    result.file_path = url;
+                }
+            }
+        } catch (const IOException &e) {
+            // No fallback - fail fast with clear error message
+            string search_path = url;
+            if (url.find('/') != string::npos) {
+                search_path = GetDirectoryFromPath(url);
+            }
+            throw IOException("No git repository found for path '%s'. "
+                             "Searched up directory tree from '%s' but found no .git directory.", 
+                             git_url.c_str(), search_path.c_str());
+        }
+    }    
     return result;
 }
 
@@ -141,67 +185,73 @@ unique_ptr<FileHandle> GitFileSystem::OpenFile(const string &path, FileOpenFlags
         throw InternalException("GitFileSystem: Write operations not supported");
     }
     
-    auto git_path = GitPath::Parse(path);
-    printf("[DEBUG] OpenFile called with path: '%s'\n", path.c_str());
-    printf("[DEBUG] GitPath parsed: repo=%s, file=%s, revision=%s\n", 
-           git_path.repository_path.c_str(), git_path.file_path.c_str(), git_path.revision.c_str());
-    fflush(stdout);
-    
     try {
-        auto repo = OpenRepository(git_path.repository_path);
-        printf("[DEBUG] About to resolve revision: '%s'\n", git_path.revision.c_str());
-        fflush(stdout);
-        auto commit_obj = ResolveRevision(repo, git_path.revision);
-        printf("[DEBUG] Commit resolved for revision: %s\n", git_path.revision.c_str());
-        fflush(stdout);
-        auto content = GetBlobContent(repo, git_path.file_path, commit_obj);
-        
-        // Check if this is an LFS pointer file
-        if (IsLFSPointer(content)) {
-            auto lfs_info = ParseLFSPointer(content);
-            printf("[DEBUG] LFS file detected: path=%s, oid=%s, size=%ld\n", 
-                   path.c_str(), lfs_info.oid.c_str(), lfs_info.size);
-            fflush(stdout);
+        auto git_path = GitPath::Parse(path);
+        try {
+            auto repo = OpenRepository(git_path.repository_path);
+            auto commit_obj = ResolveRevision(repo, git_path.revision);
+            auto content = GetBlobContent(repo, git_path.file_path, commit_obj);
             
-            // Use GitLFSFileHandle for streaming support (Phase 2)
-            return make_uniq<GitLFSFileHandle>(*this, path, std::move(lfs_info), flags, opener, repo);
+            if (IsLFSPointer(content)) {
+                auto lfs_info = ParseLFSPointer(content);
+                return make_uniq<GitLFSFileHandle>(*this, path, std::move(lfs_info), flags, opener, repo);
+            } else {
+                auto content_ptr = make_shared_ptr<string>(std::move(content));
+                return make_uniq<GitFileHandle>(*this, path, content_ptr, flags);
+            }
+        } catch (const std::exception &e) {
+            throw IOException("Failed to open git file '%s': %s", path, e.what());
         }
-        
-        // Regular git file - use existing flow
-        auto content_ptr = make_shared_ptr<string>(std::move(content));
-        return make_uniq<GitFileHandle>(*this, path, content_ptr, flags);
-        
-    } catch (const std::exception &e) {
-        throw IOException("Failed to open git file '%s': %s", path, e.what());
+    } catch (const IOException &e) {
+        // Re-throw repository discovery errors directly without wrapping
+        string error_msg = e.what();
+        if (error_msg.find("No git repository found for path") != string::npos) {
+            throw;
+        }
+        throw IOException("Failed to parse git path '%s': %s", path, e.what());
     }
 }
 
 vector<OpenFileInfo> GitFileSystem::Glob(const string &pattern, FileOpener *opener) {
-    auto git_path = GitPath::Parse(pattern);
-    
     try {
-        auto repo = OpenRepository(git_path.repository_path);
-        auto commit_obj = ResolveRevision(repo, git_path.revision);
-        return ListFiles(repo, git_path.file_path, commit_obj);
+        auto git_path = GitPath::Parse(pattern);
         
-    } catch (const std::exception &e) {
-        throw IOException("Failed to glob git pattern '%s': %s", pattern, e.what());
+        try {
+            auto repo = OpenRepository(git_path.repository_path);
+            auto commit_obj = ResolveRevision(repo, git_path.revision);
+            return ListFiles(repo, git_path.file_path, commit_obj);
+            
+        } catch (const std::exception &e) {
+            throw IOException("Failed to glob git pattern '%s': %s", pattern, e.what());
+        }
+    } catch (const IOException &e) {
+        // Re-throw repository discovery errors directly without wrapping
+        string error_msg = e.what();
+        if (error_msg.find("No git repository found for path") != string::npos) {
+            throw;
+        }
+        throw IOException("Failed to parse git path '%s': %s", pattern, e.what());
     }
 }
 
 bool GitFileSystem::FileExists(const string &filename, optional_ptr<FileOpener> opener) {
-    printf("[DEBUG] FileExists called with filename: '%s'\n", filename.c_str());
-    fflush(stdout);
     try {
         auto git_path = GitPath::Parse(filename);
-        auto repo = OpenRepository(git_path.repository_path);
-        auto commit_obj = ResolveRevision(repo, git_path.revision);
         
-        // Try to get the blob content - if it succeeds, file exists
-        GetBlobContent(repo, git_path.file_path, commit_obj);
-        return true;
-        
-    } catch (...) {
+        try {
+            auto repo = OpenRepository(git_path.repository_path);
+            auto commit_obj = ResolveRevision(repo, git_path.revision);
+            
+            // Try to get the blob content - if it succeeds, file exists
+            GetBlobContent(repo, git_path.file_path, commit_obj);
+            return true;
+            
+        } catch (...) {
+            return false;
+        }
+    } catch (const IOException &e) {
+        // For repository discovery errors, we still return false for FileExists
+        // but this maintains consistency with other methods
         return false;
     }
 }
@@ -377,6 +427,173 @@ vector<OpenFileInfo> GitFileSystem::ListFiles(git_repository *repo, const string
 }
 
 //===--------------------------------------------------------------------===//
+// Repository Discovery
+//===--------------------------------------------------------------------===//
+
+static bool IsGitRepository(const string &path) {
+    // Try to open the repository with libgit2 - most reliable method
+    git_repository *repo = nullptr;
+    int error = git_repository_open(&repo, path.c_str());
+    
+    if (error == 0) {
+        git_repository_free(repo);
+        return true;
+    }
+    
+    return false;
+}
+
+static bool PathExists(const string &path) {
+    struct stat path_stat;
+    return stat(path.c_str(), &path_stat) == 0;
+}
+
+static bool IsDirectory(const string &path) {
+    struct stat path_stat;
+    if (stat(path.c_str(), &path_stat) != 0) {
+        return false;
+    }
+    return S_ISDIR(path_stat.st_mode);
+}
+
+// Normalizes a path by resolving relative components (./ and ../) and converting to absolute path
+static string NormalizePath(const string &path) {
+    string current_path = path;
+    
+    // Resolve relative paths to absolute paths
+    if (!current_path.empty() && current_path[0] != '/') {
+        char cwd[PATH_MAX];
+        if (getcwd(cwd, sizeof(cwd)) != nullptr) {
+            current_path = string(cwd) + "/" + current_path;
+        }
+    }
+    
+    // Normalize by resolving .. and . components
+    vector<string> components;
+    stringstream ss(current_path);
+    string component;
+    
+    if (current_path[0] == '/') {
+        components.push_back("");
+    }
+    
+    while (getline(ss, component, '/')) {
+        if (component.empty() || component == ".") {
+            continue;
+        } else if (component == "..") {
+            if (!components.empty() && components.back() != "..") {
+                components.pop_back();
+            }
+        } else {
+            components.push_back(component);
+        }
+    }
+    
+    // Reconstruct path
+    if (components.empty() || (components.size() == 1 && components[0].empty())) {
+        return "/";
+    } else {
+        string result = "";
+        for (const auto& comp : components) {
+            if (!comp.empty()) {
+                result += "/" + comp;
+            }
+        }
+        return result.empty() ? "/" : result;
+    }
+}
+
+static string GetDirectoryFromPath(const string &path) {
+    // Handle empty path
+    if (path.empty()) {
+        return "";
+    }
+    
+    // Find the last slash
+    size_t last_slash = path.find_last_of('/');
+    
+    // No slash found - path is just a filename
+    if (last_slash == string::npos) {
+        return "";
+    }
+    
+    // Root directory case
+    if (last_slash == 0) {
+        return "/";
+    }
+    
+    // Return directory part
+    return path.substr(0, last_slash);
+}
+
+static string GetParentDirectory(const string &path) {
+    // Handle empty path or root
+    if (path.empty() || path == "/") {
+        return "";
+    }
+    
+    // Remove trailing slash if present
+    string clean_path = path;
+    if (clean_path.back() == '/' && clean_path.length() > 1) {
+        clean_path = clean_path.substr(0, clean_path.length() - 1);
+    }
+    
+    // Find the last slash
+    size_t last_slash = clean_path.find_last_of('/');
+    
+    // No slash found - parent is current directory
+    if (last_slash == string::npos) {
+        return ".";
+    }
+    
+    // Root directory case
+    if (last_slash == 0) {
+        return "/";
+    }
+    
+    // Return parent directory
+    return clean_path.substr(0, last_slash);
+}
+
+// Finds the git repository root directory by walking up the directory tree from the given path
+// Implements Option 2: walks up from non-existent paths to first existing directory, then searches for .git
+static string FindGitRepository(const string &path) {
+    // Normalize the path (resolves relative paths and .. components)  
+    string current_path = NormalizePath(path);
+    
+    // Option 2: Walk up the path until we find something that exists on disk
+    while (!current_path.empty() && current_path != "/" && !PathExists(current_path)) {
+        current_path = GetParentDirectory(current_path);
+    }
+    
+    // If we couldn't find any existing path, start from current directory
+    if (!PathExists(current_path)) {
+        current_path = ".";
+    }
+    
+    // If path points to a file (not directory), start from its directory
+    if (!IsDirectory(current_path)) {
+        string dir = GetDirectoryFromPath(current_path);
+        if (!dir.empty()) {
+            current_path = dir;
+        }
+    }
+    
+    // Walk up directory tree looking for .git
+    while (!current_path.empty() && current_path != "/") {
+        if (IsGitRepository(current_path)) {
+            return current_path;
+        }
+        current_path = GetParentDirectory(current_path);
+    }
+    
+    // Check root directory too
+    if (current_path == "/" && IsGitRepository("/")) {
+        return "/";
+    }
+    
+    throw IOException("No git repository found for path: %s", path);
+//===--------------------------------------------------------------------===//
 // GitLFSFileHandle Implementation
 //===--------------------------------------------------------------------===//
 
@@ -438,22 +655,15 @@ void GitLFSFileHandle::EnsureRemoteHandleOpened() {
     
     // First try local LFS cache
     string local_path = BuildLFSObjectPath(lfs_info_.oid);
-    printf("[DEBUG] EnsureRemoteHandleOpened: oid=%s, local_path=%s\n", 
-           lfs_info_.oid.c_str(), local_path.c_str());
-    fflush(stdout);
     
     // Use simple C++ file check instead of filesystem abstraction
     std::ifstream test_file(local_path);
     if (test_file.good()) {
         test_file.close();
-        printf("[DEBUG] Local LFS file found, opening: %s\n", local_path.c_str());
-        fflush(stdout);
         // File exists locally, use LocalFileSystem to open it  
         local_fs_ = make_uniq<LocalFileSystem>();
         remote_handle_ = local_fs_->OpenFile(local_path, flags, opener_);
     } else {
-        printf("[DEBUG] Local LFS file NOT found: %s\n", local_path.c_str());
-        fflush(stdout);
         // Try to get remote download URL and open via DuckDB filesystem
         download_url_ = ResolveLFSDownloadURL();
         remote_handle_ = file_system.OpenFile(download_url_, flags, opener_);

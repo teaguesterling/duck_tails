@@ -1,4 +1,5 @@
 #include "git_functions.hpp"
+#include "git_filesystem.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/parser/parsed_data/create_table_function_info.hpp"
@@ -9,8 +10,8 @@ namespace duckdb {
 // Git Log Function
 //===--------------------------------------------------------------------===//
 
-GitLogFunctionData::GitLogFunctionData(const string &repo_path) 
-    : repo_path(repo_path), repo(nullptr), walker(nullptr), initialized(false) {
+GitLogFunctionData::GitLogFunctionData(const string &repo_path, const string &resolved_repo_path) 
+    : repo_path(repo_path), resolved_repo_path(resolved_repo_path), repo(nullptr), walker(nullptr), initialized(false) {
 }
 
 GitLogFunctionData::~GitLogFunctionData() {
@@ -34,8 +35,18 @@ unique_ptr<FunctionData> GitLogBind(ClientContext &context, TableFunctionBindInp
         }
     }
     
-    // Define return schema
+    // Use GitPath::Parse for repository discovery
+    string resolved_repo_path;
+    try {
+        auto git_path = GitPath::Parse("git://" + repo_path + "@HEAD");
+        resolved_repo_path = git_path.repository_path;
+    } catch (const std::exception &e) {
+        throw IOException("Failed to resolve repository path '%s': %s", repo_path, e.what());
+    }
+    
+    // Define return schema with repo_path as first column
     return_types = {
+        LogicalType::VARCHAR,    // repo_path
         LogicalType::VARCHAR,    // commit_hash
         LogicalType::VARCHAR,    // author_name  
         LogicalType::VARCHAR,    // author_email
@@ -49,11 +60,11 @@ unique_ptr<FunctionData> GitLogBind(ClientContext &context, TableFunctionBindInp
     };
     
     names = {
-        "commit_hash", "author_name", "author_email", "committer_name", "committer_email",
+        "repo_path", "commit_hash", "author_name", "author_email", "committer_name", "committer_email",
         "author_date", "commit_date", "message", "parent_count", "tree_hash"
     };
     
-    return make_uniq<GitLogFunctionData>(repo_path);
+    return make_uniq<GitLogFunctionData>(repo_path, resolved_repo_path);
 }
 
 unique_ptr<GlobalTableFunctionState> GitLogInitGlobal(ClientContext &context, TableFunctionInitInput &input) {
@@ -64,8 +75,8 @@ void GitLogFunction(ClientContext &context, TableFunctionInput &data_p, DataChun
     auto &data = (GitLogFunctionData &)*data_p.bind_data;
     
     if (!data.initialized) {
-        // Open repository
-        int error = git_repository_open(&data.repo, data.repo_path.c_str());
+        // Open repository using resolved path
+        int error = git_repository_open(&data.repo, data.resolved_repo_path.c_str());
         if (error != 0) {
             const git_error *e = git_error_last();
             throw IOException("Failed to open git repository '%s': %s", 
@@ -99,40 +110,43 @@ void GitLogFunction(ClientContext &context, TableFunctionInput &data_p, DataChun
             continue; // Skip invalid commits
         }
         
+        // Set repo_path as first column
+        output.SetValue(0, count, Value(data.repo_path));
+        
         // Get commit hash
         char hash_str[GIT_OID_HEXSZ + 1];
         git_oid_tostr(hash_str, sizeof(hash_str), &oid);
-        output.SetValue(0, count, Value(hash_str));
+        output.SetValue(1, count, Value(hash_str));
         
         // Get author info
         const git_signature *author = git_commit_author(commit);
-        output.SetValue(1, count, Value(author->name ? author->name : ""));
-        output.SetValue(2, count, Value(author->email ? author->email : ""));
+        output.SetValue(2, count, Value(author->name ? author->name : ""));
+        output.SetValue(3, count, Value(author->email ? author->email : ""));
         
         // Get committer info
         const git_signature *committer = git_commit_committer(commit);
-        output.SetValue(3, count, Value(committer->name ? committer->name : ""));
-        output.SetValue(4, count, Value(committer->email ? committer->email : ""));
+        output.SetValue(4, count, Value(committer->name ? committer->name : ""));
+        output.SetValue(5, count, Value(committer->email ? committer->email : ""));
         
         // Get timestamps
         timestamp_t author_ts = Timestamp::FromEpochSeconds(author->when.time);
         timestamp_t commit_ts = Timestamp::FromEpochSeconds(committer->when.time);
-        output.SetValue(5, count, Value::TIMESTAMP(author_ts));
-        output.SetValue(6, count, Value::TIMESTAMP(commit_ts));
+        output.SetValue(6, count, Value::TIMESTAMP(author_ts));
+        output.SetValue(7, count, Value::TIMESTAMP(commit_ts));
         
         // Get commit message
         const char *message = git_commit_message(commit);
-        output.SetValue(7, count, Value(message ? message : ""));
+        output.SetValue(8, count, Value(message ? message : ""));
         
         // Get parent count
         unsigned int parent_count = git_commit_parentcount(commit);
-        output.SetValue(8, count, Value::INTEGER(parent_count));
+        output.SetValue(9, count, Value::INTEGER(parent_count));
         
         // Get tree hash
         const git_oid *tree_oid = git_commit_tree_id(commit);
         char tree_hash[GIT_OID_HEXSZ + 1];
         git_oid_tostr(tree_hash, sizeof(tree_hash), tree_oid);
-        output.SetValue(9, count, Value(tree_hash));
+        output.SetValue(10, count, Value(tree_hash));
         
         git_commit_free(commit);
         count++;
@@ -145,8 +159,8 @@ void GitLogFunction(ClientContext &context, TableFunctionInput &data_p, DataChun
 // Git Branches Function
 //===--------------------------------------------------------------------===//
 
-GitBranchesFunctionData::GitBranchesFunctionData(const string &repo_path)
-    : repo_path(repo_path), repo(nullptr), iterator(nullptr), initialized(false) {
+GitBranchesFunctionData::GitBranchesFunctionData(const string &repo_path, const string &resolved_repo_path)
+    : repo_path(repo_path), resolved_repo_path(resolved_repo_path), repo(nullptr), iterator(nullptr), initialized(false) {
 }
 
 GitBranchesFunctionData::~GitBranchesFunctionData() {
@@ -169,16 +183,26 @@ unique_ptr<FunctionData> GitBranchesBind(ClientContext &context, TableFunctionBi
         }
     }
     
+    // Use GitPath::Parse for repository discovery
+    string resolved_repo_path;
+    try {
+        auto git_path = GitPath::Parse("git://" + repo_path + "@HEAD");
+        resolved_repo_path = git_path.repository_path;
+    } catch (const std::exception &e) {
+        throw IOException("Failed to resolve repository path '%s': %s", repo_path, e.what());
+    }
+    
     return_types = {
+        LogicalType::VARCHAR,  // repo_path
         LogicalType::VARCHAR,  // branch_name
         LogicalType::VARCHAR,  // commit_hash
         LogicalType::BOOLEAN,  // is_current
         LogicalType::BOOLEAN   // is_remote
     };
     
-    names = {"branch_name", "commit_hash", "is_current", "is_remote"};
+    names = {"repo_path", "branch_name", "commit_hash", "is_current", "is_remote"};
     
-    return make_uniq<GitBranchesFunctionData>(repo_path);
+    return make_uniq<GitBranchesFunctionData>(repo_path, resolved_repo_path);
 }
 
 unique_ptr<GlobalTableFunctionState> GitBranchesInitGlobal(ClientContext &context, TableFunctionInitInput &input) {
@@ -189,11 +213,11 @@ void GitBranchesFunction(ClientContext &context, TableFunctionInput &data_p, Dat
     auto &data = (GitBranchesFunctionData &)*data_p.bind_data;
     
     if (!data.initialized) {
-        int error = git_repository_open(&data.repo, data.repo_path.c_str());
+        int error = git_repository_open(&data.repo, data.resolved_repo_path.c_str());
         if (error != 0) {
             const git_error *e = git_error_last();
             throw IOException("Failed to open git repository '%s': %s", 
-                            data.repo_path, e ? e->message : "Unknown error");
+                            data.resolved_repo_path, e ? e->message : "Unknown error");
         }
         
         error = git_branch_iterator_new(&data.iterator, data.repo, GIT_BRANCH_ALL);
@@ -210,28 +234,31 @@ void GitBranchesFunction(ClientContext &context, TableFunctionInput &data_p, Dat
     git_branch_t branch_type;
     
     while (count < STANDARD_VECTOR_SIZE && git_branch_next(&ref, &branch_type, data.iterator) == 0) {
+        // Set repo_path as first column
+        output.SetValue(0, count, Value(data.repo_path));
+        
         // Get branch name
         const char *branch_name = nullptr;
         git_branch_name(&branch_name, ref);
-        output.SetValue(0, count, Value(branch_name ? branch_name : ""));
+        output.SetValue(1, count, Value(branch_name ? branch_name : ""));
         
         // Get commit hash
         const git_oid *oid = git_reference_target(ref);
         if (oid) {
             char hash_str[GIT_OID_HEXSZ + 1];
             git_oid_tostr(hash_str, sizeof(hash_str), oid);
-            output.SetValue(1, count, Value(hash_str));
+            output.SetValue(2, count, Value(hash_str));
         } else {
-            output.SetValue(1, count, Value(""));
+            output.SetValue(2, count, Value(""));
         }
         
         // Check if current branch
         bool is_current = git_branch_is_head(ref) == 1;
-        output.SetValue(2, count, Value::BOOLEAN(is_current));
+        output.SetValue(3, count, Value::BOOLEAN(is_current));
         
         // Check if remote branch
         bool is_remote = (branch_type == GIT_BRANCH_REMOTE);
-        output.SetValue(3, count, Value::BOOLEAN(is_remote));
+        output.SetValue(4, count, Value::BOOLEAN(is_remote));
         
         git_reference_free(ref);
         count++;
@@ -244,8 +271,8 @@ void GitBranchesFunction(ClientContext &context, TableFunctionInput &data_p, Dat
 // Git Tags Function
 //===--------------------------------------------------------------------===//
 
-GitTagsFunctionData::GitTagsFunctionData(const string &repo_path)
-    : repo_path(repo_path), repo(nullptr), current_index(0), initialized(false) {
+GitTagsFunctionData::GitTagsFunctionData(const string &repo_path, const string &resolved_repo_path)
+    : repo_path(repo_path), resolved_repo_path(resolved_repo_path), repo(nullptr), current_index(0), initialized(false) {
 }
 
 GitTagsFunctionData::~GitTagsFunctionData() {
@@ -273,7 +300,17 @@ unique_ptr<FunctionData> GitTagsBind(ClientContext &context, TableFunctionBindIn
         }
     }
     
+    // Use GitPath::Parse for repository discovery
+    string resolved_repo_path;
+    try {
+        auto git_path = GitPath::Parse("git://" + repo_path + "@HEAD");
+        resolved_repo_path = git_path.repository_path;
+    } catch (const std::exception &e) {
+        throw IOException("Failed to resolve repository path '%s': %s", repo_path, e.what());
+    }
+    
     return_types = {
+        LogicalType::VARCHAR,    // repo_path
         LogicalType::VARCHAR,    // tag_name
         LogicalType::VARCHAR,    // commit_hash
         LogicalType::VARCHAR,    // tagger_name
@@ -282,9 +319,9 @@ unique_ptr<FunctionData> GitTagsBind(ClientContext &context, TableFunctionBindIn
         LogicalType::BOOLEAN     // is_annotated
     };
     
-    names = {"tag_name", "commit_hash", "tagger_name", "tagger_date", "message", "is_annotated"};
+    names = {"repo_path", "tag_name", "commit_hash", "tagger_name", "tagger_date", "message", "is_annotated"};
     
-    return make_uniq<GitTagsFunctionData>(repo_path);
+    return make_uniq<GitTagsFunctionData>(repo_path, resolved_repo_path);
 }
 
 unique_ptr<GlobalTableFunctionState> GitTagsInitGlobal(ClientContext &context, TableFunctionInitInput &input) {
@@ -295,11 +332,11 @@ void GitTagsFunction(ClientContext &context, TableFunctionInput &data_p, DataChu
     auto &data = (GitTagsFunctionData &)*data_p.bind_data;
     
     if (!data.initialized) {
-        int error = git_repository_open(&data.repo, data.repo_path.c_str());
+        int error = git_repository_open(&data.repo, data.resolved_repo_path.c_str());
         if (error != 0) {
             const git_error *e = git_error_last();
             throw IOException("Failed to open git repository '%s': %s", 
-                            data.repo_path, e ? e->message : "Unknown error");
+                            data.resolved_repo_path, e ? e->message : "Unknown error");
         }
         
         // Get all tags
@@ -322,13 +359,15 @@ void GitTagsFunction(ClientContext &context, TableFunctionInput &data_p, DataChu
         string full_name = "refs/tags/" + tag_name;
         int error = git_reference_lookup(&tag_ref, data.repo, full_name.c_str());
         if (error == 0) {
-            output.SetValue(0, count, Value(tag_name));
+            // Set repo_path as first column
+            output.SetValue(0, count, Value(data.repo_path));
+            output.SetValue(1, count, Value(tag_name));
             
             const git_oid *oid = git_reference_target(tag_ref);
             if (oid) {
                 char hash_str[GIT_OID_HEXSZ + 1];
                 git_oid_tostr(hash_str, sizeof(hash_str), oid);
-                output.SetValue(1, count, Value(hash_str));
+                output.SetValue(2, count, Value(hash_str));
                 
                 // Try to get tag object for annotation info
                 git_tag *tag_obj = nullptr;
@@ -338,26 +377,26 @@ void GitTagsFunction(ClientContext &context, TableFunctionInput &data_p, DataChu
                     
                     const git_signature *tagger = git_tag_tagger(tag_obj);
                     if (tagger) {
-                        output.SetValue(2, count, Value(tagger->name ? tagger->name : ""));
+                        output.SetValue(3, count, Value(tagger->name ? tagger->name : ""));
                         timestamp_t tag_ts = Timestamp::FromEpochSeconds(tagger->when.time);
-                        output.SetValue(3, count, Value::TIMESTAMP(tag_ts));
+                        output.SetValue(4, count, Value::TIMESTAMP(tag_ts));
                     } else {
-                        output.SetValue(2, count, Value(""));
-                        output.SetValue(3, count, Value());
+                        output.SetValue(3, count, Value(""));
+                        output.SetValue(4, count, Value());
                     }
                     
                     const char *message = git_tag_message(tag_obj);
-                    output.SetValue(4, count, Value(message ? message : ""));
+                    output.SetValue(5, count, Value(message ? message : ""));
                     
                     git_tag_free(tag_obj);
                 } else {
                     // Lightweight tag
-                    output.SetValue(2, count, Value(""));
-                    output.SetValue(3, count, Value());
-                    output.SetValue(4, count, Value(""));
+                    output.SetValue(3, count, Value(""));
+                    output.SetValue(4, count, Value());
+                    output.SetValue(5, count, Value(""));
                 }
                 
-                output.SetValue(5, count, Value::BOOLEAN(is_annotated));
+                output.SetValue(6, count, Value::BOOLEAN(is_annotated));
             }
             
             git_reference_free(tag_ref);
