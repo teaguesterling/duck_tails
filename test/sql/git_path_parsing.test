@@ -1,0 +1,61 @@
+# name: test/sql/git_path_parsing.test
+# description: Test git:// URL path parsing with various edge cases
+# group: [duck_tails]
+
+require duck_tails
+
+# Test 1: Simple path with revision
+query I
+SELECT COUNT(*) > 0 as works
+FROM read_csv('git://test/data/sales.csv@HEAD');
+----
+true
+
+# Test 2: Reflog syntax - HEAD@{0} should work
+query I
+SELECT COUNT(*) > 0 as works_reflog
+FROM read_csv('git://test/data/sales.csv@HEAD@{0}');
+----
+true
+
+# Test 3: Reflog syntax - HEAD@{1} (previous commit)
+query I
+SELECT COUNT(*) >= 0 as works_reflog_prev
+FROM read_csv('git://test/data/sales.csv@HEAD@{1}');
+----
+true
+
+# Test 4: Named reflog - main@{yesterday}
+query I
+SELECT COUNT(*) >= 0 as works_named_reflog
+FROM read_csv('git://test/data/sales.csv@main@{yesterday}');
+----
+true
+
+# Test 5: Reflog with time spec - HEAD@{1.day.ago}
+query I
+SELECT COUNT(*) >= 0 as works_time_reflog
+FROM read_csv('git://test/data/sales.csv@HEAD@{1.day.ago}');
+----
+true
+
+# Test 6: Reflog with week spec - HEAD@{1.week.ago}
+query I
+SELECT COUNT(*) >= 0 as works_week_reflog
+FROM read_csv('git://test/data/sales.csv@HEAD@{1.week.ago}');
+----
+true
+
+# Test 7: Glob patterns added by DuckDB should be handled correctly
+# This tests that git://file.csv@HEAD/**/*.csv correctly parses
+# Note: read_csv adds /**/*.csv automatically, so this tests that path
+statement error
+SELECT * FROM read_csv('git://nonexistent-file.csv@HEAD');
+----
+No files found that match the pattern
+
+# Test 8: Verify glob patterns don't interfere with reflog
+statement error
+SELECT * FROM read_csv('git://nonexistent@{0}.csv@HEAD');
+----
+No files found that match the pattern

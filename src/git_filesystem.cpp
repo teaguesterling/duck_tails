@@ -37,10 +37,34 @@ GitPath GitPath::Parse(const string &git_url) {
     }
     
     // Find @ symbol to separate path from revision
-    size_t at_pos = url.find_last_of('@');
+    // We need to find the LAST @ that is NOT followed by '{' to support reflog syntax
+    // Examples:
+    //   git://file.csv@HEAD           -> split at @, revision = "HEAD"
+    //   git://file.csv@HEAD@{0}       -> split at first @, revision = "HEAD@{0}"
+    //   git://file.csv@main@{1.day.ago} -> split at first @, revision = "main@{1.day.ago}"
+    //   git://file.csv@HEAD/**/*.csv  -> split at @, revision = "HEAD/**/*.csv" (glob handled below)
+    size_t at_pos = string::npos;
+    for (size_t i = 0; i < url.length(); ++i) {
+        if (url[i] == '@') {
+            // Check if this @ is followed by '{'
+            if (i + 1 >= url.length() || url[i + 1] != '{') {
+                at_pos = i;  // This is a candidate, keep looking for the last one
+            }
+        }
+    }
+
+    string path_suffix = "";
     if (at_pos != string::npos) {
         result.revision = url.substr(at_pos + 1);
         url = url.substr(0, at_pos);
+
+        // Handle glob patterns appended by DuckDB (e.g., @HEAD/**/*.csv)
+        // Any path component (starting with /) after the revision should be part of the file path
+        size_t slash_pos = result.revision.find('/');
+        if (slash_pos != string::npos) {
+            path_suffix = result.revision.substr(slash_pos);
+            result.revision = result.revision.substr(0, slash_pos);
+        }
     } else {
         result.revision = "HEAD";
     }
@@ -48,38 +72,38 @@ GitPath GitPath::Parse(const string &git_url) {
     // Parse repository path and file path - use discovery for ALL paths
     if (url.empty()) {
         result.repository_path = ".";
-        result.file_path = "";
+        result.file_path = path_suffix.empty() ? "" : path_suffix.substr(1);  // Remove leading /
     } else {
         // Use repository discovery for ALL paths (simple and complex)
         try {
             result.repository_path = FindGitRepository(url);
-            
+
             // Normalize the URL path for consistent file path calculation
             string normalized_url = NormalizePath(url);
-            
+
             // Calculate file path relative to discovered repository using normalized paths
             if (result.repository_path == "/") {
                 if (normalized_url.length() > 1) {
-                    result.file_path = normalized_url.substr(1);
+                    result.file_path = normalized_url.substr(1) + path_suffix;
                 } else {
-                    result.file_path = "";
+                    result.file_path = path_suffix.empty() ? "" : path_suffix.substr(1);  // Remove leading /
                 }
             } else if (result.repository_path == ".") {
                 // For current directory, use original relative path
-                result.file_path = url;
+                result.file_path = url + path_suffix;
             } else {
                 // Remove repository path prefix to get relative file path
                 string repo_prefix = result.repository_path;
                 if (!repo_prefix.empty() && repo_prefix.back() != '/') {
                     repo_prefix += "/";
                 }
-                
-                if (normalized_url.length() >= repo_prefix.length() && 
+
+                if (normalized_url.length() >= repo_prefix.length() &&
                     normalized_url.substr(0, repo_prefix.length()) == repo_prefix) {
-                    result.file_path = normalized_url.substr(repo_prefix.length());
+                    result.file_path = normalized_url.substr(repo_prefix.length()) + path_suffix;
                 } else {
                     // Use original relative path if normalized doesn't match
-                    result.file_path = url;
+                    result.file_path = url + path_suffix;
                 }
             }
         } catch (const IOException &e) {
@@ -89,10 +113,10 @@ GitPath GitPath::Parse(const string &git_url) {
                 search_path = GetDirectoryFromPath(url);
             }
             throw IOException("No git repository found for path '%s'. "
-                             "Searched up directory tree from '%s' but found no .git directory.", 
+                             "Searched up directory tree from '%s' but found no .git directory.",
                              git_url.c_str(), search_path.c_str());
         }
-    }    
+    }
     return result;
 }
 
