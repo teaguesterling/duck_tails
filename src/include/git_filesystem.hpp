@@ -71,6 +71,12 @@ struct GitPath {
     string file_path;       // Path within repo (can include glob patterns)
     string revision;        // Branch, tag, commit hash, or range
     
+    // Range support fields
+    bool is_range;          // True if revision contains range notation (..)
+    string range_start;     // Start of range (e.g., "v1.0" in "v1.0..v2.0")
+    string range_end;       // End of range (e.g., "v2.0" in "v1.0..v2.0")  
+    bool is_three_dot;      // True for "..." syntax, false for ".." syntax
+    
     static GitPath Parse(const string &git_url);
     string ToString() const;
 };
@@ -177,14 +183,14 @@ private:
     git_object* ResolveRevision(git_repository *repo, const string &revision);
     string GetBlobContent(git_repository *repo, const string &file_path, git_object *commit_obj);
     vector<OpenFileInfo> ListFiles(git_repository *repo, const string &pattern, git_object *commit_obj);
-    
+
     // LFS support methods
     bool IsLFSPointer(const string &content);
     LFSInfo ParseLFSPointer(const string &pointer_content);
     LFSConfig ReadLFSConfig(git_repository *repo);
     string BuildLFSObjectPath(git_repository *repo, const string &oid);
     LFSBatchResponse CallLFSBatchAPI(const LFSConfig &config, const LFSInfo &lfs_info);
-    
+
     // Cache for opened repositories
     std::unordered_map<string, git_repository*> repo_cache_;
 };

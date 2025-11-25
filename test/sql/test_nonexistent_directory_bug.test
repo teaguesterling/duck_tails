@@ -1,0 +1,52 @@
+# name: test/sql/test_nonexistent_directory_bug.test
+# description: Test that git_read works with paths referencing historical commits, even when intermediate directories don't exist in working tree
+# group: [duck_tails]
+#
+# This reproduces the bug from leadconduit-integration-facebook where spec/ was renamed to test/
+# When reading from a commit where spec/file.js existed, it failed because spec/ didn't exist in working tree
+# The fix ensures FindGitRepository walks up from non-existent paths to find the repo root
+
+require duck_tails
+
+# Use __BUILD_DIRECTORY__ to ensure we load the freshly built extension
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
+
+# Test 1: Read file using git:// URI with full path at a specific commit
+# Uses test/tmp/main-repo fixture which has files in src/ directory
+# The key is that we're specifying the full path including directory structure
+query I
+SELECT LENGTH(text) > 0 as has_content
+FROM git_read('git://test/tmp/main-repo/src/main.py@a56aab9');
+----
+true
+
+# Test 2: Read file that only exists in develop branch, not at HEAD
+# This simulates the bug: src/test.py exists at commit 7cec79b but not at current HEAD
+# The fix ensures we can still read it by walking up from the path to find repo root
+query I
+SELECT LENGTH(text) > 0 as has_content
+FROM git_read('git://test/tmp/main-repo/src/test.py@7cec79b');
+----
+true
+
+# Test 3: Verify we can read from nested directory at HEAD
+query I
+SELECT LENGTH(text) > 0 as has_content
+FROM git_read('git://test/tmp/main-repo/src/main.py@HEAD');
+----
+true
+
+# Test 4: Read from root-level file at specific commit
+query I
+SELECT LENGTH(text) > 0 as has_content
+FROM git_read('git://test/tmp/main-repo/README.md@a56aab9');
+----
+true
+
+# Test 5: Ensure appropriate error for file that doesn't exist in the discovered repo
+# Note: The path discovery will walk up and find the current repo, then fail on file lookup
+statement error
+SELECT * FROM git_read('git://definitely-nonexistent-repo-path-12345/file.txt@HEAD');
+----
+file not found

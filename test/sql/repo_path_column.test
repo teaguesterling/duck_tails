@@ -4,6 +4,10 @@
 
 require duck_tails
 
+# Use __BUILD_DIRECTORY__ to ensure we load the freshly built extension
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
+
 # Test 1: Verify git_log has repo_path as first column
 query II
 SELECT repo_path, COUNT(*) > 0 as has_commits FROM git_log('.') GROUP BY repo_path;
@@ -37,14 +41,13 @@ SELECT COUNT(*) > 0 as discovery_works FROM read_csv('git://test/data/sales.csv@
 ----
 true
 
-# Test 6: Test Option 2 enhancement - partially existing paths should work
-# The ./src directory exists, even if we reference a non-existent file
-query II
-SELECT repo_path, COUNT(*) > 0 as found_repo 
-FROM git_log('./src/nonexistent-file.txt') 
-GROUP BY repo_path;
+# Test 6: Non-existent files should return 0 results (correct behavior)
+# Even if the parent directory exists, non-existent files have no git history
+query I
+SELECT COUNT(*) as row_count
+FROM git_log('./src/nonexistent-file.txt');
 ----
-./src/nonexistent-file.txt	true
+0
 
 # Test 7: Test clear error message for completely non-existent paths
 statement error

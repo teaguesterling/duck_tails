@@ -1,0 +1,40 @@
+# Test LATERAL joins
+# Use __BUILD_DIRECTORY__ to ensure we load the freshly built extension
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/repository';
+
+statement ok
+LOAD duck_tails;
+
+statement ok
+CREATE OR REPLACE MACRO FIXTURE_PATH() AS 'test/tmp/main-repo';
+
+# Test 1: git_tree_each -> git_log_each LATERAL
+query II
+SELECT 
+    t.file_path,
+    COUNT(l.commit_hash) as commit_count
+FROM git_tree_each(CONCAT('git://', FIXTURE_PATH(), '@HEAD')) t
+CROSS JOIN LATERAL (
+    SELECT commit_hash 
+    FROM git_log_each(t.git_uri) 
+    LIMIT 1
+) l
+WHERE t.file_path = 'README.md'
+GROUP BY t.file_path;
+----
+README.md	1
+
+# Test 2: git_tree_each -> git_read_each LATERAL
+query II
+SELECT 
+    t.file_path,
+    LENGTH(r.text) > 0 as has_content
+FROM git_tree_each(CONCAT('git://', FIXTURE_PATH(), '@HEAD')) t
+CROSS JOIN LATERAL (
+    SELECT text 
+    FROM git_read_each(t.git_uri)
+) r
+WHERE t.file_path = 'README.md';
+----
+README.md	true

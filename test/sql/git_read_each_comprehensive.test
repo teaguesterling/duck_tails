@@ -1,0 +1,152 @@
+# name: test/sql/git_read_each_comprehensive.test
+# description: Comprehensive tests for git_read_each LATERAL functionality
+# group: [duck_tails]
+
+require duck_tails
+
+# Use __BUILD_DIRECTORY__ to ensure we load the freshly built extension
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
+
+statement ok
+PRAGMA enable_verification;
+
+# Test direct git_read calls (basic functionality)
+query T
+SELECT kind FROM git_read('git://README.md@HEAD')
+----
+file
+
+# Test git_read with parameters (uri, max_bytes)
+query TI
+SELECT kind, size_bytes > 0 as has_size FROM git_read('git://README.md@HEAD', 1000)
+----
+file	true
+
+# Test LATERAL git_read_each with single URI
+query TT
+WITH test_uris AS (SELECT 'git://README.md@HEAD' as uri)
+SELECT t.uri, r.kind FROM test_uris t, LATERAL git_read_each(t.uri) r
+----
+git://README.md@HEAD	file
+
+# Test LATERAL git_read_each with multiple URIs
+query TT
+WITH test_uris(uri) AS (
+    VALUES 
+        ('git://README.md@HEAD'),
+        ('git://test/sql/duck_tails_phase2_basic.test@HEAD')
+)
+SELECT t.uri, r.kind FROM test_uris t, LATERAL git_read_each(t.uri) r
+ORDER BY t.uri
+----
+git://README.md@HEAD	file
+git://test/sql/duck_tails_phase2_basic.test@HEAD	file
+
+# Test LATERAL git_read_each with complex query
+query TIT
+WITH test_uris(name, uri) AS (
+    VALUES 
+        ('readme', 'git://README.md@HEAD'),
+        ('test', 'git://test/sql/duck_tails_phase2_basic.test@HEAD')
+)
+SELECT t.name, r.is_text, r.size_bytes > 0 as has_size
+FROM test_uris t, LATERAL git_read_each(t.uri) r
+ORDER BY t.name
+----
+readme	true	true
+test	true	true
+
+# Test LATERAL git_read_each with parameters
+query TTI
+WITH test_uris AS (SELECT 'git://README.md' as uri)
+SELECT t.uri, r.kind, r.size_bytes <= 100 as truncated_test 
+FROM test_uris t, LATERAL git_read_each(t.uri, 'HEAD', 100) r
+----
+git://README.md	file	false
+
+# Test git_read error handling - invalid URI format (treated as file path, not found)
+statement error
+SELECT * FROM git_read('invalid://uri')
+----
+file not found
+
+# Test git_read error handling - non-existent file
+statement error
+SELECT * FROM git_read('git://non_existent_file.txt@HEAD')
+----
+file not found 'non_existent_file.txt' in commit 'HEAD'
+
+# Test LATERAL git_read_each with NULL URI (should skip)
+query I
+WITH test_uris(uri) AS (
+    VALUES ('git://README.md@HEAD'), (NULL)
+)
+SELECT COUNT(*) FROM test_uris t, LATERAL git_read_each(t.uri) r
+----
+1
+
+# Test LATERAL git_read_each in complex JOIN scenario
+query TTT
+WITH repos(name) AS (VALUES ('README.md')),
+     commits(hash) AS (VALUES ('HEAD'))
+SELECT r.name, c.hash, f.kind
+FROM repos r, commits c, LATERAL git_read_each('git://' || r.name || '@' || c.hash) f
+----
+README.md	HEAD	file
+
+# Test git_read schema consistency (should have 16 columns)
+query I
+SELECT COUNT(*) FROM (
+  DESCRIBE (SELECT * FROM git_read('git://README.md@HEAD'))
+)
+----
+16
+
+# Test git_read return columns match expected schema
+statement ok
+SELECT git_uri, mode, kind, is_text, encoding, size_bytes, truncated, text, blob
+FROM git_read('git://README.md@HEAD')
+
+# Test LATERAL git_read_each with aggregate functions
+query I
+WITH test_uris(uri) AS (
+    VALUES 
+        ('git://README.md@HEAD'),
+        ('git://test/sql/duck_tails_phase2_basic.test@HEAD')
+)
+SELECT COUNT(*) FROM test_uris t, LATERAL git_read_each(t.uri) r
+----
+2
+
+# Test LATERAL git_read_each with WHERE clause
+query T
+WITH test_uris(uri) AS (
+    VALUES 
+        ('git://README.md@HEAD'),
+        ('git://test/sql/duck_tails_phase2_basic.test@HEAD')
+)
+SELECT r.kind FROM test_uris t, LATERAL git_read_each(t.uri) r
+WHERE t.uri LIKE '%README%'
+----
+file
+
+# Test git_read with named parameters
+query T
+SELECT kind FROM git_read('git://README.md@HEAD', repo_path := '.')
+----
+file
+
+# Test LATERAL git_read_each performance with generate_series
+query II
+WITH test_data AS (
+  SELECT g.i, 'git://README.md@HEAD' as uri
+  FROM generate_series(1, 2) g(i)
+)
+SELECT t.i, COUNT(*) as file_count
+FROM test_data t, LATERAL git_read_each(t.uri) r
+GROUP BY t.i
+ORDER BY t.i
+----
+1	1
+2	1

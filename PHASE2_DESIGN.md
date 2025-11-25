@@ -41,6 +41,8 @@ if (both_paths_are_git_urls) {
 - TextDiff data type and basic diff computation
 - text_diff() scalar function  
 - Basic git:// filesystem integration from Phase 1
+- git_tree() table function for repository file structure analysis
+- git_parents() table function for commit genealogy analysis
 
 ### 🚧 Current Task
 - Refactor semantic_diff() → diff_text()

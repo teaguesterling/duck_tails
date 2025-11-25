@@ -4,68 +4,64 @@
 
 Duck Tails is a DuckDB extension that brings git-aware data analysis capabilities to your database. Query your git history, access files at any revision, and perform version-aware data analysis - all with SQL.
 
-**Status: Phase 2 Complete** - Git filesystem access with Git LFS streaming support, diff analysis capabilities, and comprehensive test coverage.
+**Status: Functional** - Git filesystem access and diff analysis capabilities with comprehensive test coverage.
 
 ## ✨ Features
 
-### 🗂️ Git Filesystem with LFS Support
-Access any file in your git repository at any commit, branch, or tag using the `git://` protocol flexible repository path support and LFS (Large File Storage) streaming support for large files!
+### 🗂️ Git Filesystem
+Access any file in your git repository at any commit, branch, or tag using the `git://` protocol:
 
 ```sql
--- Read a CSV file from the current repository
+-- Read a CSV file from the current HEAD
 SELECT * FROM read_csv('git://data/sales.csv@HEAD');
-
--- Access files from sibling repositories
-SELECT * FROM read_csv('git://../other-repo/config.json@HEAD');
-
--- Work with absolute repository paths
-SELECT * FROM read_csv('git:///path/to/project/data.csv@HEAD');
-
--- Access large files stored in Git LFS (automatically detected and streamed)
-SELECT * FROM read_csv('git://data/large_dataset.csv@HEAD');
 
 -- Compare data between commits
 SELECT * FROM read_csv('git://data/sales.csv@HEAD~1');
 
--- Access files from specific branches and tags
+-- Access files from a specific branch
 SELECT * FROM read_csv('git://config.json@feature-branch');
+
+-- Load data from a tagged release
 SELECT * FROM read_csv('git://metrics.csv@v1.0.0');
+
+-- Work with sibling repositories
+SELECT * FROM read_csv('git://../other-repo/config.json@HEAD');
 ```
 
-**Git LFS Features:**
-- **Automatic Detection**: LFS pointer files are automatically detected and the actual content is streamed
-- **Local Cache Support**: Uses local `.git/lfs/objects/` cache when available
-- **Streaming Architecture**: Large files are streamed efficiently without loading entirely into memory
-- **Transparent Integration**: Works seamlessly with all existing `git://` functionality
+Git LFS files are automatically detected and streamed from local cache when available.
 
 ### 📊 Git Table Functions
-Query your git repository metadata directly with flexible repository path support:
+Query your git repository metadata directly with clean, simple syntax:
 
 ```sql
 -- View commit history (defaults to current directory)
-SELECT repo_path, commit_hash, author_name, message, author_date 
+SELECT commit_hash, author_name, message, author_date
 FROM git_log();
 
--- List all branches with repository context
-SELECT repo_path, branch_name, commit_hash, is_current 
+-- List all branches
+SELECT branch_name, commit_hash, is_current
 FROM git_branches();
 
 -- Show all tags
-SELECT repo_path, tag_name, commit_hash, tagger_date 
+SELECT tag_name, commit_hash, tagger_date
 FROM git_tags();
 
--- Query different repositories
+-- Or specify a different repository path
+SELECT * FROM git_log('/path/to/repo');
 SELECT * FROM git_log('../other-project');
-SELECT * FROM git_log('/absolute/path/to/repo');
+```
 
--- Multi-repository analysis
-SELECT repo_path, COUNT(*) as commit_count 
-FROM (
-    SELECT * FROM git_log('.')
-    UNION ALL 
-    SELECT * FROM git_log('../other-repo')
-) 
-GROUP BY repo_path;
+Query commits that affected specific files:
+
+```sql
+-- Find all commits that modified a file
+SELECT commit_hash, author_name, message
+FROM git_log('git://README.md@HEAD');
+
+-- Track changes to configuration files
+SELECT commit_hash, author_date, message
+FROM git_log('git://config/database.yml@HEAD')
+ORDER BY author_date DESC;
 ```
 
 ### 🔄 Version-Aware Analysis

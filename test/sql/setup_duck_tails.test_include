@@ -1,0 +1,16 @@
+# Common setup for duck_tails extension tests
+# This file should be included at the beginning of each test file
+# Usage: include setup_duck_tails.test_include
+
+# Set the extension directory to the build output location
+# This ensures tests use the freshly built extension, not cached versions
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/repository';
+
+# Load the duck_tails extension
+statement ok
+LOAD duck_tails;
+
+# Optional: Set common test parameters
+statement ok
+PRAGMA threads=1;

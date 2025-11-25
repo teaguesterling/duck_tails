@@ -4,6 +4,10 @@
 
 require duck_tails
 
+# Use __BUILD_DIRECTORY__ to ensure we load the freshly built extension
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/repository';
+
 # Load the extension
 statement ok
 LOAD duck_tails;

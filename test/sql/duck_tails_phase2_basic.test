@@ -4,6 +4,10 @@
 
 require duck_tails
 
+# Use __BUILD_DIRECTORY__ to ensure we load the freshly built extension
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
+
 # Test diff_text function works
 query I
 SELECT length(diff_text('Hello World', 'Hello DuckDB')) > 0 as has_diff;

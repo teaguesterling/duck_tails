@@ -1,0 +1,14 @@
+# Minimal test - git_read direct call (git_read_each is LATERAL-only)
+# Use __BUILD_DIRECTORY__ to ensure we load the freshly built extension
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/repository';
+
+statement ok
+LOAD duck_tails;
+
+# Direct call - no LATERAL, no complex setup - using test/tmp fixture
+query I
+SELECT LENGTH(text) > 0 as has_content
+FROM git_read('git://test/tmp/main-repo/README.md@HEAD');
+----
+true

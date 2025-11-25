@@ -1,0 +1,13 @@
+# Sanity test
+# Use __BUILD_DIRECTORY__ to ensure we load the freshly built extension
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/repository';
+
+statement ok
+LOAD duck_tails;
+
+# Simple query
+query I
+SELECT 1;
+----
+1

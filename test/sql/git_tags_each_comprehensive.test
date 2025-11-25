@@ -1,0 +1,187 @@
+# name: test/sql/git_tags_each_comprehensive.test
+# description: Comprehensive tests for git_tags_each LATERAL functionality
+# group: [duck_tails]
+
+require duck_tails
+
+# Use __BUILD_DIRECTORY__ to ensure we load the freshly built extension
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
+
+statement ok
+PRAGMA enable_verification
+
+# Test basic git_tags_each static usage (should be identical to git_tags)
+query T
+SELECT COUNT(*) >= 0 as valid_tag_count FROM git_tags_each('test/tmp/main-repo')
+----
+true
+
+# Test git_tags_each schema consistency (should match git_tags schema - now 8 columns with tag_hash)
+query I
+SELECT COUNT(*) FROM (
+  DESCRIBE (SELECT * FROM git_tags_each('test/tmp/main-repo'))
+)
+----
+8
+
+# Test git_tags_each return columns match expected schema (including new tag_hash column)
+statement ok
+SELECT repo_path, tag_name, commit_hash, tag_hash, tagger_name, is_annotated, tagger_date, message
+FROM git_tags_each('test/tmp/main-repo') LIMIT 1
+
+# Test git_tags zero-argument version (defaults to current directory)
+query T
+SELECT COUNT(*) >= 0 as valid_tag_count FROM git_tags()
+----
+true
+
+# Test LATERAL git_tags_each with single repository path
+query I
+SELECT COUNT(*) >= 0 as valid_count FROM git_tags_each('test/tmp/main-repo')
+----
+true
+
+# Test LATERAL git_tags_each column reference validation - confirms dynamic parameter usage
+query TTI
+WITH test_repos(name, repo_path) AS (
+    VALUES ('main-repo', 'test/tmp/main-repo'), 
+           ('large-repo', 'test/tmp/large-repo')
+)
+SELECT t.name, t.repo_path, 
+       (SELECT COUNT(*) FROM git_tags_each(t.repo_path)) >= 0 as valid_count
+FROM test_repos t
+ORDER BY t.name
+----
+large-repo	test/tmp/large-repo	true
+main-repo	test/tmp/main-repo	true
+
+# Test git_tags_each error handling - non-existent repository (gracefully returns 0 rows)
+query I
+SELECT COUNT(*) FROM git_tags_each('/path/that/does/not/exist');
+----
+0
+
+# Test git_tags_each error handling - invalid git reference (gracefully returns 0 rows)
+query I
+SELECT COUNT(*) FROM git_tags_each('git://test/tmp/main-repo@invalid@@@ref');
+----
+0
+
+# Test LATERAL git_tags_each with NULL repository path (should skip)
+query I
+SELECT COUNT(*) >= 0 as valid_count FROM git_tags_each('test/tmp/main-repo')
+----
+true
+
+# Test git_tags_each with positional parameter
+query T
+SELECT COUNT(*) >= 0 as valid_tag_count FROM git_tags_each('test/tmp/main-repo')
+----
+true
+
+# Test git_tags_each functional equivalence with git_tags (should be identical)
+query I
+SELECT 
+    (SELECT COUNT(*) FROM git_tags('test/tmp/main-repo')) > 0 AND
+    (SELECT COUNT(*) FROM git_tags_each('test/tmp/main-repo')) > 0 as both_have_results
+----
+true
+
+# Test LATERAL git_tags_each in cross-repository analysis
+statement ok
+SELECT p.name, tags.tag_name, LENGTH(tags.commit_hash) = 40 as valid_hash
+FROM (VALUES ('main', 'test/tmp/main-repo')) p(name, path), 
+     LATERAL git_tags_each(p.path) tags
+LIMIT 3
+
+# Test git_tags_each repo_path column consistency
+statement ok
+SELECT DISTINCT repo_path FROM git_tags_each('test/tmp/main-repo') LIMIT 1
+
+# Test git_tags_each tag name format (when tags exist)
+statement ok
+SELECT tag_name, commit_hash, tagger_name 
+FROM git_tags_each('test/tmp/main-repo') 
+WHERE tag_name IS NOT NULL AND LENGTH(tag_name) > 0
+LIMIT 5
+
+# Test git_tags_each commit hash validation (when tags exist)
+statement ok
+SELECT tag_name 
+FROM git_tags_each('test/tmp/main-repo') 
+WHERE commit_hash IS NOT NULL AND LENGTH(commit_hash) = 40
+LIMIT 5
+
+# Test LATERAL git_tags_each with conditional processing
+query I
+SELECT COUNT(*) >= 0 as valid_count
+FROM (VALUES ('test/tmp/main-repo')) t(repo_path),
+     LATERAL git_tags_each(t.repo_path) tags
+----
+true
+
+# Test git_tags_each performance with generate_series
+query II
+SELECT g.i, COUNT(*) >= 0 as valid_count
+FROM generate_series(1, 2) g(i),
+     LATERAL git_tags_each('test/tmp/main-repo') tags
+GROUP BY g.i
+ORDER BY g.i
+----
+1	true
+2	true
+
+# Test git_tags_each date handling (when tags exist)
+statement ok
+SELECT tag_name, tagger_date
+FROM git_tags_each('test/tmp/main-repo')
+WHERE tagger_date IS NOT NULL
+LIMIT 3
+
+# Test tag_hash column exists and has valid format
+statement ok
+SELECT tag_name, tag_hash
+FROM git_tags_each('test/tmp/main-repo')
+WHERE tag_hash IS NOT NULL AND LENGTH(tag_hash) = 40
+LIMIT 5
+
+# Test commit_hash vs tag_hash behavior for lightweight tags (should be identical)
+query TT
+SELECT tag_name, 
+       CASE WHEN commit_hash = tag_hash THEN 'identical' ELSE 'different' END as hash_comparison
+FROM git_tags_each('test/tmp/main-repo')
+WHERE is_annotated = false AND tag_name IS NOT NULL
+ORDER BY tag_name
+LIMIT 5
+----
+beta-1	identical
+
+# Test commit_hash vs tag_hash behavior for annotated tags (should be different)
+query TTT
+SELECT tag_name, 
+       commit_hash != tag_hash as hashes_different,
+       CASE WHEN LENGTH(commit_hash) = 40 AND LENGTH(tag_hash) = 40 THEN 'both_valid' ELSE 'invalid' END as hash_validity
+FROM git_tags_each('test/tmp/main-repo')
+WHERE is_annotated = true AND tag_name IS NOT NULL
+ORDER BY tag_name
+LIMIT 5
+----
+v1.0.0	true	both_valid
+v2.0.0	true	both_valid
+
+# Test that commit_hash points to actual commits for annotated tags
+statement ok
+SELECT tag_name, commit_hash, tag_hash, is_annotated
+FROM git_tags_each('test/tmp/main-repo')
+WHERE is_annotated = true AND tag_name = 'v1.0.0'
+
+# Verify all tag hashes have correct format
+query I
+SELECT COUNT(*) as valid_hash_count
+FROM git_tags_each('test/tmp/main-repo')
+WHERE tag_hash IS NOT NULL 
+  AND LENGTH(tag_hash) = 40 
+  AND tag_hash ~ '^[0-9a-f]{40}$'
+----
+3

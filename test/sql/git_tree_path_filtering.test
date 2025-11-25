@@ -1,0 +1,91 @@
+# Path Filtering Test Suite for git_tree functions
+# Tests the v5 patch implementation for path filtering
+
+require duck_tails
+
+# Use __BUILD_DIRECTORY__ to ensure we load the freshly built extension
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
+# Test: Root returns all entries  
+query I
+SELECT COUNT(*) > 0 as has_entries FROM git_tree('git://test/tmp/main-repo@HEAD');
+----
+true
+
+# Test: All entry types included  
+query I
+SELECT count_if(kind='file') > 0 as has_files
+FROM git_tree('git://test/tmp/main-repo@HEAD');
+----
+true
+
+query I  
+SELECT count_if(kind='tree') > 0 as has_trees
+FROM git_tree('git://test/tmp/main-repo@HEAD');
+----
+true
+
+query I
+SELECT count_if(kind='submodule') >= 0 as has_submodules  
+FROM git_tree('git://test/tmp/main-repo@HEAD');
+----
+true
+
+# Test: Non-file rows have NULL blob_hash
+query I
+SELECT count_if(kind IN ('tree','submodule') AND blob_hash IS NULL) = count_if(kind IN ('tree','submodule')) AS null_blob_ok
+FROM git_tree('git://test/tmp/main-repo@HEAD');
+----
+true
+
+# Test: File rows have non-NULL blob_hash  
+query I
+SELECT count_if(kind='file' AND blob_hash IS NOT NULL) = count_if(kind='file') AS file_blob_ok
+FROM git_tree('git://test/tmp/main-repo@HEAD');
+----
+true
+
+# Test: Directory filtering works (src directory exists in fixture)
+query I
+SELECT COUNT(*) > 0 AND COUNT(*) = count_if(file_path LIKE 'src%' OR file_path = 'src') as paths_correct 
+FROM git_tree('git://test/tmp/main-repo/src@HEAD');
+----
+true
+
+# Test: Single file returns exactly 1 row (README.md exists in fixture)
+query I
+SELECT COUNT(*) = 1 as single_file
+FROM git_tree('git://test/tmp/main-repo/README.md@HEAD');
+----
+true
+
+# Test: Non-existent path should succeed (finds repo) but return empty result (path doesn't exist in tree)
+query I
+SELECT COUNT(*) = 0 as empty_result
+FROM git_tree('git://test/tmp/main-repo/nonexistent/path@HEAD');
+----
+true
+
+# Test: LATERAL parity - git_tree and git_tree_each return same result sets
+# (Testing with limited results for performance)
+statement ok
+CREATE TEMP TABLE direct_results AS 
+SELECT file_path, kind FROM git_tree('git://test/tmp/main-repo@HEAD') LIMIT 10;
+
+statement ok  
+CREATE TEMP TABLE lateral_results AS
+SELECT t.file_path, t.kind
+FROM (VALUES ('git://test/tmp/main-repo@HEAD')) v(uri),
+     LATERAL git_tree_each(v.uri) AS t
+LIMIT 10;
+
+query I
+SELECT 
+  (SELECT COUNT(*) FROM direct_results) = (SELECT COUNT(*) FROM lateral_results) AND
+  NOT EXISTS(
+    SELECT file_path, kind FROM direct_results 
+    EXCEPT 
+    SELECT file_path, kind FROM lateral_results
+  ) as same_results;
+----
+true
