@@ -1,0 +1,21 @@
+# Test only git_tree LATERAL joins
+statement ok
+PRAGMA threads=1;
+
+# Use __BUILD_DIRECTORY__ to ensure we load the freshly built extension
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/repository';
+
+statement ok
+LOAD duck_tails;
+
+# Test git_tree_each -> git_log_each LATERAL join
+query II
+SELECT t.file_path, l.commit_hash
+FROM git_tree_each('git://test/tmp/main-repo@HEAD') t
+CROSS JOIN LATERAL git_log_each(t.git_uri) l
+WHERE t.file_path = 'README.md'
+ORDER BY l.commit_hash;
+----
+README.md	98a81b6e1c5827488c6b146c699e055200be3127
+README.md	a56aab96ef28db539fd97d0103e2d655ff565558

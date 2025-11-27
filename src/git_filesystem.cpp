@@ -68,7 +68,13 @@ GitPath GitPath::Parse(const string &git_url) {
     } else {
         result.revision = "HEAD";
     }
-    
+
+    // Normalize url: strip trailing slashes for consistent handling
+    // "./" and "." should both resolve to current directory with empty file_path
+    while (!url.empty() && url.back() == '/') {
+        url.pop_back();
+    }
+
     // Parse repository path and file path - use discovery for ALL paths
     if (url.empty()) {
         result.repository_path = ".";
@@ -89,21 +95,32 @@ GitPath GitPath::Parse(const string &git_url) {
                     result.file_path = path_suffix.empty() ? "" : path_suffix.substr(1);  // Remove leading /
                 }
             } else if (result.repository_path == ".") {
-                // For current directory, use original relative path
-                result.file_path = url + path_suffix;
-            } else {
-                // Remove repository path prefix to get relative file path
-                string repo_prefix = result.repository_path;
-                if (!repo_prefix.empty() && repo_prefix.back() != '/') {
-                    repo_prefix += "/";
-                }
-
-                if (normalized_url.length() >= repo_prefix.length() &&
-                    normalized_url.substr(0, repo_prefix.length()) == repo_prefix) {
-                    result.file_path = normalized_url.substr(repo_prefix.length()) + path_suffix;
+                // For current directory: if url is "." itself, file_path is empty
+                // Otherwise use the relative path
+                if (url == ".") {
+                    result.file_path = path_suffix.empty() ? "" : path_suffix.substr(1);
                 } else {
-                    // Use original relative path if normalized doesn't match
                     result.file_path = url + path_suffix;
+                }
+            } else {
+                // Check if url points exactly to the repo root
+                if (normalized_url == result.repository_path) {
+                    // URL is the repo root itself, no file path
+                    result.file_path = path_suffix.empty() ? "" : path_suffix.substr(1);
+                } else {
+                    // Remove repository path prefix to get relative file path
+                    string repo_prefix = result.repository_path;
+                    if (!repo_prefix.empty() && repo_prefix.back() != '/') {
+                        repo_prefix += "/";
+                    }
+
+                    if (normalized_url.length() >= repo_prefix.length() &&
+                        normalized_url.substr(0, repo_prefix.length()) == repo_prefix) {
+                        result.file_path = normalized_url.substr(repo_prefix.length()) + path_suffix;
+                    } else {
+                        // Use original relative path if normalized doesn't match
+                        result.file_path = url + path_suffix;
+                    }
                 }
             }
         } catch (const IOException &e) {
@@ -454,14 +471,16 @@ vector<OpenFileInfo> GitFileSystem::ListFiles(git_repository *repo, const string
 
 static bool IsGitRepository(const string &path) {
     // Try to open the repository with libgit2 - most reliable method
+    // Use GIT_REPOSITORY_OPEN_NO_SEARCH to prevent walking up the tree
+    // This ensures we only find a repo if path IS the repo root
     git_repository *repo = nullptr;
-    int error = git_repository_open(&repo, path.c_str());
-    
+    int error = git_repository_open_ext(&repo, path.c_str(), GIT_REPOSITORY_OPEN_NO_SEARCH, nullptr);
+
     if (error == 0) {
         git_repository_free(repo);
         return true;
     }
-    
+
     return false;
 }
 

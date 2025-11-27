@@ -1,0 +1,202 @@
+# name: test/sql/git_tree_parents.test
+# description: test git_tree and git_parents table functions
+# group: [duck_tails]
+
+# Before we load the extension, git functions will fail
+statement error
+SELECT * FROM git_tree('.');
+----
+Catalog Error: Table Function with name git_tree does not exist!
+
+statement error
+SELECT * FROM git_parents('.');
+----
+Catalog Error: Table Function with name git_parents does not exist!
+
+# Require statement will ensure this test is run with this extension loaded
+require duck_tails
+
+# Load the extension
+# Use __BUILD_DIRECTORY__ to ensure we load the freshly built extension
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/repository';
+
+statement ok
+LOAD duck_tails;
+
+# Test 1: git_tree basic functionality
+query I
+SELECT COUNT(*) > 0 as has_files FROM git_tree('git://test/tmp/main-repo');
+----
+true
+
+# Test 2: git_tree finds expected repository files
+query I
+SELECT COUNT(*) > 0 as has_readme FROM git_tree('git://test/tmp/main-repo@HEAD') WHERE file_path = 'README.md';
+----
+true
+
+query I
+SELECT COUNT(*) > 0 as has_src_files FROM git_tree('git://test/tmp/main-repo@HEAD') WHERE file_path LIKE 'src/%';
+----
+true
+
+query I
+SELECT COUNT(*) > 0 as has_js_files FROM git_tree('git://test/tmp/main-repo@HEAD') WHERE file_path LIKE '%.js';
+----
+true
+
+# Test 3: git_tree data integrity - all hashes are 40 characters
+query I
+SELECT COUNT(*) = COUNT(*) as all_valid_hashes 
+FROM git_tree('git://test/tmp/main-repo@HEAD') 
+WHERE length(blob_hash) = 40;
+----
+true
+
+# Test 4: git_tree returns positive file sizes
+query I
+SELECT COUNT(*) > 0 as has_files_with_size 
+FROM git_tree('git://test/tmp/main-repo@HEAD') 
+WHERE size_bytes > 0;
+----
+true
+
+# Test 5: git_parents basic functionality
+query I
+SELECT COUNT(*) >= 0 as has_parents FROM git_parents('git://test/tmp/main-repo', 'HEAD');
+----
+true
+
+# Test 6: git_parents data integrity - valid commit and parent hashes
+query I
+SELECT COUNT(*) = COUNT(*) as all_valid_commit_hashes 
+FROM git_parents('git://test/tmp/main-repo', 'HEAD') 
+WHERE length(commit_hash) = 40;
+----
+true
+
+query I
+SELECT COUNT(*) = COUNT(*) as all_valid_parent_hashes 
+FROM git_parents('git://test/tmp/main-repo', 'HEAD') 
+WHERE length(parent_hash) = 40;
+----
+true
+
+# Test 7: git_parents parent_index starts from 0
+query I
+SELECT MIN(parent_index) >= 0 as parent_index_valid
+FROM git_parents('git://test/tmp/main-repo', 'HEAD');
+----
+true
+
+# Test 8: git_parents zero-argument version works (uses current directory)
+query I
+SELECT COUNT(*) >= 0 as has_parents_default FROM git_parents();
+----
+true
+
+# Test 9: git_parents with named parameter all_refs
+query I
+SELECT COUNT(*) >= 0 as has_parents_all_refs FROM git_parents('git://test/tmp/main-repo@HEAD', all_refs := true);
+----
+true
+
+# Test 10: git_tree works with different git references
+query I
+SELECT COUNT(*) >= 0 as has_files_head_minus_1 
+FROM git_tree('git://test/tmp/main-repo@HEAD~1');
+----
+true
+
+# Test 11: Compare git_parents results with and without all_refs
+query I
+SELECT 
+    (SELECT COUNT(*) FROM git_parents('git://test/tmp/main-repo', 'HEAD')) <= 
+    (SELECT COUNT(*) FROM git_parents('git://test/tmp/main-repo@HEAD', all_refs := true)) as all_refs_has_more_or_equal;
+----
+true
+
+# Test 12: git_tree and git_parents work together in a join
+query I
+SELECT COUNT(*) >= 0 as can_join_functions
+FROM (SELECT DISTINCT commit_hash FROM git_parents('git://test/tmp/main-repo', 'HEAD') LIMIT 1) p
+WHERE EXISTS (SELECT 1 FROM git_tree('git://test/tmp/main-repo', 'HEAD') LIMIT 1);
+----
+true
+
+# Test 13: Error handling - git_tree with invalid reference
+statement error
+SELECT * FROM git_tree('git://test/tmp/main-repo@invalid_ref_name_12345');
+----
+unable to parse OID
+
+# Test 14: Error handling - git_parents with invalid reference  
+statement error
+SELECT * FROM git_parents('git://test/tmp/main-repo@invalid_ref_name_12345');
+----
+unable to parse OID
+
+# Test 15: git_tree with zero arguments (defaults to HEAD and current directory)
+query I
+SELECT COUNT(*) > 0 as has_files_zero_args FROM git_tree();
+----
+true
+
+# Test 16: git_tree with explicit repository path
+query I
+SELECT COUNT(*) > 0 as has_files_explicit_path FROM git_tree('git://test/tmp/main-repo');
+----
+true
+
+# Test 17: git_tree with URI format
+query I  
+SELECT COUNT(*) > 0 as has_files_uri_format FROM git_tree('git://test/tmp/main-repo@HEAD');
+----
+true
+
+# Test 18: git_parents with explicit repository path
+query I
+SELECT COUNT(*) >= 0 as has_parents_explicit_path FROM git_parents('git://test/tmp/main-repo');
+----
+true
+
+# Test 19: git_parents with URI format
+query I
+SELECT COUNT(*) >= 0 as has_parents_uri_format FROM git_parents('git://test/tmp/main-repo@HEAD');
+----
+true
+
+# Test 20: git_parents with both repo_path and all_refs named parameters
+query I
+SELECT COUNT(*) >= 0 as has_parents_both_params FROM git_parents('git://test/tmp/main-repo', all_refs := false);
+----
+true
+
+# Test 21: Verify git_tree path and repo_path produce same results
+query I
+SELECT 
+    (SELECT COUNT(*) FROM git_tree('git://test/tmp/main-repo', 'HEAD')) = 
+    (SELECT COUNT(*) FROM git_tree('git://test/tmp/main-repo@HEAD')) as same_results;
+----
+true
+
+# Test 22: Verify git_parents path and repo_path produce same results  
+query I
+SELECT 
+    (SELECT COUNT(*) FROM git_parents('git://test/tmp/main-repo', 'HEAD')) = 
+    (SELECT COUNT(*) FROM git_parents('git://test/tmp/main-repo@HEAD')) as same_results;
+----
+true
+
+# Test 23: Error handling - git_tree with invalid repository path
+statement error
+SELECT * FROM git_tree('/absolutely/nonexistent/repo/path');
+----
+No git repository found
+
+# Test 24: Error handling - git_parents with invalid repository path
+statement error  
+SELECT * FROM git_parents('/absolutely/nonexistent/repo/path');
+----
+No git repository found

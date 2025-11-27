@@ -1,0 +1,133 @@
+# name: test/sql/git_uri_function.test
+# description: Test git_uri() function and URI construction consistency
+# group: [duck_tails]
+
+require duck_tails
+
+# Use __BUILD_DIRECTORY__ to ensure we load the freshly built extension
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
+# Test 1: Basic URI construction
+query T
+SELECT git_uri('.', 'README.md', 'HEAD');
+----
+git://./README.md@HEAD
+
+# Test 2: URI with nested repository path
+query T
+SELECT git_uri('test/tmp/main-repo', 'src/main.cpp', 'v1.0');
+----
+git://test/tmp/main-repo/src/main.cpp@v1.0
+
+# Test 3: URI with absolute path
+query T
+SELECT git_uri('/abs/path/repo', 'file.txt', 'main');
+----
+git:///abs/path/repo/file.txt@main
+
+# Test 4: URI with empty file path (repository root)
+query T
+SELECT git_uri('/abs/path/repo', '', 'main');
+----
+git:///abs/path/repo@main
+
+# Test 5: URI with path ending in slash
+query T
+SELECT git_uri('repo/', 'file.txt', 'HEAD');
+----
+git://repo/file.txt@HEAD
+
+# Test 6: URI with file path starting with slash
+query T
+SELECT git_uri('repo', '/file.txt', 'HEAD');
+----
+git://repo/file.txt@HEAD
+
+# Test 7: URI with both trailing and leading slashes
+query T
+SELECT git_uri('repo/', '/file.txt', 'HEAD');
+----
+git://repo/file.txt@HEAD
+
+# Test 8: URI with commit SHA
+query T
+SELECT git_uri('.', 'file.txt', 'abc123def456');
+----
+git://./file.txt@abc123def456
+
+# Test 9: URI with branch name
+query T
+SELECT git_uri('repo', 'docs/guide.md', 'feature/new-feature');
+----
+git://repo/docs/guide.md@feature/new-feature
+
+# Test 10: URI with tag
+query T
+SELECT git_uri('project', 'version.txt', 'v2.0.0');
+----
+git://project/version.txt@v2.0.0
+
+# Test 11: URI with relative ref
+query T
+SELECT git_uri('.', 'file.txt', 'HEAD~1');
+----
+git://./file.txt@HEAD~1
+
+# Test 12: URI with range (two-dot)
+query T
+SELECT git_uri('repo', 'changed.txt', 'v1.0..v2.0');
+----
+git://repo/changed.txt@v1.0..v2.0
+
+# Test 13: URI with range (three-dot)
+query T
+SELECT git_uri('repo', 'merged.txt', 'main...feature');
+----
+git://repo/merged.txt@main...feature
+
+# Test 14: Consistency with git_tree output
+# Verify that git_tree's git_uri column uses the same format
+query I
+SELECT COUNT(*) > 0 as has_consistent_uris
+FROM git_tree('git://test/tmp/main-repo@HEAD')
+WHERE git_uri LIKE 'git://%@%';
+----
+true
+
+# Test 15: Round-trip test - parse and reconstruct
+# Create a URI, then verify it can be parsed by git functions
+query I
+SELECT COUNT(*) >= 0 as can_parse_constructed_uri
+FROM git_read(git_uri('.', 'README.md', 'HEAD'));
+----
+true
+
+# Test 16: Batch construction with different inputs
+query T
+SELECT git_uri(repo, file, ref) FROM (
+    VALUES 
+        ('repo1', 'file1.txt', 'HEAD'),
+        ('repo2', 'dir/file2.txt', 'main'),
+        ('repo3', '', 'v1.0')
+) AS t(repo, file, ref)
+ORDER BY 1;
+----
+git://repo1/file1.txt@HEAD
+git://repo2/dir/file2.txt@main
+git://repo3@v1.0
+
+# Test 17: NULL handling
+query I
+SELECT git_uri(NULL, 'file.txt', 'HEAD') IS NULL AS is_null;
+----
+true
+
+query I
+SELECT git_uri('repo', NULL, 'HEAD') IS NULL AS is_null;
+----
+true
+
+query I
+SELECT git_uri('repo', 'file.txt', NULL) IS NULL AS is_null;
+----
+true

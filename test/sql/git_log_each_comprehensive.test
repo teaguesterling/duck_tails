@@ -1,0 +1,120 @@
+# name: test/sql/git_log_each_comprehensive.test
+# description: Comprehensive tests for git_log_each LATERAL functionality
+# group: [duck_tails]
+
+require duck_tails
+
+# Use __BUILD_DIRECTORY__ to ensure we load the freshly built extension
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
+
+statement ok
+PRAGMA enable_verification
+
+# Test git_log (static function for repo path)
+query T
+SELECT COUNT(*) > 0 as has_commits FROM git_log('test/tmp/main-repo')
+----
+true
+
+# Test git_log schema consistency (should be 11 columns)
+query I
+SELECT COUNT(*) FROM (
+  DESCRIBE (SELECT * FROM git_log('test/tmp/main-repo'))
+)
+----
+11
+
+# Test git_log return columns match expected schema
+statement ok
+SELECT repo_path, commit_hash, author_name, author_email, author_date, message
+FROM git_log('test/tmp/main-repo') LIMIT 1
+
+# Test git_log zero-argument version (defaults to current directory)
+query T
+SELECT COUNT(*) > 0 as has_commits FROM git_log()
+----
+true
+
+# Test LATERAL git_log_each with single repository path
+query TT
+WITH test_repos AS (SELECT 'test/tmp/main-repo' as repo_path)
+SELECT t.repo_path, COUNT(*) > 0 as has_commits 
+FROM test_repos t, LATERAL git_log_each(t.repo_path) l
+GROUP BY t.repo_path
+----
+test/tmp/main-repo	true
+
+# Test LATERAL git_log_each with multiple repository paths
+query TT
+WITH test_repos(repo_path) AS (
+    VALUES ('test/tmp/main-repo'), ('test/tmp/main-repo')
+)
+SELECT t.repo_path, COUNT(*) as commit_count
+FROM test_repos t, LATERAL git_log_each(t.repo_path) l
+GROUP BY t.repo_path
+ORDER BY t.repo_path
+----
+test/tmp/main-repo	6	
+
+# Test git_log_each error handling - non-existent repository
+statement error
+SELECT * FROM git_log_each('/path/that/does/not/exist')
+----
+No git repository found
+
+# Test LATERAL git_log_each with NULL repository path (should skip)
+query I
+WITH test_repos(repo_path) AS (
+    VALUES ('test/tmp/main-repo'), (NULL)
+)
+SELECT COUNT(*) FROM test_repos t, LATERAL git_log_each(t.repo_path) l
+----
+3
+
+# Test git_log_each with named parameters
+query T
+SELECT COUNT(*) > 0 as has_commits FROM git_log_each('.', repo_path := 'test/tmp/main-repo')
+----
+true
+
+# Test git_log_each functional equivalence with git_log
+query I
+SELECT 
+    (SELECT COUNT(*) FROM git_log('test/tmp/main-repo')) = 
+    (SELECT COUNT(*) FROM git_log_each('test/tmp/main-repo')) as equivalent_results
+----
+true
+
+# Test LATERAL git_log_each in complex join scenario
+query TTT
+WITH project_dirs(name, path) AS (VALUES ('main', 'test/tmp/main-repo')),
+     refs(ref_name) AS (VALUES ('HEAD'))
+SELECT p.name, r.ref_name, COUNT(*) as commits
+FROM project_dirs p, refs r,
+     LATERAL git_log_each(p.path) l
+GROUP BY p.name, r.ref_name
+----
+main	HEAD	3
+
+# Test git_log_each repo_path column consistency
+query T
+SELECT DISTINCT LENGTH(repo_path) > 0 as has_repo_path FROM git_log_each('test/tmp/main-repo')
+----
+true
+
+# Test git_log_each with different repository paths
+statement ok
+SELECT DISTINCT repo_path FROM git_log_each('test/tmp/main-repo')
+WHERE repo_path IN ('test/tmp/main-repo', '/abs/path', '../relative')
+
+# Test git_log_each performance with generate_series
+query II
+SELECT g.i, COUNT(*) as commit_count
+FROM generate_series(1, 2) g(i), 
+     LATERAL git_log_each('test/tmp/main-repo') l
+GROUP BY g.i
+ORDER BY g.i
+----
+1	3
+2	3

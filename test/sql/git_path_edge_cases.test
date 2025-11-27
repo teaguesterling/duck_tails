@@ -1,0 +1,71 @@
+# name: test/sql/git_path_edge_cases.test
+# description: Test edge cases for git path handling with special characters and normalization
+# group: [duck_tails]
+
+require duck_tails
+
+# Use __BUILD_DIRECTORY__ to ensure we load the freshly built extension
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
+# Test 1: Path normalization with . and ..
+query I
+SELECT COUNT(*) > 0 as has_commits FROM git_log('./././.');
+----
+true
+
+# Test 2: Path normalization with parent directories
+query I
+SELECT COUNT(*) > 0 as has_commits FROM git_log('./src/../.');
+----
+true
+
+# Test 3: Nested repository discovery - read README.md as CSV (will show text content)
+query I
+SELECT COUNT(*) > 0 as has_data FROM read_csv('git://test/tmp/main-repo/README.md@HEAD');
+----
+true
+
+# Test 4: git_tree with nested repository (doesn't have repo_path, just test it works)
+query I
+SELECT COUNT(*) > 0 as has_files 
+FROM git_tree('test/tmp/main-repo', 'HEAD');
+----
+true
+
+# Test 5: git_parents with nested repository (doesn't have repo_path, just test it works)
+query I
+SELECT COUNT(*) >= 0 as query_works
+FROM git_parents('test/tmp/main-repo', 'HEAD');
+----
+true
+
+# Test 6: git_read_each with nested repository paths
+query T
+SELECT kind FROM git_read('git://test/tmp/main-repo/README.md@HEAD');
+----
+file
+
+# Test 7: git_uri function with various path formats
+query T
+SELECT git_uri('.', 'README.md', 'HEAD') LIKE 'git://%README.md@HEAD' as uri_correct;
+----
+true
+
+# Test 8: git_uri with nested repository
+query T
+SELECT git_uri('test/tmp/main-repo', 'README.md', 'HEAD') = 'git://test/tmp/main-repo/README.md@HEAD' as uri_correct;
+----
+true
+
+# Test 9: Complex path normalization
+query I
+SELECT COUNT(*) > 0 as has_commits FROM git_log('./src/../test/../.');
+----
+true
+
+# Test 10: git_tree_each with parent directory reference (returns absolute path)
+query I
+SELECT COUNT(*) > 0 as has_files
+FROM git_tree_each('./src/..');
+----
+true

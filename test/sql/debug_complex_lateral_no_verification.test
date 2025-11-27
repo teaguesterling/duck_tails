@@ -1,0 +1,41 @@
+# Debug Complex LATERAL Chain Without Verification
+# ===============================================
+# Test the complex LATERAL scenario that crashes with verification disabled
+
+require duck_tails
+
+# Use __BUILD_DIRECTORY__ to ensure we load the freshly built extension
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
+
+statement ok
+PRAGMA disable_verification;
+
+# Setup test fixtures - Use test/tmp fixture
+statement ok
+CREATE OR REPLACE MACRO FIXTURE_PATH() AS 'test/tmp/main-repo';
+
+# Test: Complex composability - chaining multiple functions (NO VERIFICATION)
+query II
+WITH tree_files AS (
+    SELECT file_path, git_uri 
+    FROM git_tree_each(CONCAT('git://', FIXTURE_PATH(), '@HEAD'))
+    WHERE file_path = 'README.md'
+),
+file_commits AS (
+    SELECT 
+        tf.file_path,
+        CONCAT('git://', FIXTURE_PATH(), '@', l.commit_hash) as commit_uri,
+        l.commit_hash
+    FROM tree_files tf
+    CROSS JOIN LATERAL git_log_each(tf.git_uri) l
+    LIMIT 1
+)
+SELECT 
+    fc.file_path,
+    COUNT(p.parent_hash) >= 0 as has_valid_count
+FROM file_commits fc
+LEFT JOIN LATERAL git_parents_each(fc.commit_uri) p ON true
+GROUP BY fc.file_path;
+----
+README.md	true

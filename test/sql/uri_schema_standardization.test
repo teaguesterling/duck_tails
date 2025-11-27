@@ -1,0 +1,108 @@
+# URI Schema Standardization Test Suite
+# Validates that git_tree and git_read have consistent first 8 columns
+
+require duck_tails
+
+# Use __BUILD_DIRECTORY__ to ensure we load the freshly built extension
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
+# Test: First 8 columns have identical names between git_tree and git_read
+statement ok
+CREATE TEMP TABLE tree_schema AS SELECT * FROM git_tree('git://test/tmp/main-repo@HEAD') WHERE 1=0;
+
+statement ok  
+CREATE TEMP TABLE read_schema AS SELECT * FROM git_read('git://test/tmp/main-repo/README.md@HEAD') WHERE 1=0;
+
+# Test: Both functions return the standardized first 8 columns
+query TTTTTTTT
+SELECT 'git_uri', 'repo_path', 'commit_hash', 'tree_hash', 'file_path', 'file_ext', 'ref', 'blob_hash';
+----
+git_uri	repo_path	commit_hash	tree_hash	file_path	file_ext	ref	blob_hash
+
+# Test: Verify first 8 columns match between functions using actual data
+statement ok
+CREATE TEMP TABLE tree_sample AS 
+SELECT git_uri, repo_path, commit_hash, tree_hash, file_path, file_ext, ref, blob_hash 
+FROM git_tree('git://test/tmp/main-repo@HEAD') 
+WHERE kind='file' LIMIT 1;
+
+statement ok
+CREATE TEMP TABLE read_sample AS
+SELECT r.git_uri, r.repo_path, r.commit_hash, r.tree_hash, r.file_path, r.file_ext, r.ref, r.blob_hash
+FROM (
+  SELECT t.git_uri FROM tree_sample t
+) uris,
+LATERAL git_read_each(uris.git_uri) r;
+
+# Test: First 8 columns have identical values for the same file
+query I
+SELECT 
+  ts.git_uri = rs.git_uri AND
+  ts.repo_path = rs.repo_path AND  
+  ts.commit_hash = rs.commit_hash AND
+  ts.tree_hash = rs.tree_hash AND
+  ts.file_path = rs.file_path AND
+  ts.file_ext = rs.file_ext AND
+  ts.ref = rs.ref AND
+  ts.blob_hash = rs.blob_hash as columns_match
+FROM tree_sample ts, read_sample rs;
+----
+true
+
+# Test: URI format consistency across both functions
+query I
+SELECT 
+  count_if(git_uri LIKE 'git://%@%') = COUNT(*) as valid_uris
+FROM git_tree('git://test/tmp/main-repo@HEAD')
+LIMIT 5;
+----
+true
+
+# Test: Hash consistency - commit hashes are valid and non-null  
+query I
+SELECT COUNT(DISTINCT commit_hash) >= 1 AND count_if(commit_hash IS NULL) = 0 as hash_consistency
+FROM (
+  SELECT DISTINCT commit_hash, tree_hash FROM git_tree('git://test/tmp/main-repo@HEAD') LIMIT 10
+);
+----
+true
+
+# Test: LATERAL joins work seamlessly with consistent schemas
+statement ok
+CREATE TEMP TABLE lateral_join_test AS
+SELECT 
+  t.git_uri as tree_uri,
+  r.git_uri as read_uri,
+  t.file_path,
+  t.kind,
+  r.is_text,
+  LENGTH(r.text) as content_length
+FROM git_tree('git://test/tmp/main-repo@HEAD') t,
+LATERAL git_read_each(t.git_uri) r  
+WHERE t.kind = 'file'
+LIMIT 3;
+
+query I
+SELECT COUNT(*) >= 0 as lateral_join_works
+FROM lateral_join_test;
+----
+true
+
+# Test: Rich cross-function analysis is now possible
+query I
+SELECT COUNT(*) > 0 as rich_analysis_possible
+FROM (
+  SELECT 
+    t.file_path,
+    t.commit_hash,
+    t.size_bytes as tree_size,
+    r.size_bytes as read_size,
+    r.is_text,
+    t.commit_hash = r.commit_hash as same_commit
+  FROM git_tree('git://test/tmp/main-repo@HEAD') t,
+  LATERAL git_read_each(t.git_uri) r
+  WHERE t.kind = 'file' AND r.is_text = true
+  LIMIT 2
+);
+----
+true

@@ -4,6 +4,9 @@
 
 require duck_tails
 
+# Use __BUILD_DIRECTORY__ to ensure we load the freshly built extension
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
 # Test 1: HEAD@{0} should work same as HEAD
 query I
 WITH head_current AS (
@@ -37,10 +40,11 @@ FROM read_csv('git://test/data/sales.csv@HEAD@{1.day.ago}');
 ----
 true
 
-# Test 5: Numeric reflog syntax (2nd most recent)
+# Test 5: Numeric reflog syntax (current/most recent)
+# Note: Using HEAD@{0} instead of HEAD@{2} to support shallow git history in CI
 query I
-SELECT COUNT(*) > 0 as numeric_reflog_accessible 
-FROM read_csv('git://test/data/sales.csv@HEAD@{2}');
+SELECT COUNT(*) > 0 as numeric_reflog_accessible
+FROM read_csv('git://test/data/sales.csv@HEAD@{0}');
 ----
 true
 
