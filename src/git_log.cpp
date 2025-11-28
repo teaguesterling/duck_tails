@@ -53,7 +53,7 @@ unique_ptr<FunctionData> GitLogBind(ClientContext &context, TableFunctionBindInp
         auto ctx = GitContextManager::Instance().ProcessGitUri(params.repo_path_or_uri, params.ref);
         auto result = make_uniq<GitLogFunctionData>(params.repo_path_or_uri, ctx.repo_path);
         result->file_path = ctx.file_path;
-        return result;
+        return std::move(result);
     } catch (const std::exception &e) {
         throw BinderException("git_log: %s", e.what());
     }
