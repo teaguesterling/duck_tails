@@ -597,40 +597,68 @@ static string GetParentDirectory(const string &path) {
 }
 
 // Finds the git repository root directory by walking up the directory tree from the given path
-// Implements Option 2: walks up from non-existent paths to first existing directory, then searches for .git
+// Uses libgit2's git_repository_discover for cross-platform path handling
 static string FindGitRepository(const string &path) {
-    // Normalize the path (resolves relative paths and .. components)  
-    string current_path = NormalizePath(path);
-    
-    // Option 2: Walk up the path until we find something that exists on disk
-    while (!current_path.empty() && current_path != "/" && !PathExists(current_path)) {
-        current_path = GetParentDirectory(current_path);
+    // First, try to find an existing starting point for discovery
+    string start_path = path;
+
+    // If path is relative, we need to make it work for libgit2
+    // libgit2's discover function handles relative paths well
+
+    // Walk up from non-existent paths to first existing directory
+    while (!start_path.empty() && start_path != "/" && start_path != "." && !PathExists(start_path)) {
+        start_path = GetParentDirectory(start_path);
     }
-    
+
     // If we couldn't find any existing path, start from current directory
-    if (!PathExists(current_path)) {
-        current_path = ".";
+    if (start_path.empty() || !PathExists(start_path)) {
+        start_path = ".";
     }
-    
+
     // If path points to a file (not directory), start from its directory
-    if (!IsDirectory(current_path)) {
-        string dir = GetDirectoryFromPath(current_path);
+    if (!IsDirectory(start_path)) {
+        string dir = GetDirectoryFromPath(start_path);
         if (!dir.empty()) {
-            current_path = dir;
+            start_path = dir;
         }
     }
-    
-    // Walk up directory tree looking for .git
-    while (!current_path.empty() && current_path != "/") {
-        if (IsGitRepository(current_path)) {
-            return current_path;
+
+    // Use libgit2's discovery mechanism - handles cross-platform paths correctly
+    git_buf discovered_path = {0};
+    int error = git_repository_discover(&discovered_path, start_path.c_str(), 0, nullptr);
+
+    if (error == 0) {
+        // Open the repository to get the proper workdir (handles submodules correctly)
+        git_repository *repo = nullptr;
+        error = git_repository_open(&repo, discovered_path.ptr);
+        git_buf_dispose(&discovered_path);
+
+        if (error == 0) {
+            string result;
+
+            // For worktrees and submodules, get the workdir path
+            // For bare repos, use the repo path
+            const char *workdir = git_repository_workdir(repo);
+            if (workdir) {
+                result = workdir;
+            } else {
+                // Bare repository - use the repository path itself
+                result = git_repository_path(repo);
+            }
+
+            git_repository_free(repo);
+
+            // Remove trailing slashes
+            while (!result.empty() && (result.back() == '/' || result.back() == '\\')) {
+                result.pop_back();
+            }
+
+            return result.empty() ? "." : result;
         }
-        current_path = GetParentDirectory(current_path);
-    }
-    
-    // Check root directory too
-    if (current_path == "/" && IsGitRepository("/")) {
-        return "/";
+
+        // Failed to open - fall through to error
+    } else {
+        git_buf_dispose(&discovered_path);
     }
 
     throw IOException("No git repository found for path: %s", path);
