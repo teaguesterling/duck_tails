@@ -4,7 +4,7 @@
 
 Duck Tails is a DuckDB extension that brings git-aware data analysis capabilities to your database. Query your git history, access files at any revision, and perform version-aware data analysis - all with SQL.
 
-**Status: Functional** - Git filesystem access and diff analysis capabilities with comprehensive test coverage.
+**Status: Functional** - Git filesystem access and diff analysis capabilities with comprehensive test coverage. Cross-platform support for Linux, macOS, and Windows.
 
 ## ✨ Features
 
@@ -49,6 +49,9 @@ FROM git_tags();
 -- Or specify a different repository path
 SELECT * FROM git_log('/path/to/repo');
 SELECT * FROM git_log('../other-project');
+
+-- Query git submodules directly
+SELECT * FROM git_log('vendor/duckdb');
 ```
 
 Query commits that affected specific files:
@@ -147,13 +150,13 @@ SELECT * FROM read_csv('git://test/data/sales.csv@HEAD');
 ```
 
 ### Testing
-Duck Tails includes a comprehensive test suite with **176 test assertions across 10 test cases** covering all functionality:
+Duck Tails includes a comprehensive test suite with **736 test assertions across 46 test cases** covering all functionality:
 
 ```bash
 # Run all tests
 make test
 
-# Expected output: All tests passed (176 assertions in 10 test cases)
+# Expected output: All tests passed (736 assertions in 46 test cases)
 ```
 
 ## 📋 Examples
@@ -276,8 +279,10 @@ Duck Tails implements a custom DuckDB FileSystem that intercepts `git://` URLs a
 - **vcpkg Integration**: Robust dependency management for cross-platform libgit2 builds
 
 ### Key Technical Features
+- **Cross-Platform Support**: Native support for Linux, macOS, and Windows (including mingw)
 - **Flexible Repository Paths**: Support for relative (`../other-repo`), absolute (`/path/to/repo`), and current directory access
-- **Smart Repository Discovery**: Automatic git repository detection using libgit2 with proper error handling
+- **Git Submodule Support**: Query submodules directly by path with automatic worktree resolution
+- **Smart Repository Discovery**: Automatic git repository detection using libgit2's native discovery for cross-platform compatibility
 - **Repository Context**: All git functions include `repo_path` column showing which repository each result comes from
 - **Memory Efficient**: Files loaded on-demand into memory for fast access
 - **Streaming Support**: Large LFS files streamed without full memory loading
@@ -335,32 +340,23 @@ All new features should include comprehensive tests. Our test suite is designed 
 ## 🏆 Current Status
 
 ### ✅ Implemented Features
-- **Git Filesystem**: `git://` protocol implementation with revisio
+- **Git Filesystem**: `git://` protocol implementation with revision support
+- **Cross-Platform**: Full support for Linux, macOS, and Windows
 - **Repository Path Support**: Flexible relative (`../repo`), absolute (`/path/to/repo`), and current directory access
-- **Smart Repository Discovery**: Automatic git repository detection using libgit2 with clear error messages
+- **Git Submodule Support**: Query submodules directly with automatic worktree resolution
+- **Smart Repository Discovery**: Automatic git repository detection using libgit2's native cross-platform discovery
 - **Table Functions**: Repository metadata access (`git_log`, `git_branches`, `git_tags`) with repository context
 - **Text Diff Engine**: Diff computation with multiple output formats
 - **File Integration**: Support for local files, git:// files, and mixed scenarios
-- **Memory Management**: Efficient blob loading with seek operations
-- **Error Handling**: Comprehensive edge case handling with user-friendly error messages
-- **Comprehensive Test Coverage**: Full test suite with extensive assertions
 - **Git LFS Support**: Automatic detection, streaming, and local cache optimization
-- **Table Functions**: Repository metadata access (`git_log`, `git_branches`, `git_tags`)
-- **Text Diff Engine**: Diff computation with multiple output formats
-- **File Integration**: Support for local files, git:// files, and mixed scenarios
-- **Memory Management**: Efficient blob loading with seek operations
-- **Streaming Architecture**: Large file handling without full memory loading
-- **Error Handling**: Robust error handling for edge cases
-- **Test Coverage**: 81 comprehensive test assertions across 4 test suites
-
+- **Memory Management**: Efficient blob loading with seek operations and streaming for large files
+- **Error Handling**: Comprehensive edge case handling with user-friendly error messages
+- **Comprehensive Test Coverage**: 736 assertions across 46 test cases
 
 ### 📊 Technical Details
-- **6 core components**: GitFileSystem, GitFileHandle, GitPath, Table Functions, TextDiff, File Integration
-- **8 functions implemented**: git_log, git_branches, git_tags (0 and 1 arg variants), diff_text, text_diff, read_git_diff (1 and 2 arg variants), text_diff_lines, text_diff_stats
-- **Repository path discovery**: Automatic git repository detection with relative/absolute path support
-- **4 test suites** with 81 assertions covering all functionality
 - **7 core components**: GitFileSystem, GitFileHandle, GitLFSFileHandle, GitPath, Table Functions, TextDiff, File Integration
-- **12 functions implemented**: git_log, git_branches, git_tags (0 and 1 arg variants), diff_text, text_diff, read_git_diff (1 and 2 arg), text_diff_lines, text_diff_stats
+- **12+ functions implemented**: git_log, git_branches, git_tags, git_tree, git_read, diff_text, text_diff, read_git_diff, text_diff_lines, text_diff_stats, and more
+- **LATERAL join support**: All `_each` variants support efficient LATERAL joins for cross-repository queries
 - **Git LFS**: Automatic pointer detection, local cache optimization, streaming architecture
 - **libgit2 integration** via vcpkg dependency management
 
