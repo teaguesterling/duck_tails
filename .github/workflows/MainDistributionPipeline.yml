@@ -19,7 +19,8 @@ jobs:
       duckdb_version: main
       ci_tools_version: main
       extension_name: duck_tails
-      exclude_archs: 'wasm_mvp;wasm_eh;wasm_threads;windows_amd64;windows_arm64'
+      exclude_archs: 'wasm_mvp;wasm_eh;wasm_threads;windows_amd64_minigw'
+          #exclude_archs: 'wasm_mvp;wasm_eh;wasm_threads;windows_amd64;windows_arm64;windows_amd64_minigw'
 
   duckdb-stable-build:
     name: Build extension binaries
@@ -28,7 +29,7 @@ jobs:
       duckdb_version: v1.4.2
       ci_tools_version: v1.4.2
       extension_name: duck_tails
-      exclude_archs: 'wasm_mvp;wasm_eh;wasm_threads;windows_amd64;windows_arm64'
+      exclude_archs: 'wasm_mvp;wasm_eh;wasm_threads;windows_amd64_minigw'
 
           #  code-quality-check:
           #    name: Code Quality Check
