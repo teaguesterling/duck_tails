@@ -8,6 +8,7 @@ test/python/__pycache__/
 .Rhistory
 test/tmp/
 test/lfs_test_repo/
+test/fixtures/test_repo~/
 
 # Development artifacts
 *.zip
