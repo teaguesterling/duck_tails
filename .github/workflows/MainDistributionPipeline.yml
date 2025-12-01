@@ -37,4 +37,5 @@ jobs:
       duckdb_version: v1.4.2
       ci_tools_version: main
       extension_name: duck_tails
-      format_checks: 'format;tidy'
+      # Note: tidy requires libgit2 which isn't available in the code quality runner
+      format_checks: 'format'
