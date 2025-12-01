@@ -1,6 +1,6 @@
 # name: test/sql/duck_tails_basic_functionality.test
 # description: Basic functionality tests for Duck Tails git operations
-# group: [duck_tails]
+# group: [sql]
 
 require duck_tails
 

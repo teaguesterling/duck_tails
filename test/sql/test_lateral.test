@@ -1,3 +1,6 @@
+# name: test/sql/test_lateral.test
+# group: [sql]
+
 # Test LATERAL joins
 # Use __BUILD_DIRECTORY__ to ensure we load the freshly built extension
 statement ok

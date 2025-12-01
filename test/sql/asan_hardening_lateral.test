@@ -1,6 +1,6 @@
-# name: asan_hardening_lateral
+# name: test/sql/asan_hardening_lateral.test
 # description: ASan hardening tests for LATERAL functions with different vector forms
-# group: [duck_tails]
+# group: [sql]
 
 require duck_tails
 

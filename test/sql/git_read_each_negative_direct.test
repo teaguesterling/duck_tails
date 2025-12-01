@@ -1,6 +1,6 @@
-# name: git_read_each_negative_direct  
+# name: test/sql/git_read_each_negative_direct.test
 # description: Test that git_read_each functions are LATERAL-only and reject direct calls
-# group: [duck_tails]
+# group: [sql]
 
 require duck_tails
 

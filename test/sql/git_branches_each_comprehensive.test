@@ -1,6 +1,6 @@
 # name: test/sql/git_branches_each_comprehensive.test
 # description: Comprehensive tests for git_branches_each LATERAL functionality
-# group: [duck_tails]
+# group: [sql]
 
 require duck_tails
 

@@ -1,6 +1,6 @@
 # name: test/sql/git_uri_comprehensive.test
 # description: Comprehensive tests for git_uri() helper function
-# group: [duck_tails]
+# group: [sql]
 
 require duck_tails
 

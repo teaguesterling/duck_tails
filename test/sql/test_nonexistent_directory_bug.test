@@ -1,6 +1,7 @@
 # name: test/sql/test_nonexistent_directory_bug.test
 # description: Test that git_read works with paths referencing historical commits, even when intermediate directories don't exist in working tree
-# group: [duck_tails]
+# group: [sql]
+
 #
 # This reproduces the bug from leadconduit-integration-facebook where spec/ was renamed to test/
 # When reading from a commit where spec/file.js existed, it failed because spec/ didn't exist in working tree

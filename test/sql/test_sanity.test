@@ -1,3 +1,6 @@
+# name: test/sql/test_sanity.test
+# group: [sql]
+
 # Sanity test
 # Use __BUILD_DIRECTORY__ to ensure we load the freshly built extension
 statement ok

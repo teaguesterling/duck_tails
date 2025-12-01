@@ -1,3 +1,6 @@
+# name: test/sql/test_differences.test
+# group: [sql]
+
 # Test each difference to isolate the problem
 require duck_tails
 

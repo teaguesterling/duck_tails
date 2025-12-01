@@ -1,3 +1,6 @@
+# name: test/sql/git_tree_path_filtering.test
+# group: [sql]
+
 # Path Filtering Test Suite for git_tree functions
 # Tests the v5 patch implementation for path filtering
 

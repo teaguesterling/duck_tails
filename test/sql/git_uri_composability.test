@@ -1,3 +1,6 @@
+# name: test/sql/git_uri_composability.test
+# group: [sql]
+
 # Git URI Composability Tests - Checklist for _each functions
 # ================================================
 # This test file serves as both a checklist and test suite for verifying

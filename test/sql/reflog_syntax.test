@@ -1,6 +1,6 @@
 # name: test/sql/reflog_syntax.test
 # description: Test git reflog syntax support in git:// URLs
-# group: [duck_tails]
+# group: [sql]
 
 require duck_tails
 

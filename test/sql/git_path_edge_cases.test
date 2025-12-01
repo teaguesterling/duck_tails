@@ -1,6 +1,6 @@
 # name: test/sql/git_path_edge_cases.test
 # description: Test edge cases for git path handling with special characters and normalization
-# group: [duck_tails]
+# group: [sql]
 
 require duck_tails
 

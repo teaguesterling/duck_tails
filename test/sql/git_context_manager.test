@@ -1,6 +1,6 @@
 # name: test/sql/git_context_manager.test
 # description: Comprehensive tests for GitContextManager unified architecture
-# group: [duck_tails]
+# group: [sql]
 
 require duck_tails
 

@@ -1,6 +1,6 @@
 # name: test/sql/git_tree_parents.test
 # description: test git_tree and git_parents table functions
-# group: [duck_tails]
+# group: [sql]
 
 # Before we load the extension, git functions will fail
 statement error

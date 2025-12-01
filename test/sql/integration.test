@@ -1,6 +1,6 @@
 # name: test/sql/integration.test
 # description: Integration tests covering all git functions, filesystem, and cross-feature workflows
-# group: [duck_tails]
+# group: [sql]
 
 require duck_tails
 

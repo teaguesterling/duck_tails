@@ -1,6 +1,6 @@
 # name: test/sql/git_each_integration.test
 # description: Integration tests for all git_*_each LATERAL functions working together
-# group: [duck_tails]
+# group: [sql]
 
 require duck_tails
 

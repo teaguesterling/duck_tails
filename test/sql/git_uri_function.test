@@ -1,6 +1,6 @@
 # name: test/sql/git_uri_function.test
 # description: Test git_uri() function and URI construction consistency
-# group: [duck_tails]
+# group: [sql]
 
 require duck_tails
 

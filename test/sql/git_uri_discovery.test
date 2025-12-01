@@ -1,6 +1,6 @@
 # name: test/sql/git_uri_discovery.test
 # description: Test git:// URL repository discovery functionality
-# group: [duck_tails]
+# group: [sql]
 
 require duck_tails
 

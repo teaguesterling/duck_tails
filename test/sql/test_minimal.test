@@ -1,3 +1,6 @@
+# name: test/sql/test_minimal.test
+# group: [sql]
+
 # Minimal test - git_read direct call (git_read_each is LATERAL-only)
 # Use __BUILD_DIRECTORY__ to ensure we load the freshly built extension
 statement ok

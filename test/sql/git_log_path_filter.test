@@ -1,3 +1,6 @@
+# name: test/sql/git_log_path_filter.test
+# group: [sql]
+
 # Test path filtering consistency between git_log and git_log_each
 
 statement ok

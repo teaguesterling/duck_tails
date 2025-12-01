@@ -1,6 +1,6 @@
 # name: test/sql/test_git_context_manager.test
 # description: Isolated tests for GitContextManager unified git URI processing architecture
-# group: [duck_tails]
+# group: [sql]
 
 require duck_tails
 

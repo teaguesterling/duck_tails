@@ -1,6 +1,6 @@
 # name: test/sql/git_path_parsing.test
 # description: Test git:// URL path parsing with various edge cases
-# group: [duck_tails]
+# group: [sql]
 
 require duck_tails
 

@@ -1,6 +1,6 @@
 # name: test/sql/duck_tails_phase2_basic.test
 # description: Basic Phase 2 functionality tests for Duck Tails
-# group: [duck_tails]
+# group: [sql]
 
 require duck_tails
 

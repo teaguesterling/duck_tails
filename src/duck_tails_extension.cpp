@@ -18,7 +18,6 @@
 
 namespace duckdb {
 
-
 static void LoadInternal(ExtensionLoader &loader) {
 	// Initialize libgit2 once at extension load time
 	// This is thread-safe and should only be called once

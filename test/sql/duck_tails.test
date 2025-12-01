@@ -1,6 +1,6 @@
 # name: test/sql/duck_tails.test
 # description: test duck_tails extension git functionality
-# group: [duck_tails]
+# group: [sql]
 
 # Before we load the extension, git functions will fail
 statement error

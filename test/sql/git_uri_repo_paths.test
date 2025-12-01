@@ -1,6 +1,6 @@
 # name: test/sql/git_uri_repo_paths.test
 # description: Test git:// URL repository path parsing
-# group: [duck_tails]
+# group: [sql]
 
 require duck_tails
 

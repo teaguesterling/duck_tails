@@ -1,6 +1,6 @@
 # name: test/sql/git_tree_enhanced.test
 # description: Test enhanced git_tree function with LATERAL support and multiple modes
-# group: [duck_tails]
+# group: [sql]
 
 require duck_tails
 

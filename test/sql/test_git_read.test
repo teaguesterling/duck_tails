@@ -1,3 +1,6 @@
+# name: test/sql/test_git_read.test
+# group: [sql]
+
 # Test non-LATERAL git_read
 # Use __BUILD_DIRECTORY__ to ensure we load the freshly built extension
 statement ok

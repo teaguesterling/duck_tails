@@ -1,6 +1,6 @@
 # name: test/sql/git_read_functions.test
 # description: Test git_read and git_read_each functions
-# group: [duck_tails]
+# group: [sql]
 
 require duck_tails
 

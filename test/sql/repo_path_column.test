@@ -1,6 +1,6 @@
 # name: test/sql/repo_path_column.test
 # description: Test repo_path column in git functions and enhanced repository discovery
-# group: [duck_tails]
+# group: [sql]
 
 require duck_tails
 

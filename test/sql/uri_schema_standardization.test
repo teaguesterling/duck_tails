@@ -1,3 +1,6 @@
+# name: test/sql/uri_schema_standardization.test
+# group: [sql]
+
 # URI Schema Standardization Test Suite
 # Validates that git_tree and git_read have consistent first 8 columns
 

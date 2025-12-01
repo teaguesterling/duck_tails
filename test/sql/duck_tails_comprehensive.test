@@ -1,6 +1,6 @@
 # name: test/sql/duck_tails_comprehensive.test
 # description: Comprehensive test suite for Duck Tails Phase 1 capabilities
-# group: [duck_tails]
+# group: [sql]
 
 require duck_tails
 

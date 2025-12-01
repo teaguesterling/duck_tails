@@ -1,6 +1,6 @@
-# name: test/sql/duck_tails_lfs_detection.test  
+# name: test/sql/duck_tails_lfs_detection.test
 # description: test duck_tails LFS pointer detection logic
-# group: [duck_tails]
+# group: [sql]
 
 # Require the duck_tails extension
 require duck_tails

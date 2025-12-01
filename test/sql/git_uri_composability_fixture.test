@@ -1,3 +1,6 @@
+# name: test/sql/git_uri_composability_fixture.test
+# group: [sql]
+
 # Git URI Composability Tests - Using Test Fixtures
 # ================================================
 # This test file serves as both a checklist and test suite for verifying
