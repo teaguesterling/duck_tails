@@ -1,0 +1,26 @@
+# name: test/sql/lateral_long_path.test
+# group: [sql]
+
+# Test LATERAL join with long path
+statement ok
+PRAGMA threads=1;
+
+# Use __BUILD_DIRECTORY__ to ensure we load the freshly built extension
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/repository';
+
+statement ok
+LOAD duck_tails;
+
+# Create a macro with a long path similar to fixture
+statement ok
+CREATE OR REPLACE MACRO LONG_PATH() AS 'test/tmp/main-repo';
+
+# This might fail due to the long path
+query I
+SELECT COUNT(*)
+FROM git_tree_each('git://' || LONG_PATH() || '@HEAD') t
+CROSS JOIN LATERAL git_log_each(t.git_uri) l
+WHERE t.file_path = 'README.md';
+----
+2

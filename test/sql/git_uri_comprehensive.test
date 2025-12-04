@@ -1,0 +1,110 @@
+# name: test/sql/git_uri_comprehensive.test
+# description: Comprehensive tests for git_uri() helper function
+# group: [sql]
+
+require duck_tails
+
+# Use __BUILD_DIRECTORY__ to ensure we load the freshly built extension
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
+
+statement ok
+PRAGMA enable_verification;
+
+# Test basic git_uri construction
+query T
+SELECT git_uri('.', 'README.md', 'HEAD')
+----
+git://./README.md@HEAD
+
+# Test git_uri with absolute repository path
+query T
+SELECT git_uri('/path/to/repo', 'src/main.cpp', 'v1.0')
+----
+git:///path/to/repo/src/main.cpp@v1.0
+
+# Test git_uri with relative repository path
+query T
+SELECT git_uri('../other-repo', 'config.json', 'abc123')
+----
+git://../other-repo/config.json@abc123
+
+# Test git_uri with empty file path
+query T
+SELECT git_uri('/repo', '', 'HEAD')
+----
+git:///repo@HEAD
+
+# Test git_uri with file path that starts with slash
+query T
+SELECT git_uri('repo', '/absolute/file.txt', 'main')
+----
+git://repo/absolute/file.txt@main
+
+# Test git_uri with repository path that ends with slash
+query T
+SELECT git_uri('repo/', 'file.txt', 'HEAD')
+----
+git://repo/file.txt@HEAD
+
+# Test git_uri with both paths having appropriate slashes
+query T
+SELECT git_uri('repo/', '/file.txt', 'HEAD')
+----
+git://repo/file.txt@HEAD
+
+# Test git_uri with complex file path
+query T
+SELECT git_uri('.', 'deep/nested/path/file.txt', 'feature-branch')
+----
+git://./deep/nested/path/file.txt@feature-branch
+
+# Test git_uri with special commit references
+query T
+SELECT git_uri('.', 'README.md', 'HEAD~5')
+----
+git://./README.md@HEAD~5
+
+# Test git_uri with tag reference
+query T
+SELECT git_uri('.', 'CHANGELOG.md', 'v2.1.0')
+----
+git://./CHANGELOG.md@v2.1.0
+
+# Test git_uri function signature and return type
+statement ok
+SELECT git_uri('.', 'test.txt', 'HEAD')::VARCHAR
+
+# Test git_uri with NULL values should return NULL
+query T
+SELECT git_uri(NULL, 'file.txt', 'HEAD')
+----
+NULL
+
+query T
+SELECT git_uri('.', NULL, 'HEAD')
+----
+NULL
+
+query T
+SELECT git_uri('.', 'file.txt', NULL)
+----
+NULL
+
+# Test git_uri in batch operations
+query TT
+SELECT 
+    path,
+    git_uri('.', path, 'HEAD') as constructed_uri
+FROM (VALUES ('README.md'), ('src/main.cpp'), ('docs/api.md')) t(path)
+ORDER BY path
+----
+README.md	git://./README.md@HEAD
+docs/api.md	git://./docs/api.md@HEAD
+src/main.cpp	git://./src/main.cpp@HEAD
+
+# Test git_uri integration with table functions
+statement ok
+SELECT git_uri(repo_path, 'README.md', commit_hash)
+FROM git_log() 
+LIMIT 1

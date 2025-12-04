@@ -1,0 +1,135 @@
+# name: test/sql/git_each_integration.test
+# description: Integration tests for all git_*_each LATERAL functions working together
+# group: [sql]
+
+require duck_tails
+
+# Use __BUILD_DIRECTORY__ to ensure we load the freshly built extension
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
+
+statement ok
+PRAGMA enable_verification;
+
+# Test git_uri helper function integration with git_tree git_uri  
+query T
+SELECT git_uri LIKE '%/README.md@' || commit_hash as uri_matches
+FROM git_tree('test/tmp/main-repo', 'HEAD') 
+WHERE file_path = 'README.md'
+----
+true
+
+# Test git_tree produces valid git_uri values
+query T
+SELECT LENGTH(git_uri) > 0 as has_uri
+FROM git_tree('test/tmp/main-repo', 'HEAD')
+WHERE file_path = 'README.md'
+----
+true
+
+# Test multi-repository LATERAL analysis with git_branches_each
+query TTI
+WITH repos(name, path) AS (VALUES ('main-repo', 'test/tmp/main-repo'))
+SELECT r.name, b.branch_name, COUNT(*) as commit_count
+FROM repos r,
+     LATERAL git_branches_each(r.path) b,
+     LATERAL git_log_each(r.path) l
+WHERE b.branch_name IS NOT NULL
+GROUP BY r.name, b.branch_name
+ORDER BY b.branch_name
+LIMIT 3
+----
+main-repo	develop	3
+main-repo	feature/test	3
+main-repo	main	3
+
+# Test cross-function integration: git_log_each -> git_tree_each
+query II
+SELECT COUNT(*) as file_count, COUNT(DISTINCT t.file_path) as unique_files
+FROM git_log_each('test/tmp/main-repo') l,
+     LATERAL git_tree_each('test/tmp/main-repo', l.commit_hash) t
+WHERE l.commit_hash IS NOT NULL
+LIMIT 1
+----
+12	4
+
+# Test git_uri construction with dynamic parameters from git_log_each
+query T
+SELECT git_uri('test/tmp/main-repo', 'README.md', l.commit_hash) LIKE 'git://test/tmp/main-repo/README.md@%' as uri_ok
+FROM git_log_each('test/tmp/main-repo') l
+LIMIT 1
+----
+true
+
+# Test comprehensive repository analysis pipeline
+query II
+WITH analysis AS (
+    SELECT 
+        l.repo_path,
+        l.commit_hash,
+        COUNT(DISTINCT t.file_path) as files_in_commit,
+        COUNT(DISTINCT b.branch_name) as branches_count
+    FROM git_log_each('test/tmp/main-repo') l
+    LEFT JOIN LATERAL git_tree_each('test/tmp/main-repo', l.commit_hash) t ON true
+    LEFT JOIN LATERAL git_branches_each(l.repo_path) b ON true
+    GROUP BY l.repo_path, l.commit_hash
+)
+SELECT files_in_commit, branches_count
+FROM analysis
+WHERE files_in_commit > 0
+LIMIT 1
+----
+4	3
+
+# Test all _each functions have LATERAL capability
+statement ok
+WITH test_data(repo_path) AS (VALUES ('test/tmp/main-repo'))
+(SELECT 'git_log_each' as func FROM test_data t, LATERAL git_log_each(t.repo_path) l LIMIT 1)
+UNION ALL
+(SELECT 'git_tree_each' as func FROM test_data t, LATERAL git_tree_each(t.repo_path, 'HEAD') tr LIMIT 1)
+UNION ALL  
+(SELECT 'git_branches_each' as func FROM test_data t, LATERAL git_branches_each(t.repo_path) b LIMIT 1)
+UNION ALL
+(SELECT 'git_tags_each' as func FROM test_data t, LATERAL git_tags_each(t.repo_path) tag LIMIT 1);
+
+# Test that all _each functions return results
+query I
+SELECT COUNT(*) > 0 as has_results
+FROM git_log_each('test/tmp/main-repo')
+----
+true
+
+# Test performance: all _each functions handle multiple inputs efficiently
+query I
+SELECT COUNT(*) as total_results FROM (
+    SELECT 'log' as type FROM generate_series(1,3) g, LATERAL git_log_each('test/tmp/main-repo') l
+    UNION ALL
+    SELECT 'tree' as type FROM generate_series(1,3) g, LATERAL git_tree_each('test/tmp/main-repo', 'HEAD') t  
+    UNION ALL
+    SELECT 'branches' as type FROM generate_series(1,3) g, LATERAL git_branches_each('test/tmp/main-repo') b
+    UNION ALL
+    SELECT 'tags' as type FROM generate_series(1,3) g, LATERAL git_tags_each('test/tmp/main-repo') tag
+)
+----
+39
+
+# Test error handling consistency across all _each functions
+statement error
+SELECT * FROM git_log_each('/invalid/path')
+----
+Binder Error
+
+query I
+SELECT COUNT(*) FROM git_tree_each('test/tmp/main-repo', 'invalid_commit')
+----
+0
+
+query I
+SELECT COUNT(*) FROM git_branches_each('/invalid/path')
+----
+0
+
+query I
+SELECT COUNT(*) FROM git_tags_each('/invalid/path')
+----
+0

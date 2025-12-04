@@ -1,6 +1,6 @@
 # name: test/sql/duck_tails.test
 # description: test duck_tails extension git functionality
-# group: [duck_tails]
+# group: [sql]
 
 # Before we load the extension, git functions will fail
 statement error
@@ -10,6 +10,10 @@ Catalog Error: Table Function with name git_log does not exist!
 
 # Require statement will ensure this test is run with this extension loaded
 require duck_tails
+
+# Use __BUILD_DIRECTORY__ to ensure we load the freshly built extension
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
 
 # Test git_log function works
 query I

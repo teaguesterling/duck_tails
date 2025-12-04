@@ -1,0 +1,25 @@
+# name: test/sql/minimal_lateral.test
+# group: [sql]
+
+# Minimal LATERAL join test
+statement ok
+PRAGMA threads=1;
+
+require duck_tails
+
+# Use __BUILD_DIRECTORY__ to ensure we load the freshly built extension
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
+# Simple test that should work with fixture repo
+query I
+SELECT COUNT(*) FROM git_tree_each('git://test/tmp/main-repo@HEAD');
+----
+4
+
+# The problematic LATERAL join
+query I
+SELECT COUNT(*)
+FROM git_tree_each('git://test/tmp/main-repo@HEAD') t
+CROSS JOIN LATERAL git_log_each(t.git_uri) l;
+----
+5

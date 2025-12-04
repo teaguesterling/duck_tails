@@ -1,8 +1,12 @@
 # name: test/sql/duck_tails_zero_args.test
 # description: Test zero-argument versions of git functions
-# group: [duck_tails]
+# group: [sql]
 
 require duck_tails
+
+# Use __BUILD_DIRECTORY__ to ensure we load the freshly built extension
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
 
 # Test git_log() with no arguments defaults to current directory
 query I

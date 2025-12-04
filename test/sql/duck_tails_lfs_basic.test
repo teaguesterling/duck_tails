@@ -1,6 +1,6 @@
 # name: test/sql/duck_tails_lfs_basic.test
 # description: test duck_tails basic LFS functionality - just ensure extension loads with LFS support
-# group: [duck_tails]
+# group: [sql]
 
 # Require the duck_tails extension
 require duck_tails

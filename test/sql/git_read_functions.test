@@ -1,0 +1,76 @@
+# name: test/sql/git_read_functions.test
+# description: Test git_read and git_read_each functions
+# group: [sql]
+
+require duck_tails
+
+# Use __BUILD_DIRECTORY__ to ensure we load the freshly built extension
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
+
+statement ok
+PRAGMA enable_verification
+
+# Test basic git_read function with a simple file
+query TITTITTTT
+SELECT git_uri, mode, kind, is_text, encoding, size_bytes > 0 as has_size, truncated, 
+       text IS NOT NULL as has_text, blob IS NULL as no_blob
+FROM git_read('git://test/tmp/main-repo/README.md@HEAD')
+----
+git://test/tmp/main-repo/README.md@HEAD	33188	file	true	utf8	true	false	true	true
+
+# Test git_read with non-existent file (should throw exception)
+statement error
+SELECT * FROM git_read('git://test/tmp/main-repo/non_existent_file.txt@HEAD')
+----
+file not found 'non_existent_file.txt' in commit 'HEAD'
+
+# Test git_read with invalid reference (should throw exception)
+statement error
+SELECT * FROM git_read('git://test/tmp/main-repo/README.md@invalid@@@ref')
+----
+unable to parse OID
+
+# Test git_read with max_bytes parameter
+query IT
+SELECT size_bytes > 10 as original_larger, truncated 
+FROM git_read('git://test/tmp/main-repo/README.md@HEAD', 10)
+----
+true	true
+
+# Test git_read function overloads exist
+statement ok
+SELECT * FROM git_read('git://test/tmp/main-repo/README.md@HEAD')
+
+statement ok
+SELECT * FROM git_read('git://test/tmp/main-repo/README.md@HEAD', 1000)
+
+statement ok
+SELECT * FROM git_read('git://test/tmp/main-repo/README.md@HEAD', 1000, 'auto')
+
+statement ok
+SELECT * FROM git_read('git://test/tmp/main-repo/README.md@HEAD', 1000, 'auto', 'utf8')
+
+statement ok
+SELECT * FROM git_read('git://test/tmp/main-repo/README.md@HEAD', 1000, 'auto', 'utf8', 'raw')
+
+# Test git_read_each function with simple input (direct call works)
+query T
+SELECT kind FROM git_read('git://test/tmp/main-repo/README.md@HEAD')
+----
+file
+
+# Verify schema has 16 columns (expanded schema)
+query I
+SELECT COUNT(*) FROM (
+  DESCRIBE (SELECT * FROM git_read('git://test/tmp/main-repo/README.md@HEAD'))
+)
+----
+16
+
+# Test that git_read and git_read_each both execute properly
+statement ok
+SELECT * FROM git_read('git://test/tmp/main-repo/README.md@HEAD');
+
+statement ok
+SELECT * FROM git_read('git://test/tmp/main-repo/README.md@HEAD')

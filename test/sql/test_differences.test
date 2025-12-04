@@ -1,0 +1,56 @@
+# name: test/sql/test_differences.test
+# group: [sql]
+
+# Test each difference to isolate the problem
+require duck_tails
+
+# Use __BUILD_DIRECTORY__ to ensure we load the freshly built extension
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
+# Test 1: With string concatenation (testing || operator)
+query I
+SELECT COUNT(*)
+FROM git_tree_each('git://test/tmp/main-repo@HEAD') t
+CROSS JOIN LATERAL git_log_each(t.git_uri) l
+WHERE t.file_path = 'README.md';
+----
+2
+
+# Test 2: With subquery in LATERAL
+query I
+SELECT COUNT(*)
+FROM git_tree_each('git://test/tmp/main-repo@HEAD') t
+CROSS JOIN LATERAL (
+    SELECT commit_hash 
+    FROM git_log_each(t.git_uri)
+    LIMIT 1
+) l
+WHERE t.file_path = 'README.md';
+----
+1
+
+# Test 3: With GROUP BY
+query II
+SELECT t.file_path, COUNT(*)
+FROM git_tree_each('git://test/tmp/main-repo@HEAD') t
+CROSS JOIN LATERAL git_log_each(t.git_uri) l
+WHERE t.file_path = 'README.md'
+GROUP BY t.file_path;
+----
+README.md	2
+
+# Test 4: Full query with fixture repo
+query II
+SELECT 
+    t.file_path,
+    COUNT(l.commit_hash) as commit_count
+FROM git_tree_each('git://test/tmp/main-repo@HEAD') t
+CROSS JOIN LATERAL (
+    SELECT commit_hash 
+    FROM git_log_each(t.git_uri) 
+    LIMIT 1
+) l
+WHERE t.file_path = 'README.md'
+GROUP BY t.file_path;
+----
+README.md	1

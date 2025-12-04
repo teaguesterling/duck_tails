@@ -1,8 +1,12 @@
 # name: test/sql/duck_tails_phase2_basic.test
 # description: Basic Phase 2 functionality tests for Duck Tails
-# group: [duck_tails]
+# group: [sql]
 
 require duck_tails
+
+# Use __BUILD_DIRECTORY__ to ensure we load the freshly built extension
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
 
 # Test diff_text function works
 query I

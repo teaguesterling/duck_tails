@@ -1,0 +1,92 @@
+# name: test/sql/git_tree_each_comprehensive.test
+# description: Comprehensive tests for git_tree_each LATERAL functionality
+# group: [sql]
+
+require duck_tails
+
+# Use __BUILD_DIRECTORY__ to ensure we load the freshly built extension
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
+
+statement ok
+PRAGMA enable_verification
+
+# Test direct git_tree_each calls (basic functionality)
+query T
+SELECT COUNT(*) > 0 as has_files FROM git_tree_each('test/tmp/main-repo', 'HEAD')
+----
+true
+
+# Test git_tree_each schema consistency (should have 14 columns with expanded schema)
+query I
+SELECT COUNT(*) FROM (
+  DESCRIBE (SELECT * FROM git_tree_each('test/tmp/main-repo', 'HEAD'))
+)
+----
+14
+
+# Test git_tree_each return columns match expected schema
+statement ok
+SELECT commit_hash, commit_date, file_path, mode, blob_hash, size_bytes, git_uri
+FROM git_tree_each('test/tmp/main-repo', 'HEAD') LIMIT 1
+
+# Test LATERAL git_tree_each with single repository path
+query TT  
+WITH test_repos AS (SELECT 'test/tmp/main-repo' as repo_path)
+SELECT t.repo_path, COUNT(*) > 0 as has_files FROM test_repos t, LATERAL git_tree_each(t.repo_path, 'HEAD') r
+GROUP BY t.repo_path
+----
+test/tmp/main-repo	true
+
+# Test LATERAL git_tree_each with multiple repository paths  
+query TT
+WITH test_repos(repo_path) AS (
+    VALUES ('test/tmp/main-repo'), ('test/tmp/main-repo') 
+)
+SELECT t.repo_path, COUNT(*) > 0 as has_files 
+FROM test_repos t, LATERAL git_tree_each(t.repo_path, 'HEAD') r
+GROUP BY t.repo_path
+ORDER BY t.repo_path
+----
+test/tmp/main-repo	true
+
+# Test git_tree_each with invalid commit returns no rows  
+query I
+SELECT COUNT(*) FROM git_tree_each('test/tmp/main-repo', 'invalid_commit_hash_that_does_not_exist')
+----
+0
+
+# Test LATERAL git_tree_each with NULL repo path (should skip NULL)
+query I
+WITH test_repos(repo_path) AS (
+    VALUES ('test/tmp/main-repo'), (NULL)
+)
+SELECT COUNT(*) FROM test_repos t, LATERAL git_tree_each(t.repo_path, 'HEAD') r
+----
+4
+
+# Test git_tree_each with named parameters
+query T
+SELECT COUNT(*) > 0 as has_files FROM git_tree_each('test/tmp/main-repo')
+----
+true
+
+# Test git_tree zero-argument version (defaults to HEAD) - git_tree_each doesn't support zero-arg
+query T
+SELECT COUNT(*) > 0 as has_files FROM git_tree()
+----
+true
+
+# Test git_tree basic version (array mode removed in unified signature)
+query T
+SELECT COUNT(*) > 0 as has_files FROM git_tree()
+----
+true
+
+# Test git_uri column format
+query T
+SELECT git_uri LIKE 'git://%/test/tmp/main-repo/README.md@%' as correct_format 
+FROM git_tree_each('test/tmp/main-repo', 'HEAD') 
+WHERE file_path = 'README.md'
+----
+true

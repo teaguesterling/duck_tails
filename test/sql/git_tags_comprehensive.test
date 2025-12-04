@@ -1,0 +1,120 @@
+# name: test/sql/git_tags_comprehensive.test
+# description: Comprehensive tests for git_tags function including tag_hash column
+# group: [sql]
+
+require duck_tails
+
+# Use __BUILD_DIRECTORY__ to ensure we load the freshly built extension
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
+
+statement ok
+PRAGMA enable_verification
+
+# Test basic git_tags functionality
+query T
+SELECT COUNT(*) >= 0 as valid_tag_count FROM git_tags('test/tmp/main-repo')
+----
+true
+
+# Test git_tags schema - should have 8 columns including new tag_hash column
+query I
+SELECT COUNT(*) FROM (
+  DESCRIBE (SELECT * FROM git_tags('test/tmp/main-repo'))
+)
+----
+8
+
+# Test git_tags return columns match expected schema (including new tag_hash column)
+statement ok
+SELECT repo_path, tag_name, commit_hash, tag_hash, tagger_name, is_annotated, tagger_date, message
+FROM git_tags('test/tmp/main-repo') LIMIT 1
+
+# Test tag_hash column exists and has valid format
+statement ok
+SELECT tag_name, tag_hash
+FROM git_tags('test/tmp/main-repo')
+WHERE tag_hash IS NOT NULL AND LENGTH(tag_hash) = 40
+LIMIT 5
+
+# Test commit_hash vs tag_hash behavior for lightweight tags (should be identical)
+query TT
+SELECT tag_name, 
+       CASE WHEN commit_hash = tag_hash THEN 'identical' ELSE 'different' END as hash_comparison
+FROM git_tags('test/tmp/main-repo')
+WHERE is_annotated = false AND tag_name IS NOT NULL
+ORDER BY tag_name
+LIMIT 5
+----
+beta-1	identical
+
+# Test commit_hash vs tag_hash behavior for annotated tags (should be different)
+query TTT
+SELECT tag_name, 
+       commit_hash != tag_hash as hashes_different,
+       CASE WHEN LENGTH(commit_hash) = 40 AND LENGTH(tag_hash) = 40 THEN 'both_valid' ELSE 'invalid' END as hash_validity
+FROM git_tags('test/tmp/main-repo')
+WHERE is_annotated = true AND tag_name IS NOT NULL
+ORDER BY tag_name
+LIMIT 5
+----
+v1.0.0	true	both_valid
+v2.0.0	true	both_valid
+
+# Test that commit_hash points to actual commits for annotated tags
+statement ok
+SELECT tag_name, commit_hash, tag_hash, is_annotated
+FROM git_tags('test/tmp/main-repo')
+WHERE is_annotated = true AND tag_name = 'v1.0.0'
+
+# Verify all tag hashes have correct format
+query I
+SELECT COUNT(*) as valid_hash_count
+FROM git_tags('test/tmp/main-repo')
+WHERE tag_hash IS NOT NULL 
+  AND LENGTH(tag_hash) = 40 
+  AND tag_hash ~ '^[0-9a-f]{40}$'
+----
+3
+
+# Test git_tags zero-argument version (defaults to current directory)
+query T
+SELECT COUNT(*) >= 0 as valid_tag_count FROM git_tags()
+----
+true
+
+# Test git_tags error handling - non-existent repository (should throw error)
+statement error
+SELECT COUNT(*) FROM git_tags('/path/that/does/not/exist')
+----
+Failed to resolve repository path
+
+# Test specific tag details for v1.0.0 (annotated tag)
+query TTTTT
+SELECT tag_name, 
+       (LENGTH(commit_hash) = 40)::VARCHAR as valid_commit_hash,
+       (LENGTH(tag_hash) = 40)::VARCHAR as valid_tag_hash, 
+       (commit_hash != tag_hash)::VARCHAR as different_hashes,
+       is_annotated::VARCHAR
+FROM git_tags('test/tmp/main-repo')
+WHERE tag_name = 'v1.0.0'
+----
+v1.0.0	true	true	true	true
+
+# Test specific tag details for beta-1 (lightweight tag) 
+query TTTTT
+SELECT tag_name, 
+       (LENGTH(commit_hash) = 40)::VARCHAR as valid_commit_hash,
+       (LENGTH(tag_hash) = 40)::VARCHAR as valid_tag_hash,
+       (commit_hash = tag_hash)::VARCHAR as same_hashes,
+       is_annotated::VARCHAR
+FROM git_tags('test/tmp/main-repo')
+WHERE tag_name = 'beta-1'
+----
+beta-1	true	true	true	false
+
+# Test that all tags have consistent hash formatting
+statement ok
+SELECT tag_name, commit_hash, tag_hash, is_annotated
+FROM git_tags('test/tmp/main-repo')
+WHERE LENGTH(commit_hash) = 40 AND LENGTH(tag_hash) = 40

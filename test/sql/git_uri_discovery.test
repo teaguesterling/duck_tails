@@ -1,9 +1,12 @@
 # name: test/sql/git_uri_discovery.test
 # description: Test git:// URL repository discovery functionality
-# group: [duck_tails]
+# group: [sql]
 
 require duck_tails
 
+# Use __BUILD_DIRECTORY__ to ensure we load the freshly built extension
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
 # Test 1: Verify current repo discovery still works (baseline)
 query I
 SELECT COUNT(*) > 0 as works_current

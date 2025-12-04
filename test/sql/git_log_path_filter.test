@@ -1,0 +1,41 @@
+# name: test/sql/git_log_path_filter.test
+# group: [sql]
+
+# Test path filtering consistency between git_log and git_log_each
+
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/repository';
+
+statement ok
+LOAD duck_tails;
+
+statement ok  
+PRAGMA threads=1;
+
+# Both functions should return identical results for same file
+query I
+SELECT COUNT(*) > 0 FROM git_log('git://README.md@HEAD');
+----
+true
+
+# git_log and git_log_each should return the same count
+query I
+SELECT (SELECT COUNT(*) FROM git_log('git://README.md@HEAD')) =
+       (SELECT COUNT(*) FROM (
+           SELECT * FROM (VALUES ('git://README.md@HEAD')) t(uri)
+           CROSS JOIN LATERAL git_log_each(t.uri)
+       )) as counts_match;
+----
+true
+
+# Test with non-existent file returns 0
+query I
+SELECT COUNT(*) FROM git_log('git://nonexistent-file.txt@HEAD');
+----
+0
+
+# Test without file path returns all commits
+query I
+SELECT COUNT(*) > 0 FROM git_log('test/tmp/main-repo');
+----
+true

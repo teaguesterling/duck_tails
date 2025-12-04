@@ -18,15 +18,22 @@
 
 namespace duckdb {
 
-
 static void LoadInternal(ExtensionLoader &loader) {
+	// Initialize libgit2 once at extension load time
+	// This is thread-safe and should only be called once
+	static bool git_initialized = false;
+	if (!git_initialized) {
+		git_libgit2_init();
+		git_initialized = true;
+	}
+
 	// Register git filesystem
 	RegisterGitFileSystem(loader);
 
 	// Register git table functions
 	RegisterGitFunctions(loader);
 
-	// Register TextDiff type and functions (Phase 2)
+	// Register TextDiff type and functions
 	RegisterTextDiffType(loader);
 }
 

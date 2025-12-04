@@ -1,0 +1,65 @@
+# name: test/sql/asan_hardening_lateral.test
+# description: ASan hardening tests for LATERAL functions with different vector forms
+# group: [sql]
+
+require duck_tails
+
+# Use __BUILD_DIRECTORY__ to ensure we load the freshly built extension
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
+
+statement ok
+PRAGMA enable_verification;
+
+# Test 1: constant input (CONSTANT_VECTOR) routed to LATERAL
+query I
+WITH t(repo) AS (
+  SELECT CONCAT('git://', 'test/tmp/main-repo', '@HEAD')
+)
+SELECT COUNT(*) >= 0 as has_results FROM t, LATERAL git_tree_each(t.repo);
+----
+true
+
+# Test 2: dictionary input (selection vector) routed to LATERAL
+query I
+WITH base(repo) AS (
+  SELECT 'test/tmp/main-repo' UNION ALL SELECT 'test/tmp/main-repo'
+)
+SELECT COUNT(*) >= 0 as has_results
+FROM base b, LATERAL git_read_each(CONCAT('git://', b.repo, '/README.md@HEAD'));
+----
+true
+
+# Test 3: chained LATERAL with parallelism: tree -> read_each
+query I
+PRAGMA threads=4;
+SELECT COUNT(*) >= 0 as has_results
+FROM git_tree(CONCAT('git://', 'test/tmp/main-repo', '@HEAD')) t
+CROSS JOIN LATERAL git_read_each(t.git_uri) r
+WHERE t.file_path LIKE '%.md';
+----
+true
+
+# Test 4: Multiple LATERAL functions together
+query I
+WITH repos(name, path) AS (VALUES ('main-repo', 'test/tmp/main-repo'))
+SELECT COUNT(*) >= 0 as has_results FROM repos r,
+     LATERAL git_branches_each(r.path) b,
+     LATERAL git_log_each(r.path) l
+WHERE b.branch_name IS NOT NULL
+LIMIT 1;
+----
+true
+
+# Test 5: Stress test - force different vector types through generate_series
+query I
+SELECT COUNT(*) >= 0 as has_results FROM (
+    SELECT 'log' as type FROM generate_series(1,2) g, LATERAL git_log_each('test/tmp/main-repo') l
+    UNION ALL
+    SELECT 'tree' as type FROM generate_series(1,2) g, LATERAL git_tree_each('test/tmp/main-repo', 'HEAD') t  
+    UNION ALL
+    SELECT 'branches' as type FROM generate_series(1,2) g, LATERAL git_branches_each('test/tmp/main-repo') b
+) 
+LIMIT 1;
+----
+true

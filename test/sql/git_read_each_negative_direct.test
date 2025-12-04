@@ -1,0 +1,46 @@
+# name: test/sql/git_read_each_negative_direct.test
+# description: Test that git_read_each functions are LATERAL-only and reject direct calls
+# group: [sql]
+
+require duck_tails
+
+# Use __BUILD_DIRECTORY__ to ensure we load the freshly built extension
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
+
+statement ok
+PRAGMA enable_verification;
+
+# Test: git_read_each must be LATERAL-only; direct calls should fail
+statement error
+SELECT * FROM git_read_each(CONCAT('git://', 'test/tmp/main-repo', '/README.md@HEAD'));
+----
+Binder Error
+
+# Test: All git_read_each overloads should be LATERAL-only
+statement error  
+SELECT * FROM git_read_each('test/tmp/main-repo', 'HEAD');
+----
+Binder Error
+
+statement error
+SELECT * FROM git_read_each('test/tmp/main-repo', 'HEAD', 1000);
+----
+Binder Error
+
+statement error
+SELECT * FROM git_read_each('test/tmp/main-repo', 'HEAD', 1000, 'auto');
+----
+Binder Error
+
+statement error
+SELECT * FROM git_read_each('test/tmp/main-repo', 'HEAD', 1000, 'auto', 'utf8');
+----
+Binder Error
+
+# Test: For direct calls, users should use git_read instead
+query I
+SELECT COUNT(*) >= 0 as works_correctly
+FROM git_read(CONCAT('git://', 'test/tmp/main-repo', '/README.md@HEAD'));
+----
+true

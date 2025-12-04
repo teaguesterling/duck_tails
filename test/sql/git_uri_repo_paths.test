@@ -1,9 +1,12 @@
 # name: test/sql/git_uri_repo_paths.test
 # description: Test git:// URL repository path parsing
-# group: [duck_tails]
+# group: [sql]
 
 require duck_tails
 
+# Use __BUILD_DIRECTORY__ to ensure we load the freshly built extension
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
 # Test 1: Relative paths should continue working (backward compatibility)
 query I
 SELECT COUNT(*) > 0 as works_relative

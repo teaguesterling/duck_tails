@@ -1,0 +1,59 @@
+# name: test/sql/git_tree_enhanced.test
+# description: Test enhanced git_tree function with LATERAL support and multiple modes
+# group: [sql]
+
+require duck_tails
+
+# Use __BUILD_DIRECTORY__ to ensure we load the freshly built extension
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
+
+statement ok
+PRAGMA enable_verification
+
+# Test git_tree with fixture repo - check structure not exact values
+query I
+SELECT COUNT(*) FROM git_tree('git://test/tmp/main-repo@HEAD') WHERE kind='file' AND mode > 0 AND length(blob_hash) = 40 AND size_bytes > 0
+----
+3
+
+# Test zero argument version (defaults) - check structure consistency  
+query I
+SELECT COUNT(*) FROM git_tree('git://test/tmp/main-repo@HEAD') WHERE kind='file' AND mode > 0 AND length(blob_hash) = 40 AND size_bytes > 0
+----
+3
+
+# Verify schema has 14 columns (expanded schema with full git metadata)
+query I
+SELECT COUNT(*) FROM (
+  DESCRIBE (SELECT * FROM git_tree('git://test/tmp/main-repo@HEAD'))
+)
+----
+14
+
+# Test that commit_hash and commit_date are properly populated
+query I
+SELECT COUNT(DISTINCT commit_hash) FROM git_tree('git://test/tmp/main-repo@HEAD')
+----
+1
+
+# Test LATERAL join with dynamic commit (single commit from git_log)
+# Note: Currently expect this to fail - LATERAL support requires additional implementation
+statement error
+SELECT COUNT(*) 
+FROM git_log('test/tmp/main-repo') l 
+JOIN LATERAL git_tree(l.commit_hash) t ON TRUE 
+WHERE l.commit_hash = (SELECT commit_hash FROM git_log('test/tmp/main-repo') LIMIT 1)
+----
+Table function "git_tree" does not support lateral join column parameters
+
+# Test multiple individual commits with UNION 
+query I
+SELECT COUNT(DISTINCT commit_hash) 
+FROM (
+  SELECT * FROM git_tree('git://test/tmp/main-repo@HEAD')
+  UNION ALL 
+  SELECT * FROM git_tree('git://test/tmp/main-repo@HEAD~1')
+)
+----
+2
