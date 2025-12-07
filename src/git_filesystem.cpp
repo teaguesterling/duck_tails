@@ -1,11 +1,8 @@
 #include "git_filesystem.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/exception.hpp"
-#include <regex>
+#include "duckdb/common/local_file_system.hpp"
 #include <cstring>
-#include <sys/stat.h>
-#include <unistd.h>
-#include <climits>
 #include <vector>
 #include <unordered_map>
 #include <fstream>
@@ -482,27 +479,24 @@ static bool IsGitRepository(const string &path) {
 }
 
 static bool PathExists(const string &path) {
-	struct stat path_stat;
-	return stat(path.c_str(), &path_stat) == 0;
+	LocalFileSystem fs;
+	return fs.FileExists(path) || fs.DirectoryExists(path);
 }
 
 static bool IsDirectory(const string &path) {
-	struct stat path_stat;
-	if (stat(path.c_str(), &path_stat) != 0) {
-		return false;
-	}
-	return S_ISDIR(path_stat.st_mode);
+	LocalFileSystem fs;
+	return fs.DirectoryExists(path);
 }
 
 // Normalizes a path by resolving relative components (./ and ../) and converting to absolute path
 static string NormalizePath(const string &path) {
 	string current_path = path;
 
-	// Resolve relative paths to absolute paths
+	// Resolve relative paths to absolute paths using DuckDB's cross-platform API
 	if (!current_path.empty() && current_path[0] != '/') {
-		char cwd[PATH_MAX];
-		if (getcwd(cwd, sizeof(cwd)) != nullptr) {
-			current_path = string(cwd) + "/" + current_path;
+		string cwd = FileSystem::GetWorkingDirectory();
+		if (!cwd.empty()) {
+			current_path = cwd + "/" + current_path;
 		}
 	}
 
