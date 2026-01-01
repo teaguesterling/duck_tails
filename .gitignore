@@ -10,6 +10,9 @@ test/tmp/
 test/lfs_test_repo/
 test/fixtures/test_repo~/
 
+# Documentation build output
+site/
+
 # Development artifacts
 *.zip
 *.patch

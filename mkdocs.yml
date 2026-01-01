@@ -1,0 +1,86 @@
+site_name: Duck Tails
+site_description: Git-aware data analysis for DuckDB
+site_url: https://duck-tails.readthedocs.io/
+repo_url: https://github.com/teaguesterling/duck_tails
+repo_name: teaguesterling/duck_tails
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: amber
+      accent: orange
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: amber
+      accent: orange
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+  icon:
+    repo: fontawesome/brands/github
+
+plugins:
+  - search
+  - awesome-pages
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - admonition
+  - pymdownx.details
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: getting-started/installation.md
+    - Quick Start: getting-started/quickstart.md
+  - User Guide:
+    - Git URI Syntax: guide/git-uris.md
+    - Reading Git Files: guide/reading-files.md
+    - LATERAL Joins: guide/lateral-joins.md
+    - Git LFS Support: guide/lfs.md
+  - Function Reference:
+    - Overview: reference/index.md
+    - git_log: reference/git_log.md
+    - git_tree: reference/git_tree.md
+    - git_read: reference/git_read.md
+    - git_branches: reference/git_branches.md
+    - git_tags: reference/git_tags.md
+    - git_parents: reference/git_parents.md
+    - git_uri: reference/git_uri.md
+    - Diff Functions: reference/diff.md
+  - Examples:
+    - Repository Analytics: examples/analytics.md
+    - Historical Data Analysis: examples/historical.md
+    - Advanced Queries: examples/advanced.md
+  - Development:
+    - Contributing: development/contributing.md
+    - Architecture: development/architecture.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/teaguesterling/duck_tails
