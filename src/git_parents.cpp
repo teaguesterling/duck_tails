@@ -290,7 +290,6 @@ OperatorResultType GitParentsEachFunction(ExecutionContext &context, TableFuncti
 
 		idx_t output_count = 0;
 		while (output_count < STANDARD_VECTOR_SIZE && state.current_output_row < state.current_rows.size()) {
-
 			auto &row = state.current_rows[state.current_output_row];
 			OutputGitParentsRow(output, output_count, row, state.current_repo_path);
 

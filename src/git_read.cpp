@@ -346,7 +346,6 @@ static void ProcessGitURI(const string &uri, const GitReadBindData &bind_data, G
 // Bind function for static git_read (single URI parameter)
 static unique_ptr<FunctionData> GitReadBind(ClientContext &context, TableFunctionBindInput &input,
                                             vector<LogicalType> &return_types, vector<string> &names) {
-
 	// Extract first parameter (repo_path_or_uri_with_file)
 	if (input.inputs.empty()) {
 		throw BinderException("git_read requires at least one parameter: the file path or git:// URI");
@@ -495,7 +494,6 @@ static void GitReadFunction(ClientContext &context, TableFunctionInput &input, D
 // Bind function for git_read_each (Pure LATERAL function)
 static unique_ptr<FunctionData> GitReadEachBind(ClientContext &context, TableFunctionBindInput &input,
                                                 vector<LogicalType> &return_types, vector<string> &names) {
-
 	// LATERAL-only: reject direct calls, arguments arrive at runtime via input DataChunk
 	if (!input.inputs.empty()) {
 		throw BinderException("git_read_each is LATERAL-only. For direct calls, use git_read(...) instead");

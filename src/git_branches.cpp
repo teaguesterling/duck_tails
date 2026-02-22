@@ -36,7 +36,6 @@ unique_ptr<LocalTableFunctionState> GitBranchesLocalInit(ExecutionContext &conte
 
 unique_ptr<FunctionData> GitBranchesBind(ClientContext &context, TableFunctionBindInput &input,
                                          vector<LogicalType> &return_types, vector<string> &names) {
-
 	// Use unified parameter parsing to support both git:// URIs and filesystem paths
 	auto params = ParseUnifiedGitParams(input, 1); // ref parameter at index 1 (optional)
 
@@ -71,7 +70,6 @@ unique_ptr<FunctionData> GitBranchesBind(ClientContext &context, TableFunctionBi
 
 unique_ptr<FunctionData> GitBranchesEachBind(ClientContext &context, TableFunctionBindInput &input,
                                              vector<LogicalType> &return_types, vector<string> &names) {
-
 	// For LATERAL functions, use ParseLateralGitParams to get optional ref parameter
 	// The repo_path will come from runtime DataChunk, not bind time
 	auto params = ParseLateralGitParams(input, 1); // ref parameter at index 1 (optional)
@@ -328,7 +326,6 @@ static OperatorResultType GitBranchesEachFunction(ExecutionContext &context, Tab
 
 		idx_t output_count = 0;
 		while (output_count < STANDARD_VECTOR_SIZE && state.current_output_row < state.current_rows.size()) {
-
 			auto &row = state.current_rows[state.current_output_row];
 
 			output.SetValue(0, output_count, Value(resolved_repo_path));

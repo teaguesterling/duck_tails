@@ -326,7 +326,6 @@ static void ProcessSingleCommit(git_repository *repo, const string &ref, const s
 
 unique_ptr<FunctionData> GitTreeBind(ClientContext &context, TableFunctionBindInput &input,
                                      vector<LogicalType> &return_types, vector<string> &names) {
-
 	// Set return schema first
 	return_types = GetGitTreeSchema();
 	names = GetGitTreeColumnNames();
@@ -354,7 +353,6 @@ unique_ptr<FunctionData> GitTreeBind(ClientContext &context, TableFunctionBindIn
 
 unique_ptr<FunctionData> GitTreeEachBind(ClientContext &context, TableFunctionBindInput &input,
                                          vector<LogicalType> &return_types, vector<string> &names) {
-
 	// Set return schema
 	return_types = GetGitTreeSchema();
 	names = GetGitTreeColumnNames();
@@ -541,7 +539,6 @@ static OperatorResultType GitTreeEachFunction(ExecutionContext &context, TableFu
 		// Output rows for current input
 		idx_t output_count = 0;
 		while (output_count < STANDARD_VECTOR_SIZE && state.current_output_row < state.current_rows.size()) {
-
 			auto &row = state.current_rows[state.current_output_row];
 			OutputGitTreeRow(output, row, output_count);
 

@@ -44,7 +44,6 @@ static void GitUriFunction(DataChunk &args, ExpressionState &state, Vector &resu
 	if (args.data[0].GetVectorType() == VectorType::CONSTANT_VECTOR &&
 	    args.data[1].GetVectorType() == VectorType::CONSTANT_VECTOR &&
 	    args.data[2].GetVectorType() == VectorType::CONSTANT_VECTOR) {
-
 		auto repo_path_value = ConstantVector::GetData<string_t>(args.data[0]);
 		auto file_path_value = ConstantVector::GetData<string_t>(args.data[1]);
 		auto commit_ref_value = ConstantVector::GetData<string_t>(args.data[2]);
