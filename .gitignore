@@ -9,6 +9,7 @@ test/python/__pycache__/
 test/tmp/
 test/lfs_test_repo/
 test/fixtures/test_repo~/
+test/data/evolving_dataset.csv
 
 # Documentation build output
 site/
