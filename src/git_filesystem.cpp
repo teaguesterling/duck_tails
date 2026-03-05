@@ -1,4 +1,6 @@
 #include "git_filesystem.hpp"
+#include "git_context_manager.hpp"
+#include "git_utils.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/local_file_system.hpp"
@@ -216,6 +218,70 @@ bool GitFileSystem::CanHandleFile(const string &fpath) {
 	return StringUtil::StartsWith(fpath, "git://");
 }
 
+// Check if a revision string is a pseudo-ref
+static bool IsPseudoRef(const string &revision, RefKind &out_kind) {
+	string upper = StringUtil::Upper(revision);
+	if (upper == "WORKDIR" || upper == "WORKTREE") {
+		out_kind = RefKind::WORKDIR;
+		return true;
+	}
+	if (upper == "STAGED" || upper == "INDEX") {
+		out_kind = RefKind::INDEX;
+		return true;
+	}
+	return false;
+}
+
+// Safe workdir path — delegates to shared SafeWorkdirPath for traversal protection
+// For Glob which needs the workdir root separately, use GetWorkdirRoot
+
+// Get blob content from the git index
+static string GetIndexBlobContent(const string &repo_path, const string &file_path) {
+	git_repository *repo = nullptr;
+	int error = git_repository_open_ext(&repo, repo_path.c_str(), GIT_REPOSITORY_OPEN_NO_SEARCH, nullptr);
+	if (error != 0) {
+		throw IOException("Failed to open repository '%s'", repo_path);
+	}
+
+	git_index *index = nullptr;
+	error = git_repository_index(&index, repo);
+	if (error != 0) {
+		git_repository_free(repo);
+		throw IOException("Failed to get index for repository '%s'", repo_path);
+	}
+
+	error = git_index_read(index, 0);
+	if (error != 0) {
+		git_index_free(index);
+		git_repository_free(repo);
+		throw IOException("Failed to read index for repository '%s'", repo_path);
+	}
+
+	const git_index_entry *entry = git_index_get_bypath(index, file_path.c_str(), 0);
+	if (!entry) {
+		git_index_free(index);
+		git_repository_free(repo);
+		throw IOException("File '%s' not found in staging area", file_path);
+	}
+
+	git_blob *blob = nullptr;
+	error = git_blob_lookup(&blob, repo, &entry->id);
+	if (error != 0) {
+		git_index_free(index);
+		git_repository_free(repo);
+		throw IOException("Failed to load blob from index for '%s'", file_path);
+	}
+
+	const void *content = git_blob_rawcontent(blob);
+	git_off_t size = git_blob_rawsize(blob);
+	string result(static_cast<const char *>(content), size);
+
+	git_blob_free(blob);
+	git_index_free(index);
+	git_repository_free(repo);
+	return result;
+}
+
 unique_ptr<FileHandle> GitFileSystem::OpenFile(const string &path, FileOpenFlags flags,
                                                optional_ptr<FileOpener> opener) {
 	if (flags.OpenForWriting()) {
@@ -224,6 +290,30 @@ unique_ptr<FileHandle> GitFileSystem::OpenFile(const string &path, FileOpenFlags
 
 	try {
 		auto git_path = GitPath::Parse(path);
+
+		// Check for pseudo-refs
+		RefKind ref_kind;
+		if (IsPseudoRef(git_path.revision, ref_kind)) {
+			if (ref_kind == RefKind::WORKDIR) {
+				// Delegate to LocalFileSystem
+				string abs_path = SafeWorkdirPath(git_path.repository_path, git_path.file_path);
+				LocalFileSystem local_fs;
+				auto local_handle = local_fs.OpenFile(abs_path, flags, opener);
+				int64_t file_size = local_fs.GetFileSize(*local_handle);
+				auto content = make_shared_ptr<string>();
+				content->resize(static_cast<size_t>(file_size));
+				if (file_size > 0) {
+					local_fs.Read(*local_handle, const_cast<char *>(content->data()), file_size);
+				}
+				return make_uniq<GitFileHandle>(*this, path, content, flags);
+			} else {
+				// INDEX: read from staging area
+				auto content = GetIndexBlobContent(git_path.repository_path, git_path.file_path);
+				auto content_ptr = make_shared_ptr<string>(std::move(content));
+				return make_uniq<GitFileHandle>(*this, path, content_ptr, flags);
+			}
+		}
+
 		try {
 			auto repo = OpenRepository(git_path.repository_path);
 			auto commit_obj = ResolveRevision(repo, git_path.revision);
@@ -253,6 +343,68 @@ vector<OpenFileInfo> GitFileSystem::Glob(const string &pattern, FileOpener *open
 	try {
 		auto git_path = GitPath::Parse(pattern);
 
+		RefKind ref_kind;
+		if (IsPseudoRef(git_path.revision, ref_kind)) {
+			vector<OpenFileInfo> results;
+			if (ref_kind == RefKind::WORKDIR) {
+				// Delegate glob to local filesystem within workdir
+				try {
+					string workdir_root = GetWorkdirRoot(git_path.repository_path);
+					string abs_pattern = workdir_root + git_path.file_path;
+					LocalFileSystem local_fs;
+					auto local_results = local_fs.Glob(abs_pattern, opener);
+					// Convert back to git:// URIs
+					string workdir_prefix = workdir_root;
+					for (auto &info : local_results) {
+						string rel_path = info.path;
+						if (StringUtil::StartsWith(rel_path, workdir_prefix)) {
+							rel_path = rel_path.substr(workdir_prefix.length());
+						}
+						results.emplace_back(
+						    OpenFileInfo {"git://" + git_path.repository_path + "/" + rel_path + "@WORKDIR"});
+					}
+				} catch (...) {
+					// Return empty on error
+				}
+			} else {
+				// INDEX: enumerate index entries matching pattern
+				try {
+					git_repository *repo_ptr = nullptr;
+					int error = git_repository_open_ext(&repo_ptr, git_path.repository_path.c_str(),
+					                                    GIT_REPOSITORY_OPEN_NO_SEARCH, nullptr);
+					if (error == 0) {
+						git_index *index = nullptr;
+						error = git_repository_index(&index, repo_ptr);
+						if (error == 0) {
+							if (git_index_read(index, 0) != 0) {
+								git_index_free(index);
+								git_repository_free(repo_ptr);
+								return results;
+							}
+							size_t entry_count = git_index_entrycount(index);
+							for (size_t i = 0; i < entry_count; i++) {
+								const git_index_entry *entry = git_index_get_byindex(index, i);
+								if (entry && entry->path) {
+									string entry_path(entry->path);
+									// Simple prefix match for now
+									if (git_path.file_path.empty() ||
+									    StringUtil::StartsWith(entry_path, git_path.file_path)) {
+										results.emplace_back(OpenFileInfo {"git://" + git_path.repository_path + "/" +
+										                                   entry_path + "@STAGED"});
+									}
+								}
+							}
+							git_index_free(index);
+						}
+						git_repository_free(repo_ptr);
+					}
+				} catch (...) {
+					// Return empty on error
+				}
+			}
+			return results;
+		}
+
 		try {
 			auto repo = OpenRepository(git_path.repository_path);
 			auto commit_obj = ResolveRevision(repo, git_path.revision);
@@ -275,6 +427,47 @@ bool GitFileSystem::FileExists(const string &filename, optional_ptr<FileOpener> 
 	try {
 		auto git_path = GitPath::Parse(filename);
 
+		RefKind ref_kind;
+		if (IsPseudoRef(git_path.revision, ref_kind)) {
+			if (ref_kind == RefKind::WORKDIR) {
+				try {
+					string abs_path = SafeWorkdirPath(git_path.repository_path, git_path.file_path);
+					LocalFileSystem local_fs;
+					return local_fs.FileExists(abs_path);
+				} catch (...) {
+					return false;
+				}
+			} else {
+				// INDEX: check via git_index_get_bypath
+				try {
+					git_repository *repo = nullptr;
+					int error = git_repository_open_ext(&repo, git_path.repository_path.c_str(),
+					                                    GIT_REPOSITORY_OPEN_NO_SEARCH, nullptr);
+					if (error != 0) {
+						return false;
+					}
+					git_index *index = nullptr;
+					error = git_repository_index(&index, repo);
+					if (error != 0) {
+						git_repository_free(repo);
+						return false;
+					}
+					if (git_index_read(index, 0) != 0) {
+						git_index_free(index);
+						git_repository_free(repo);
+						return false;
+					}
+					const git_index_entry *entry = git_index_get_bypath(index, git_path.file_path.c_str(), 0);
+					bool exists = (entry != nullptr);
+					git_index_free(index);
+					git_repository_free(repo);
+					return exists;
+				} catch (...) {
+					return false;
+				}
+			}
+		}
+
 		try {
 			auto repo = OpenRepository(git_path.repository_path);
 			auto commit_obj = ResolveRevision(repo, git_path.revision);
@@ -287,8 +480,6 @@ bool GitFileSystem::FileExists(const string &filename, optional_ptr<FileOpener> 
 			return false;
 		}
 	} catch (const IOException &e) {
-		// For repository discovery errors, we still return false for FileExists
-		// but this maintains consistency with other methods
 		return false;
 	}
 }

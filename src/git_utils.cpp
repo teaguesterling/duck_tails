@@ -24,6 +24,7 @@ UnifiedGitParams ParseUnifiedGitParams(TableFunctionBindInput &input, int ref_pa
 			params.resolved_repo_path = ctx.repo_path;
 			params.resolved_file_path = ctx.file_path;
 			params.ref = ctx.final_ref;
+			params.ref_kind = ctx.ref_kind;
 			params.has_embedded_ref = !ctx.final_ref.empty() && ctx.final_ref != "HEAD";
 		} catch (const std::exception &e) {
 			throw BinderException("Failed to parse git:// URI '%s': %s", params.repo_path_or_uri, e.what());
@@ -35,6 +36,7 @@ UnifiedGitParams ParseUnifiedGitParams(TableFunctionBindInput &input, int ref_pa
 			params.resolved_repo_path = ctx.repo_path;
 			params.resolved_file_path = ctx.file_path;
 			params.ref = "HEAD"; // Default for filesystem paths
+			params.ref_kind = ctx.ref_kind;
 			params.has_embedded_ref = false;
 		} catch (const std::exception &e) {
 			throw BinderException("Failed to resolve repository path '%s': %s", params.repo_path_or_uri, e.what());
@@ -72,6 +74,55 @@ UnifiedGitParams ParseLateralGitParams(TableFunctionBindInput &input, int ref_pa
 	// Note: If no ref parameter provided, params.ref remains "HEAD" from constructor
 
 	return params;
+}
+
+string GetWorkdirRoot(const string &repo_path) {
+	git_repository *repo = nullptr;
+	int error = git_repository_open(&repo, repo_path.c_str());
+	if (error != 0) {
+		throw IOException("Failed to open repository '%s'", repo_path);
+	}
+	const char *workdir = git_repository_workdir(repo);
+	if (!workdir) {
+		git_repository_free(repo);
+		throw IOException("Repository '%s' is bare (no working directory)", repo_path);
+	}
+	string result(workdir);
+	git_repository_free(repo);
+	return result;
+}
+
+string SafeWorkdirPath(const string &repo_path, const string &file_path) {
+	string workdir = GetWorkdirRoot(repo_path);
+	string candidate = workdir + file_path;
+
+	// Resolve to canonical path and verify it's within the workdir
+	char *resolved = realpath(candidate.c_str(), nullptr);
+	if (!resolved) {
+		throw IOException("File not found or inaccessible: '%s'", file_path);
+	}
+	string canonical(resolved);
+	free(resolved);
+
+	// Also canonicalize workdir for comparison
+	char *resolved_workdir = realpath(workdir.c_str(), nullptr);
+	if (!resolved_workdir) {
+		throw IOException("Working directory not accessible: '%s'", workdir);
+	}
+	string canonical_workdir(resolved_workdir);
+	free(resolved_workdir);
+
+	// Ensure trailing slash for prefix comparison
+	if (!canonical_workdir.empty() && canonical_workdir.back() != '/') {
+		canonical_workdir += '/';
+	}
+
+	if (!StringUtil::StartsWith(canonical, canonical_workdir) &&
+	    canonical != canonical_workdir.substr(0, canonical_workdir.size() - 1)) {
+		throw IOException("Path '%s' escapes the repository working directory", file_path);
+	}
+
+	return canonical;
 }
 
 } // namespace duckdb

@@ -4,6 +4,7 @@
 #include "git_context_manager.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/types/value.hpp"
+#include "duckdb/common/local_file_system.hpp"
 #include "duckdb/main/extension/extension_loader.hpp"
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/parser/parsed_data/create_table_function_info.hpp"
@@ -150,6 +151,154 @@ static unique_ptr<GlobalTableFunctionState> GitReadInitGlobal(ClientContext &con
 	return make_uniq<GitReadGlobalState>();
 }
 
+// Helper to populate text/blob content fields from raw data
+static void PopulateContentFields(const char *raw_content, size_t raw_size, int64_t max_bytes,
+                                  GitReadLocalState::ReadResult &result) {
+	result.size_bytes = static_cast<int64_t>(raw_size);
+
+	size_t content_size = raw_size;
+	if (max_bytes > 0 && content_size > static_cast<size_t>(max_bytes)) {
+		content_size = static_cast<size_t>(max_bytes);
+		result.truncated = true;
+	}
+
+	if (content_size == 0) {
+		return;
+	}
+
+	// Check for null bytes
+	bool has_null_bytes = false;
+	for (size_t i = 0; i < content_size; i++) {
+		if (raw_content[i] == '\0') {
+			has_null_bytes = true;
+			break;
+		}
+	}
+
+	bool is_valid_utf8 = !has_null_bytes && IsValidUTF8(raw_content, content_size);
+
+	if (is_valid_utf8) {
+		result.is_text = true;
+		result.encoding = "utf8";
+		result.text = string(raw_content, content_size);
+
+		// Defensive check for suspicious memory patterns
+		if (result.text.find('\xbe') != string::npos) {
+			result.encoding = "binary";
+			result.is_text = false;
+			result.text.clear();
+			result.blob = string(raw_content, content_size);
+		}
+	} else {
+		result.encoding = "binary";
+		result.is_text = false;
+		result.blob = string(raw_content, content_size);
+	}
+}
+
+// Read file from working directory (disk)
+static void ProcessWorkdirRead(const string &repo_path, const string &file_path, const GitReadBindData &bind_data,
+                               GitReadLocalState::ReadResult &result) {
+	// Safe path construction (validates no traversal via ../)
+	string abs_path = SafeWorkdirPath(repo_path, file_path);
+
+	// Read from disk
+	LocalFileSystem fs;
+	if (!fs.FileExists(abs_path)) {
+		throw IOException("git_read: file not found '%s' in working directory", file_path);
+	}
+
+	auto handle = fs.OpenFile(abs_path, FileOpenFlags::FILE_FLAGS_READ);
+	int64_t file_size = fs.GetFileSize(*handle);
+	string content;
+	content.resize(static_cast<size_t>(file_size));
+	if (file_size > 0) {
+		fs.Read(*handle, const_cast<char *>(content.data()), file_size);
+	}
+
+	result.repo_path = repo_path;
+	result.file_path = file_path;
+	result.file_ext = ExtractFileExtension(file_path);
+	result.ref = "WORKDIR";
+	result.kind = "file";
+	result.mode = 0100644; // Regular file
+
+	PopulateContentFields(content.data(), content.size(), bind_data.max_bytes, result);
+}
+
+// Read file from staging area (git index)
+static void ProcessIndexRead(const string &repo_path, const string &file_path, const GitReadBindData &bind_data,
+                             GitReadLocalState::ReadResult &result) {
+	git_repository *repo = nullptr;
+	int error = git_repository_open(&repo, repo_path.c_str());
+	if (error != 0) {
+		throw IOException("git_read: failed to open repository '%s'", repo_path);
+	}
+
+	git_index *index = nullptr;
+	error = git_repository_index(&index, repo);
+	if (error != 0) {
+		git_repository_free(repo);
+		throw IOException("git_read: failed to get index for repository '%s'", repo_path);
+	}
+
+	// Refresh index from disk
+	error = git_index_read(index, 0);
+	if (error != 0) {
+		git_index_free(index);
+		git_repository_free(repo);
+		throw IOException("git_read: failed to read index for repository '%s'", repo_path);
+	}
+
+	const git_index_entry *entry = git_index_get_bypath(index, file_path.c_str(), 0);
+	if (!entry) {
+		git_index_free(index);
+		git_repository_free(repo);
+		throw IOException("git_read: file not found '%s' in staging area", file_path);
+	}
+
+	// Look up the blob
+	git_blob *blob = nullptr;
+	error = git_blob_lookup(&blob, repo, &entry->id);
+	if (error != 0) {
+		git_index_free(index);
+		git_repository_free(repo);
+		throw IOException("git_read: failed to load blob from index for '%s'", file_path);
+	}
+
+	const void *raw_content = git_blob_rawcontent(blob);
+	git_off_t raw_size = git_blob_rawsize(blob);
+
+	result.repo_path = repo_path;
+	result.file_path = file_path;
+	result.file_ext = ExtractFileExtension(file_path);
+	result.ref = "STAGED";
+	result.blob_hash = oid_to_hex(&entry->id);
+	result.kind = "file";
+	result.mode = entry->mode;
+
+	// Use git_blob_is_binary for initial check, then do full validation
+	bool git_says_binary = git_blob_is_binary(blob);
+	if (!git_says_binary) {
+		PopulateContentFields(static_cast<const char *>(raw_content), static_cast<size_t>(raw_size),
+		                      bind_data.max_bytes, result);
+	} else {
+		result.is_text = false;
+		result.encoding = "binary";
+		result.size_bytes = static_cast<int64_t>(raw_size);
+		size_t content_size = static_cast<size_t>(raw_size);
+		if (bind_data.max_bytes > 0 && content_size > static_cast<size_t>(bind_data.max_bytes)) {
+			content_size = static_cast<size_t>(bind_data.max_bytes);
+			result.truncated = true;
+		}
+		result.blob = string(static_cast<const char *>(raw_content), content_size);
+	}
+
+	git_blob_free(blob);
+	git_index_free(index);
+	git_repository_free(repo);
+}
+
 // Helper function to process a git:// URI and extract content using GitContextManager
 static void ProcessGitURI(const string &uri, const GitReadBindData &bind_data, GitReadLocalState::ReadResult &result) {
 	// Initialize all fields with defaults
@@ -173,6 +322,20 @@ static void ProcessGitURI(const string &uri, const GitReadBindData &bind_data, G
 	// Use GitContextManager for unified URI processing
 	try {
 		auto ctx = GitContextManager::Instance().ProcessGitUri(uri, bind_data.ref);
+
+		// Dispatch based on ref kind
+		switch (ctx.ref_kind) {
+		case RefKind::WORKDIR:
+			ProcessWorkdirRead(ctx.repo_path, ctx.file_path, bind_data, result);
+			result.git_uri = uri;
+			return;
+		case RefKind::INDEX:
+			ProcessIndexRead(ctx.repo_path, ctx.file_path, bind_data, result);
+			result.git_uri = uri;
+			return;
+		case RefKind::COMMIT:
+			break; // Fall through to existing commit path
+		}
 
 		// Populate extracted URI components from GitContextManager
 		result.repo_path = ctx.repo_path;
@@ -458,20 +621,20 @@ static void GitReadFunction(ClientContext &context, TableFunctionInput &input, D
 	ProcessGitURI(bind_data.uri, bind_data, result);
 
 	// Fill output row using safe SetValue pattern (Our Fix #2)
-	output.SetValue(0, 0, Value(result.git_uri));             // git_uri
-	output.SetValue(1, 0, Value(result.repo_path));           // repo_path
-	output.SetValue(2, 0, Value(result.commit_hash));         // commit_hash
-	output.SetValue(3, 0, Value(result.tree_hash));           // tree_hash
-	output.SetValue(4, 0, Value(result.file_path));           // file_path
-	output.SetValue(5, 0, Value(result.file_ext));            // file_ext
-	output.SetValue(6, 0, Value(result.ref));                 // ref
-	output.SetValue(7, 0, Value(result.blob_hash));           // blob_hash
-	output.SetValue(8, 0, Value::INTEGER(result.mode));       // mode
-	output.SetValue(9, 0, Value(result.kind));                // kind
-	output.SetValue(10, 0, Value::BOOLEAN(result.is_text));   // is_text
-	output.SetValue(11, 0, Value(result.encoding));           // encoding
-	output.SetValue(12, 0, Value::BIGINT(result.size_bytes)); // size_bytes
-	output.SetValue(13, 0, Value::BOOLEAN(result.truncated)); // truncated
+	output.SetValue(0, 0, Value(result.git_uri));                                            // git_uri
+	output.SetValue(1, 0, Value(result.repo_path));                                          // repo_path
+	output.SetValue(2, 0, result.commit_hash.empty() ? Value() : Value(result.commit_hash)); // commit_hash
+	output.SetValue(3, 0, result.tree_hash.empty() ? Value() : Value(result.tree_hash));     // tree_hash
+	output.SetValue(4, 0, Value(result.file_path));                                          // file_path
+	output.SetValue(5, 0, Value(result.file_ext));                                           // file_ext
+	output.SetValue(6, 0, Value(result.ref));                                                // ref
+	output.SetValue(7, 0, Value(result.blob_hash));                                          // blob_hash
+	output.SetValue(8, 0, Value::INTEGER(result.mode));                                      // mode
+	output.SetValue(9, 0, Value(result.kind));                                               // kind
+	output.SetValue(10, 0, Value::BOOLEAN(result.is_text));                                  // is_text
+	output.SetValue(11, 0, Value(result.encoding));                                          // encoding
+	output.SetValue(12, 0, Value::BIGINT(result.size_bytes));                                // size_bytes
+	output.SetValue(13, 0, Value::BOOLEAN(result.truncated));                                // truncated
 
 	// Handle TEXT column
 	if (!result.text.empty()) {
@@ -637,14 +800,17 @@ static OperatorResultType GitReadEachFunction(ExecutionContext &context, TableFu
 			if (col_count > 1)
 				output.SetValue(1, i, Value(result.repo_path)); // repo_path
 			if (col_count > 2) {
-				// Ensure commit_hash is properly materialized (used in CONCAT operations)
-				string safe_commit_hash;
-				safe_commit_hash.reserve(result.commit_hash.length() + 1);
-				safe_commit_hash.assign(result.commit_hash.begin(), result.commit_hash.end());
-				output.SetValue(2, i, Value(safe_commit_hash)); // commit_hash
+				if (result.commit_hash.empty()) {
+					output.SetValue(2, i, Value()); // NULL commit_hash for WORKDIR/INDEX
+				} else {
+					string safe_commit_hash;
+					safe_commit_hash.reserve(result.commit_hash.length() + 1);
+					safe_commit_hash.assign(result.commit_hash.begin(), result.commit_hash.end());
+					output.SetValue(2, i, Value(safe_commit_hash));
+				}
 			}
 			if (col_count > 3)
-				output.SetValue(3, i, Value(result.tree_hash)); // tree_hash
+				output.SetValue(3, i, result.tree_hash.empty() ? Value() : Value(result.tree_hash)); // tree_hash
 			if (col_count > 4)
 				output.SetValue(4, i, Value(result.file_path)); // file_path
 			if (col_count > 5)

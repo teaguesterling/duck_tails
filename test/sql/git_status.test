@@ -1,0 +1,45 @@
+# name: test/sql/git_status.test
+# description: Test git_status() table function
+# group: [sql]
+
+require duck_tails
+
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
+
+# Verify column count (8 columns expected)
+query I
+SELECT COUNT(*) FROM (DESCRIBE SELECT * FROM git_status());
+----
+8
+
+# Basic git_status() returns results (may be empty if working dir is clean)
+query I
+SELECT COUNT(*) >= 0 as valid FROM git_status();
+----
+true
+
+# Named parameter untracked:=false works
+query I
+SELECT COUNT(*) >= 0 as valid FROM git_status(untracked:=false);
+----
+true
+
+# Named parameter ignored:=true works
+query I
+SELECT COUNT(*) >= 0 as valid FROM git_status(ignored:=true);
+----
+true
+
+# Explicit repo path works
+query I
+SELECT COUNT(*) >= 0 as valid FROM git_status('.');
+----
+true
+
+# Zero-arg and explicit-arg return same results
+query I
+SELECT
+    (SELECT COUNT(*) FROM git_status()) = (SELECT COUNT(*) FROM git_status('.')) as same_count;
+----
+true

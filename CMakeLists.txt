@@ -15,7 +15,7 @@ set(LOADABLE_EXTENSION_NAME ${TARGET_NAME}_loadable_extension)
 project(${TARGET_NAME})
 include_directories(src/include)
 
-set(EXTENSION_SOURCES src/duck_tails_extension.cpp src/git_filesystem.cpp src/git_functions.cpp src/git_log.cpp src/git_path.cpp src/git_utils.cpp src/git_context_manager.cpp src/git_tree.cpp src/git_parents.cpp src/git_branches.cpp src/git_tags.cpp src/git_read.cpp src/git_uri.cpp src/text_diff.cpp src/git_history.cpp)
+set(EXTENSION_SOURCES src/duck_tails_extension.cpp src/git_filesystem.cpp src/git_functions.cpp src/git_log.cpp src/git_path.cpp src/git_utils.cpp src/git_context_manager.cpp src/git_tree.cpp src/git_parents.cpp src/git_branches.cpp src/git_tags.cpp src/git_read.cpp src/git_uri.cpp src/text_diff.cpp src/git_history.cpp src/git_status.cpp)
 
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
 build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})
