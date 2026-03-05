@@ -28,6 +28,7 @@ void RegisterGitParentsFunction(ExtensionLoader &loader);
 void RegisterGitReadFunction(ExtensionLoader &loader);
 void RegisterGitUriFunction(ExtensionLoader &loader);
 void RegisterGitStatusFunction(ExtensionLoader &loader);
+void RegisterGitDiffTreeFunction(ExtensionLoader &loader);
 
 void RegisterGitFunctions(ExtensionLoader &loader) {
 	RegisterGitLogFunction(loader);
@@ -38,6 +39,7 @@ void RegisterGitFunctions(ExtensionLoader &loader) {
 	RegisterGitReadFunction(loader);
 	RegisterGitUriFunction(loader);
 	RegisterGitStatusFunction(loader);
+	RegisterGitDiffTreeFunction(loader);
 }
 
 } // namespace duckdb

@@ -1,0 +1,59 @@
+# name: test/sql/git_diff_tree.test
+# description: Test git_diff_tree() table function
+# group: [sql]
+
+require duck_tails
+
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
+
+# Verify column count (5 columns expected)
+query I
+SELECT COUNT(*) FROM (DESCRIBE SELECT * FROM git_diff_tree());
+----
+5
+
+# Basic git_diff_tree() returns results (may be empty if working dir is clean)
+query I
+SELECT COUNT(*) >= 0 as valid FROM git_diff_tree();
+----
+true
+
+# Explicit repo path works
+query I
+SELECT COUNT(*) >= 0 as valid FROM git_diff_tree('.');
+----
+true
+
+# Explicit ref parameter works
+query I
+SELECT COUNT(*) >= 0 as valid FROM git_diff_tree('.', 'HEAD');
+----
+true
+
+# Zero-arg and explicit HEAD produce the same results
+query I
+SELECT
+    (SELECT COUNT(*) FROM git_diff_tree()) = (SELECT COUNT(*) FROM git_diff_tree('.', 'HEAD')) as same_count;
+----
+true
+
+# Named parameter untracked works
+query I
+SELECT COUNT(*) >= 0 as valid FROM git_diff_tree(untracked:=true);
+----
+true
+
+# Status column only contains expected values
+query I
+SELECT COUNT(*) = 0 as valid FROM git_diff_tree(untracked:=true)
+WHERE status NOT IN ('added', 'deleted', 'modified', 'renamed', 'copied', 'typechange', 'untracked', 'unknown');
+----
+true
+
+# Comparing against an older ref returns at least as many changes as HEAD
+query I
+SELECT
+    (SELECT COUNT(*) FROM git_diff_tree('.', 'HEAD~1')) >= (SELECT COUNT(*) FROM git_diff_tree('.', 'HEAD')) as valid;
+----
+true
