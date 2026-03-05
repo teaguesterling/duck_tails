@@ -172,8 +172,7 @@ static void CollectStatusRows(git_repository *repo, const string &repo_path, boo
 		}
 		if (entry->index_to_workdir) {
 			// Prefer workdir path if available (more current)
-			string workdir_path =
-			    entry->index_to_workdir->new_file.path ? entry->index_to_workdir->new_file.path : "";
+			string workdir_path = entry->index_to_workdir->new_file.path ? entry->index_to_workdir->new_file.path : "";
 			if (!workdir_path.empty()) {
 				row.file_path = workdir_path;
 			}
@@ -289,8 +288,7 @@ static unique_ptr<FunctionData> GitStatusBind(ClientContext &context, TableFunct
 // Init Global
 //===--------------------------------------------------------------------===//
 
-static unique_ptr<GlobalTableFunctionState> GitStatusInitGlobal(ClientContext &context,
-                                                                 TableFunctionInitInput &input) {
+static unique_ptr<GlobalTableFunctionState> GitStatusInitGlobal(ClientContext &context, TableFunctionInitInput &input) {
 	auto &bind_data = const_cast<GitStatusFunctionData &>(input.bind_data->Cast<GitStatusFunctionData>());
 
 	if (!bind_data.is_lateral) {
@@ -342,7 +340,7 @@ static void GitStatusFunction(ClientContext &context, TableFunctionInput &data_p
 //===--------------------------------------------------------------------===//
 
 static unique_ptr<LocalTableFunctionState> GitStatusLocalInit(ExecutionContext &context, TableFunctionInitInput &input,
-                                                               GlobalTableFunctionState *global_state) {
+                                                              GlobalTableFunctionState *global_state) {
 	return make_uniq<GitStatusLocalState>();
 }
 
@@ -393,8 +391,7 @@ static OperatorResultType GitStatusEachFunction(ExecutionContext &context, Table
 			}
 
 			auto data = FlatVector::GetData<string_t>(input.data[0]);
-			string repo_path_or_uri(data[state.current_input_row].GetData(),
-			                        data[state.current_input_row].GetSize());
+			string repo_path_or_uri(data[state.current_input_row].GetData(), data[state.current_input_row].GetSize());
 
 			if (repo_path_or_uri.empty()) {
 				state.current_input_row++;

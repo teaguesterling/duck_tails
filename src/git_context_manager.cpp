@@ -9,7 +9,7 @@ namespace duckdb {
 //===--------------------------------------------------------------------===//
 
 GitContextManager::GitContext::GitContext(git_object *obj, const string &rp, const string &fp, const string &ref,
-                                         RefKind kind)
+                                          RefKind kind)
     : resolved_object(obj), repo_path(rp), file_path(fp), final_ref(ref), ref_kind(kind) {
 }
 

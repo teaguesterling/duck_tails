@@ -371,7 +371,7 @@ vector<OpenFileInfo> GitFileSystem::Glob(const string &pattern, FileOpener *open
 				try {
 					git_repository *repo_ptr = nullptr;
 					int error = git_repository_open_ext(&repo_ptr, git_path.repository_path.c_str(),
-					                                   GIT_REPOSITORY_OPEN_NO_SEARCH, nullptr);
+					                                    GIT_REPOSITORY_OPEN_NO_SEARCH, nullptr);
 					if (error == 0) {
 						git_index *index = nullptr;
 						error = git_repository_index(&index, repo_ptr);
@@ -390,7 +390,7 @@ vector<OpenFileInfo> GitFileSystem::Glob(const string &pattern, FileOpener *open
 									if (git_path.file_path.empty() ||
 									    StringUtil::StartsWith(entry_path, git_path.file_path)) {
 										results.emplace_back(OpenFileInfo {"git://" + git_path.repository_path + "/" +
-										                                  entry_path + "@STAGED"});
+										                                   entry_path + "@STAGED"});
 									}
 								}
 							}
@@ -442,7 +442,7 @@ bool GitFileSystem::FileExists(const string &filename, optional_ptr<FileOpener> 
 				try {
 					git_repository *repo = nullptr;
 					int error = git_repository_open_ext(&repo, git_path.repository_path.c_str(),
-					                                   GIT_REPOSITORY_OPEN_NO_SEARCH, nullptr);
+					                                    GIT_REPOSITORY_OPEN_NO_SEARCH, nullptr);
 					if (error != 0) {
 						return false;
 					}

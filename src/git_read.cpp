@@ -621,20 +621,20 @@ static void GitReadFunction(ClientContext &context, TableFunctionInput &input, D
 	ProcessGitURI(bind_data.uri, bind_data, result);
 
 	// Fill output row using safe SetValue pattern (Our Fix #2)
-	output.SetValue(0, 0, Value(result.git_uri));                                                   // git_uri
-	output.SetValue(1, 0, Value(result.repo_path));                                                 // repo_path
-	output.SetValue(2, 0, result.commit_hash.empty() ? Value() : Value(result.commit_hash));        // commit_hash
-	output.SetValue(3, 0, result.tree_hash.empty() ? Value() : Value(result.tree_hash));            // tree_hash
-	output.SetValue(4, 0, Value(result.file_path));           // file_path
-	output.SetValue(5, 0, Value(result.file_ext));            // file_ext
-	output.SetValue(6, 0, Value(result.ref));                 // ref
-	output.SetValue(7, 0, Value(result.blob_hash));           // blob_hash
-	output.SetValue(8, 0, Value::INTEGER(result.mode));       // mode
-	output.SetValue(9, 0, Value(result.kind));                // kind
-	output.SetValue(10, 0, Value::BOOLEAN(result.is_text));   // is_text
-	output.SetValue(11, 0, Value(result.encoding));           // encoding
-	output.SetValue(12, 0, Value::BIGINT(result.size_bytes)); // size_bytes
-	output.SetValue(13, 0, Value::BOOLEAN(result.truncated)); // truncated
+	output.SetValue(0, 0, Value(result.git_uri));                                            // git_uri
+	output.SetValue(1, 0, Value(result.repo_path));                                          // repo_path
+	output.SetValue(2, 0, result.commit_hash.empty() ? Value() : Value(result.commit_hash)); // commit_hash
+	output.SetValue(3, 0, result.tree_hash.empty() ? Value() : Value(result.tree_hash));     // tree_hash
+	output.SetValue(4, 0, Value(result.file_path));                                          // file_path
+	output.SetValue(5, 0, Value(result.file_ext));                                           // file_ext
+	output.SetValue(6, 0, Value(result.ref));                                                // ref
+	output.SetValue(7, 0, Value(result.blob_hash));                                          // blob_hash
+	output.SetValue(8, 0, Value::INTEGER(result.mode));                                      // mode
+	output.SetValue(9, 0, Value(result.kind));                                               // kind
+	output.SetValue(10, 0, Value::BOOLEAN(result.is_text));                                  // is_text
+	output.SetValue(11, 0, Value(result.encoding));                                          // encoding
+	output.SetValue(12, 0, Value::BIGINT(result.size_bytes));                                // size_bytes
+	output.SetValue(13, 0, Value::BOOLEAN(result.truncated));                                // truncated
 
 	// Handle TEXT column
 	if (!result.text.empty()) {

@@ -117,7 +117,8 @@ string SafeWorkdirPath(const string &repo_path, const string &file_path) {
 		canonical_workdir += '/';
 	}
 
-	if (!StringUtil::StartsWith(canonical, canonical_workdir) && canonical != canonical_workdir.substr(0, canonical_workdir.size() - 1)) {
+	if (!StringUtil::StartsWith(canonical, canonical_workdir) &&
+	    canonical != canonical_workdir.substr(0, canonical_workdir.size() - 1)) {
 		throw IOException("Path '%s' escapes the repository working directory", file_path);
 	}
 

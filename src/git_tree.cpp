@@ -625,8 +625,7 @@ unique_ptr<GlobalTableFunctionState> GitTreeInitGlobal(ClientContext &context, T
 				ProcessIndexTree(repo, bind_data.repo_path, bind_data.requested_path, bind_data.rows);
 				break;
 			case RefKind::COMMIT:
-				ProcessSingleCommit(repo, bind_data.ref, bind_data.repo_path, bind_data.requested_path,
-				                    bind_data.rows);
+				ProcessSingleCommit(repo, bind_data.ref, bind_data.repo_path, bind_data.requested_path, bind_data.rows);
 				break;
 			}
 		} catch (...) {
