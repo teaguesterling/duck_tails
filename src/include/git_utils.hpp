@@ -8,6 +8,7 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/exception.hpp"
 #include "git_path.hpp"
+#include "git_context_manager.hpp"
 
 namespace duckdb {
 
@@ -18,9 +19,11 @@ struct UnifiedGitParams {
 	string resolved_file_path; // For git_read
 	string ref;                // Optional ref parameter
 	bool has_embedded_ref;     // True if ref came from git:// URI
+	RefKind ref_kind;          // COMMIT, WORKDIR, or INDEX
 
 	UnifiedGitParams()
-	    : repo_path_or_uri("."), resolved_repo_path("."), resolved_file_path(""), ref("HEAD"), has_embedded_ref(false) {
+	    : repo_path_or_uri("."), resolved_repo_path("."), resolved_file_path(""), ref("HEAD"), has_embedded_ref(false),
+	      ref_kind(RefKind::COMMIT) {
 	}
 };
 
@@ -149,6 +152,16 @@ inline GitRevwalkPtr MakeGitRevwalk(git_revwalk *walker) {
 
 inline GitBranchIteratorPtr MakeGitBranchIterator(git_branch_iterator *iter) {
 	return GitBranchIteratorPtr(iter, reinterpret_cast<void (*)(git_branch_iterator *)>(git_branch_iterator_free));
+}
+
+using GitIndexPtr = GitObject<git_index>;
+inline GitIndexPtr MakeGitIndex(git_index *idx) {
+	return GitIndexPtr(idx, reinterpret_cast<void (*)(git_index *)>(git_index_free));
+}
+
+using GitBlobPtr = GitObject<git_blob>;
+inline GitBlobPtr MakeGitBlob(git_blob *blob) {
+	return GitBlobPtr(blob, reinterpret_cast<void (*)(git_blob *)>(git_blob_free));
 }
 
 // Note: libgit2 is initialized once at extension load time in duck_tails_extension.cpp

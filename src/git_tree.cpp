@@ -11,6 +11,8 @@
 
 #include <git2.h>
 #include <algorithm>
+#include <sys/stat.h>
+#include "duckdb/common/local_file_system.hpp"
 
 namespace duckdb {
 
@@ -60,15 +62,15 @@ static vector<string> GetGitTreeColumnNames() {
 static void OutputGitTreeRow(DataChunk &output, const GitTreeRow &row, idx_t row_idx) {
 	output.SetValue(0, row_idx, Value(row.git_uri));
 	output.SetValue(1, row_idx, Value(row.repo_path));
-	output.SetValue(2, row_idx, Value(row.commit_hash));
-	output.SetValue(3, row_idx, Value(row.tree_hash));
+	output.SetValue(2, row_idx, row.commit_hash.empty() ? Value() : Value(row.commit_hash));
+	output.SetValue(3, row_idx, row.tree_hash.empty() ? Value() : Value(row.tree_hash));
 	output.SetValue(4, row_idx, Value(row.file_path));
 	output.SetValue(5, row_idx, Value(row.file_ext));
 	output.SetValue(6, row_idx, Value(row.ref));
-	if (row.kind == "file") {
+	if (row.kind == "file" && !row.blob_hash.empty()) {
 		output.SetValue(7, row_idx, Value(row.blob_hash));
 	} else {
-		output.SetValue(7, row_idx, Value()); // NULL for non-file entries
+		output.SetValue(7, row_idx, Value()); // NULL for non-file entries or workdir
 	}
 	output.SetValue(8, row_idx, Value::TIMESTAMP(row.commit_date));
 	output.SetValue(9, row_idx, Value::INTEGER(row.mode));
@@ -321,6 +323,199 @@ static void ProcessSingleCommit(git_repository *repo, const string &ref, const s
 }
 
 //===--------------------------------------------------------------------===//
+// WORKDIR tree: walk HEAD's tree + optionally add untracked files
+//===--------------------------------------------------------------------===//
+
+static void ProcessWorkdirTree(git_repository *repo, const string &repo_path, const string &requested_path,
+                               bool include_untracked, vector<GitTreeRow> &rows) {
+	const char *workdir = git_repository_workdir(repo);
+	if (!workdir) {
+		throw IOException("git_tree: repository '%s' is bare (no working directory)", repo_path);
+	}
+	string workdir_str(workdir);
+
+	// Walk HEAD's tree to get tracked files
+	git_object *head_obj = nullptr;
+	int error = git_revparse_single(&head_obj, repo, "HEAD");
+	if (error == 0) {
+		git_commit *commit = nullptr;
+		if (git_object_peel((git_object **)&commit, head_obj, GIT_OBJECT_COMMIT) == 0) {
+			git_tree *tree = nullptr;
+			if (git_commit_tree(&tree, commit) == 0) {
+				// For each tracked file, emit a row with disk metadata
+				// We use the tree traversal but override metadata from disk
+				vector<GitTreeRow> tracked_rows;
+				string commit_hash = oid_to_hex(git_commit_id(commit));
+				timestamp_t commit_date = Timestamp::FromEpochSeconds(git_commit_time(commit));
+
+				if (requested_path.empty()) {
+					traverse_tree(repo, tree, "", tracked_rows, commit_hash, commit_date, repo_path);
+				} else {
+					string norm = NormalizeRepoPathSpec(requested_path);
+					if (norm.empty()) {
+						traverse_tree(repo, tree, "", tracked_rows, commit_hash, commit_date, repo_path);
+					} else {
+						git_tree_entry *path_entry = nullptr;
+						if (git_tree_entry_bypath(&path_entry, tree, norm.c_str()) == 0 && path_entry) {
+							if (git_tree_entry_type(path_entry) == GIT_OBJECT_TREE) {
+								const git_oid *eoid = git_tree_entry_id(path_entry);
+								git_tree *subtree = nullptr;
+								if (git_tree_lookup(&subtree, repo, eoid) == 0 && subtree) {
+									traverse_tree(repo, subtree, norm, tracked_rows, commit_hash, commit_date,
+									              repo_path);
+									git_tree_free(subtree);
+								}
+							} else if (git_tree_entry_type(path_entry) == GIT_OBJECT_BLOB) {
+								string parent_tree_hash = oid_to_hex(git_tree_id(tree));
+								EmitFileRow(tracked_rows, repo_path, commit_hash, parent_tree_hash, norm, commit_date,
+								            git_tree_entry_filemode(path_entry), repo, git_tree_entry_id(path_entry));
+							}
+							git_tree_entry_free(path_entry);
+						}
+					}
+				}
+
+				// Convert tracked rows to WORKDIR rows (update metadata from disk where possible)
+				for (auto &row : tracked_rows) {
+					if (row.kind == "file") {
+						// Try to get disk size
+						string abs_path = workdir_str + row.file_path;
+						struct stat st;
+						if (stat(abs_path.c_str(), &st) == 0) {
+							row.size_bytes = st.st_size;
+							row.mode = static_cast<int32_t>(st.st_mode);
+						}
+					}
+					row.commit_hash = ""; // NULL for WORKDIR
+					row.tree_hash = "";   // NULL for WORKDIR
+					row.ref = "WORKDIR";
+					row.git_uri = "git://" + repo_path + "/" + row.file_path + "@WORKDIR";
+					rows.push_back(std::move(row));
+				}
+
+				git_tree_free(tree);
+			}
+			git_commit_free(commit);
+		}
+		git_object_free(head_obj);
+	}
+
+	// Add untracked files if requested
+	if (include_untracked) {
+		git_status_options opts = GIT_STATUS_OPTIONS_INIT;
+		opts.show = GIT_STATUS_SHOW_WORKDIR_ONLY;
+		opts.flags = GIT_STATUS_OPT_INCLUDE_UNTRACKED;
+
+		git_status_list *status_list = nullptr;
+		if (git_status_list_new(&status_list, repo, &opts) == 0) {
+			size_t count = git_status_list_entrycount(status_list);
+			for (size_t i = 0; i < count; i++) {
+				const git_status_entry *entry = git_status_byindex(status_list, i);
+				if (!entry || !(entry->status & GIT_STATUS_WT_NEW)) {
+					continue;
+				}
+				if (!entry->index_to_workdir || !entry->index_to_workdir->new_file.path) {
+					continue;
+				}
+
+				string file_path(entry->index_to_workdir->new_file.path);
+
+				// Path filter
+				if (!requested_path.empty()) {
+					string norm = NormalizeRepoPathSpec(requested_path);
+					if (!norm.empty() && !StringUtil::StartsWith(file_path, norm)) {
+						continue;
+					}
+				}
+
+				GitTreeRow row;
+				row.git_uri = "git://" + repo_path + "/" + file_path + "@WORKDIR";
+				row.repo_path = repo_path;
+				row.file_path = file_path;
+				row.file_ext = ExtractFileExtension(file_path);
+				row.ref = "WORKDIR";
+				row.kind = "file";
+				row.is_text = true;
+				row.encoding = "utf8";
+				row.commit_date = Timestamp::FromEpochSeconds(0);
+
+				string abs_path = workdir_str + file_path;
+				struct stat st;
+				if (stat(abs_path.c_str(), &st) == 0) {
+					row.size_bytes = st.st_size;
+					row.mode = static_cast<int32_t>(st.st_mode);
+				}
+
+				rows.push_back(std::move(row));
+			}
+			git_status_list_free(status_list);
+		}
+	}
+}
+
+//===--------------------------------------------------------------------===//
+// INDEX tree: walk git index entries
+//===--------------------------------------------------------------------===//
+
+static void ProcessIndexTree(git_repository *repo, const string &repo_path, const string &requested_path,
+                             vector<GitTreeRow> &rows) {
+	git_index *index = nullptr;
+	int error = git_repository_index(&index, repo);
+	if (error != 0) {
+		throw IOException("git_tree: failed to get index for repository '%s'", repo_path);
+	}
+
+	git_index_read(index, 0);
+
+	string norm_prefix;
+	if (!requested_path.empty()) {
+		norm_prefix = NormalizeRepoPathSpec(requested_path);
+		if (!norm_prefix.empty() && norm_prefix.back() != '/') {
+			norm_prefix += "/";
+		}
+	}
+
+	size_t entry_count = git_index_entrycount(index);
+	for (size_t i = 0; i < entry_count; i++) {
+		const git_index_entry *entry = git_index_get_byindex(index, i);
+		if (!entry || !entry->path) {
+			continue;
+		}
+
+		string file_path(entry->path);
+
+		// Path filter
+		if (!norm_prefix.empty() && !StringUtil::StartsWith(file_path, norm_prefix) && file_path != requested_path) {
+			continue;
+		}
+
+		GitTreeRow row;
+		row.git_uri = "git://" + repo_path + "/" + file_path + "@STAGED";
+		row.repo_path = repo_path;
+		row.file_path = file_path;
+		row.file_ext = ExtractFileExtension(file_path);
+		row.ref = "STAGED";
+		row.blob_hash = oid_to_hex(&entry->id);
+		row.mode = static_cast<int32_t>(entry->mode);
+		row.kind = "file";
+		row.commit_date = Timestamp::FromEpochSeconds(0);
+
+		// Look up blob for size and text detection
+		git_blob *blob = nullptr;
+		if (git_blob_lookup(&blob, repo, &entry->id) == 0 && blob) {
+			row.size_bytes = static_cast<int64_t>(git_blob_rawsize(blob));
+			row.is_text = !git_blob_is_binary(blob);
+			row.encoding = row.is_text ? "utf8" : "binary";
+			git_blob_free(blob);
+		}
+
+		rows.push_back(std::move(row));
+	}
+
+	git_index_free(index);
+}
+
+//===--------------------------------------------------------------------===//
 // Git Tree Bind Functions (copied from git_functions.cpp)
 //===--------------------------------------------------------------------===//
 
@@ -336,15 +531,27 @@ unique_ptr<FunctionData> GitTreeBind(ClientContext &context, TableFunctionBindIn
 	// Use GitContextManager to process the URI and validate the reference
 	string fallback_ref = params.ref.empty() ? "HEAD" : params.ref;
 
+	// Parse named parameters early so we can use them
+	bool include_untracked = false;
+	for (const auto &kv : input.named_parameters) {
+		if (kv.first == "untracked") {
+			include_untracked = kv.second.GetValue<bool>();
+		}
+	}
+
 	try {
 		auto ctx = GitContextManager::Instance().ProcessGitUri(params.repo_path_or_uri, fallback_ref);
 
+		unique_ptr<GitTreeFunctionData> result;
 		// Check if ref is a commit range (contains '..')
-		if (ctx.final_ref.find("..") != string::npos) {
-			return make_uniq<GitTreeFunctionData>(ctx.final_ref, ctx.repo_path, true, ctx.file_path);
+		if (ctx.ref_kind == RefKind::COMMIT && ctx.final_ref.find("..") != string::npos) {
+			result = make_uniq<GitTreeFunctionData>(ctx.final_ref, ctx.repo_path, true, ctx.file_path);
 		} else {
-			return make_uniq<GitTreeFunctionData>(ctx.final_ref, ctx.repo_path, ctx.file_path);
+			result = make_uniq<GitTreeFunctionData>(ctx.final_ref, ctx.repo_path, ctx.file_path);
 		}
+		result->ref_kind = ctx.ref_kind;
+		result->include_untracked = include_untracked;
+		return std::move(result);
 
 	} catch (const std::exception &e) {
 		throw BinderException("git_tree: %s", e.what());
@@ -384,7 +591,19 @@ unique_ptr<GlobalTableFunctionState> GitTreeInitGlobal(ClientContext &context, T
 		}
 
 		try {
-			ProcessSingleCommit(repo, bind_data.ref, bind_data.repo_path, bind_data.requested_path, bind_data.rows);
+			switch (bind_data.ref_kind) {
+			case RefKind::WORKDIR:
+				ProcessWorkdirTree(repo, bind_data.repo_path, bind_data.requested_path, bind_data.include_untracked,
+				                   bind_data.rows);
+				break;
+			case RefKind::INDEX:
+				ProcessIndexTree(repo, bind_data.repo_path, bind_data.requested_path, bind_data.rows);
+				break;
+			case RefKind::COMMIT:
+				ProcessSingleCommit(repo, bind_data.ref, bind_data.repo_path, bind_data.requested_path,
+				                    bind_data.rows);
+				break;
+			}
 		} catch (...) {
 			git_repository_free(repo);
 			throw;
@@ -569,6 +788,7 @@ void RegisterGitTreeFunction(ExtensionLoader &loader) {
 	TableFunction git_tree_single({LogicalType::VARCHAR}, GitTreeFunction, GitTreeBind, GitTreeInitGlobal);
 	git_tree_single.init_local = GitTreeLocalInit;
 	git_tree_single.named_parameters["array"] = LogicalType::LIST(LogicalType::VARCHAR);
+	git_tree_single.named_parameters["untracked"] = LogicalType::BOOLEAN;
 	git_tree_set.AddFunction(git_tree_single);
 
 	// Two parameters: git_tree(repo_path_or_uri, ref)
@@ -576,6 +796,7 @@ void RegisterGitTreeFunction(ExtensionLoader &loader) {
 	                           GitTreeInitGlobal);
 	git_tree_two.init_local = GitTreeLocalInit;
 	git_tree_two.named_parameters["array"] = LogicalType::LIST(LogicalType::VARCHAR);
+	git_tree_two.named_parameters["untracked"] = LogicalType::BOOLEAN;
 	git_tree_set.AddFunction(git_tree_two);
 
 	// Array parameter: git_tree(array=['commit1', 'commit2'])
@@ -583,12 +804,14 @@ void RegisterGitTreeFunction(ExtensionLoader &loader) {
 	                             GitTreeInitGlobal);
 	git_tree_array.init_local = GitTreeLocalInit;
 	git_tree_array.named_parameters["array"] = LogicalType::LIST(LogicalType::VARCHAR);
+	git_tree_array.named_parameters["untracked"] = LogicalType::BOOLEAN;
 	git_tree_set.AddFunction(git_tree_array);
 
 	// Zero parameters: git_tree() (uses current directory, HEAD)
 	TableFunction git_tree_zero({}, GitTreeFunction, GitTreeBind, GitTreeInitGlobal);
 	git_tree_zero.init_local = GitTreeLocalInit;
 	git_tree_zero.named_parameters["array"] = LogicalType::LIST(LogicalType::VARCHAR);
+	git_tree_zero.named_parameters["untracked"] = LogicalType::BOOLEAN;
 	git_tree_set.AddFunction(git_tree_zero);
 
 	loader.RegisterFunction(git_tree_set);

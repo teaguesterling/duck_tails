@@ -1,0 +1,66 @@
+# name: test/sql/git_read_workdir_index.test
+# description: Test git_read() with WORKDIR and INDEX pseudo-refs
+# group: [sql]
+
+require duck_tails
+
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
+
+# git_read with WORKDIR returns content from disk
+query I
+SELECT is_text FROM git_read('git://./README.md@WORKDIR');
+----
+true
+
+# WORKDIR ref column
+query I
+SELECT ref FROM git_read('git://./README.md@WORKDIR');
+----
+WORKDIR
+
+# WORKDIR commit_hash is NULL
+query I
+SELECT commit_hash IS NULL FROM git_read('git://./README.md@WORKDIR');
+----
+true
+
+# WORKTREE alias works
+query I
+SELECT ref FROM git_read('git://./README.md@WORKTREE');
+----
+WORKDIR
+
+# STAGED/INDEX reads from the staging area
+query I
+SELECT is_text FROM git_read('git://./README.md@STAGED');
+----
+true
+
+query I
+SELECT ref FROM git_read('git://./README.md@STAGED');
+----
+STAGED
+
+# STAGED has blob_hash (valid since blob is in ODB)
+query I
+SELECT blob_hash IS NOT NULL FROM git_read('git://./README.md@STAGED');
+----
+true
+
+# INDEX alias works
+query I
+SELECT ref FROM git_read('git://./README.md@INDEX');
+----
+STAGED
+
+# Text content is non-empty
+query I
+SELECT length(text) > 0 FROM git_read('git://./README.md@WORKDIR');
+----
+true
+
+query I
+SELECT length(text) > 0 FROM git_read('git://./README.md@STAGED');
+----
+true

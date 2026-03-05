@@ -1,0 +1,61 @@
+# name: test/sql/git_pseudo_refs.test
+# description: Test pseudo-ref recognition (WORKDIR/WORKTREE, STAGED/INDEX)
+# group: [sql]
+
+require duck_tails
+
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
+
+# git_tree with WORKDIR pseudo-ref should work
+query I
+SELECT COUNT(*) > 0 FROM git_tree('@WORKDIR');
+----
+true
+
+# git_tree with WORKTREE alias should also work
+query I
+SELECT COUNT(*) > 0 FROM git_tree('@WORKTREE');
+----
+true
+
+# git_tree with STAGED pseudo-ref should work
+query I
+SELECT COUNT(*) > 0 FROM git_tree('@STAGED');
+----
+true
+
+# git_tree with INDEX alias should also work
+query I
+SELECT COUNT(*) > 0 FROM git_tree('@INDEX');
+----
+true
+
+# WORKDIR rows have ref = 'WORKDIR' and commit_hash IS NULL
+query I
+SELECT COUNT(*) > 0 FROM git_tree('@WORKDIR') WHERE ref = 'WORKDIR' AND commit_hash IS NULL;
+----
+true
+
+# STAGED rows have ref = 'STAGED' and blob_hash IS NOT NULL for files
+query I
+SELECT COUNT(*) > 0 FROM git_tree('@STAGED') WHERE ref = 'STAGED' AND blob_hash IS NOT NULL;
+----
+true
+
+# Normal refs still work fine (zero-arg defaults to HEAD)
+query I
+SELECT COUNT(*) > 0 FROM git_tree();
+----
+true
+
+# Case insensitivity
+query I
+SELECT COUNT(*) > 0 FROM git_tree('@workdir');
+----
+true
+
+query I
+SELECT COUNT(*) > 0 FROM git_tree('@Staged');
+----
+true

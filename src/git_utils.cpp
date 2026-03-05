@@ -24,6 +24,7 @@ UnifiedGitParams ParseUnifiedGitParams(TableFunctionBindInput &input, int ref_pa
 			params.resolved_repo_path = ctx.repo_path;
 			params.resolved_file_path = ctx.file_path;
 			params.ref = ctx.final_ref;
+			params.ref_kind = ctx.ref_kind;
 			params.has_embedded_ref = !ctx.final_ref.empty() && ctx.final_ref != "HEAD";
 		} catch (const std::exception &e) {
 			throw BinderException("Failed to parse git:// URI '%s': %s", params.repo_path_or_uri, e.what());
@@ -35,6 +36,7 @@ UnifiedGitParams ParseUnifiedGitParams(TableFunctionBindInput &input, int ref_pa
 			params.resolved_repo_path = ctx.repo_path;
 			params.resolved_file_path = ctx.file_path;
 			params.ref = "HEAD"; // Default for filesystem paths
+			params.ref_kind = ctx.ref_kind;
 			params.has_embedded_ref = false;
 		} catch (const std::exception &e) {
 			throw BinderException("Failed to resolve repository path '%s': %s", params.repo_path_or_uri, e.what());

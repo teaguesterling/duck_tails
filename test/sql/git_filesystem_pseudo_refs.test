@@ -1,0 +1,32 @@
+# name: test/sql/git_filesystem_pseudo_refs.test
+# description: Test git:// filesystem with WORKDIR and STAGED pseudo-refs
+# group: [sql]
+
+require duck_tails
+
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
+
+# read_text with WORKDIR pseudo-ref
+query I
+SELECT length(content) > 0 FROM read_text('git://./README.md@WORKDIR');
+----
+true
+
+# read_text with STAGED pseudo-ref
+query I
+SELECT length(content) > 0 FROM read_text('git://./README.md@STAGED');
+----
+true
+
+# WORKTREE alias works in filesystem
+query I
+SELECT length(content) > 0 FROM read_text('git://./README.md@WORKTREE');
+----
+true
+
+# INDEX alias works in filesystem
+query I
+SELECT length(content) > 0 FROM read_text('git://./README.md@INDEX');
+----
+true

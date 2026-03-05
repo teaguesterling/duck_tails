@@ -4,6 +4,7 @@
 #include "duckdb/function/table_function.hpp"
 #include <git2.h>
 #include "git_path.hpp"
+#include "git_context_manager.hpp"
 
 namespace duckdb {
 
@@ -229,6 +230,8 @@ struct GitTreeFunctionData : public TableFunctionData {
 	string requested_path;          // Requested subpath within repo (may be empty)
 	vector<struct GitTreeRow> rows; // Read-only after bind (thread-safe)
 	bool is_dynamic;                // True if parameter comes from LATERAL
+	RefKind ref_kind = RefKind::COMMIT;
+	bool include_untracked = false;
 };
 
 struct GitTreeRow {
@@ -328,6 +331,7 @@ void RegisterGitTreeFunction(ExtensionLoader &loader);
 void RegisterGitParentsFunction(ExtensionLoader &loader);
 void RegisterGitReadFunction(ExtensionLoader &loader);
 void RegisterGitUriFunction(ExtensionLoader &loader);
+void RegisterGitStatusFunction(ExtensionLoader &loader);
 void RegisterGitFunctions(ExtensionLoader &loader);
 
 } // namespace duckdb
