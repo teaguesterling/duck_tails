@@ -1,5 +1,6 @@
 #include "git_filesystem.hpp"
 #include "git_context_manager.hpp"
+#include "git_utils.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/local_file_system.hpp"
@@ -231,22 +232,8 @@ static bool IsPseudoRef(const string &revision, RefKind &out_kind) {
 	return false;
 }
 
-// Get absolute workdir path for a file
-static string GetWorkdirAbsolutePath(const string &repo_path, const string &file_path) {
-	git_repository *repo = nullptr;
-	int error = git_repository_open_ext(&repo, repo_path.c_str(), GIT_REPOSITORY_OPEN_NO_SEARCH, nullptr);
-	if (error != 0) {
-		throw IOException("Failed to open repository '%s'", repo_path);
-	}
-	const char *workdir = git_repository_workdir(repo);
-	if (!workdir) {
-		git_repository_free(repo);
-		throw IOException("Repository '%s' is bare (no working directory)", repo_path);
-	}
-	string result = string(workdir) + file_path;
-	git_repository_free(repo);
-	return result;
-}
+// Safe workdir path — delegates to shared SafeWorkdirPath for traversal protection
+// For Glob which needs the workdir root separately, use GetWorkdirRoot
 
 // Get blob content from the git index
 static string GetIndexBlobContent(const string &repo_path, const string &file_path) {
@@ -263,7 +250,12 @@ static string GetIndexBlobContent(const string &repo_path, const string &file_pa
 		throw IOException("Failed to get index for repository '%s'", repo_path);
 	}
 
-	git_index_read(index, 0);
+	error = git_index_read(index, 0);
+	if (error != 0) {
+		git_index_free(index);
+		git_repository_free(repo);
+		throw IOException("Failed to read index for repository '%s'", repo_path);
+	}
 
 	const git_index_entry *entry = git_index_get_bypath(index, file_path.c_str(), 0);
 	if (!entry) {
@@ -304,7 +296,7 @@ unique_ptr<FileHandle> GitFileSystem::OpenFile(const string &path, FileOpenFlags
 		if (IsPseudoRef(git_path.revision, ref_kind)) {
 			if (ref_kind == RefKind::WORKDIR) {
 				// Delegate to LocalFileSystem
-				string abs_path = GetWorkdirAbsolutePath(git_path.repository_path, git_path.file_path);
+				string abs_path = SafeWorkdirPath(git_path.repository_path, git_path.file_path);
 				LocalFileSystem local_fs;
 				auto local_handle = local_fs.OpenFile(abs_path, flags, opener);
 				int64_t file_size = local_fs.GetFileSize(*local_handle);
@@ -357,11 +349,12 @@ vector<OpenFileInfo> GitFileSystem::Glob(const string &pattern, FileOpener *open
 			if (ref_kind == RefKind::WORKDIR) {
 				// Delegate glob to local filesystem within workdir
 				try {
-					string abs_pattern = GetWorkdirAbsolutePath(git_path.repository_path, git_path.file_path);
+					string workdir_root = GetWorkdirRoot(git_path.repository_path);
+					string abs_pattern = workdir_root + git_path.file_path;
 					LocalFileSystem local_fs;
 					auto local_results = local_fs.Glob(abs_pattern, opener);
 					// Convert back to git:// URIs
-					string workdir_prefix = GetWorkdirAbsolutePath(git_path.repository_path, "");
+					string workdir_prefix = workdir_root;
 					for (auto &info : local_results) {
 						string rel_path = info.path;
 						if (StringUtil::StartsWith(rel_path, workdir_prefix)) {
@@ -383,7 +376,11 @@ vector<OpenFileInfo> GitFileSystem::Glob(const string &pattern, FileOpener *open
 						git_index *index = nullptr;
 						error = git_repository_index(&index, repo_ptr);
 						if (error == 0) {
-							git_index_read(index, 0);
+							if (git_index_read(index, 0) != 0) {
+								git_index_free(index);
+								git_repository_free(repo_ptr);
+								return results;
+							}
 							size_t entry_count = git_index_entrycount(index);
 							for (size_t i = 0; i < entry_count; i++) {
 								const git_index_entry *entry = git_index_get_byindex(index, i);
@@ -434,7 +431,7 @@ bool GitFileSystem::FileExists(const string &filename, optional_ptr<FileOpener> 
 		if (IsPseudoRef(git_path.revision, ref_kind)) {
 			if (ref_kind == RefKind::WORKDIR) {
 				try {
-					string abs_path = GetWorkdirAbsolutePath(git_path.repository_path, git_path.file_path);
+					string abs_path = SafeWorkdirPath(git_path.repository_path, git_path.file_path);
 					LocalFileSystem local_fs;
 					return local_fs.FileExists(abs_path);
 				} catch (...) {
@@ -455,7 +452,11 @@ bool GitFileSystem::FileExists(const string &filename, optional_ptr<FileOpener> 
 						git_repository_free(repo);
 						return false;
 					}
-					git_index_read(index, 0);
+					if (git_index_read(index, 0) != 0) {
+						git_index_free(index);
+						git_repository_free(repo);
+						return false;
+					}
 					const git_index_entry *entry = git_index_get_bypath(index, git_path.file_path.c_str(), 0);
 					bool exists = (entry != nullptr);
 					git_index_free(index);

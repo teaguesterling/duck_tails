@@ -164,6 +164,14 @@ inline GitBlobPtr MakeGitBlob(git_blob *blob) {
 	return GitBlobPtr(blob, reinterpret_cast<void (*)(git_blob *)>(git_blob_free));
 }
 
+// Safe workdir path construction — validates that file_path doesn't escape the workdir via ../
+// Opens repo, gets workdir, constructs absolute path, validates containment.
+// Returns the absolute path. Throws on bare repos, missing workdir, or path traversal.
+string SafeWorkdirPath(const string &repo_path, const string &file_path);
+
+// Get the workdir root for a repository (with trailing slash). Throws on bare repos.
+string GetWorkdirRoot(const string &repo_path);
+
 // Note: libgit2 is initialized once at extension load time in duck_tails_extension.cpp
 // Individual functions should NOT call git_libgit2_init() or git_libgit2_shutdown()
 

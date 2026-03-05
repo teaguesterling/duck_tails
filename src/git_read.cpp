@@ -199,21 +199,8 @@ static void PopulateContentFields(const char *raw_content, size_t raw_size, int6
 // Read file from working directory (disk)
 static void ProcessWorkdirRead(const string &repo_path, const string &file_path, const GitReadBindData &bind_data,
                                GitReadLocalState::ReadResult &result) {
-	// Get workdir path
-	git_repository *repo = nullptr;
-	int error = git_repository_open(&repo, repo_path.c_str());
-	if (error != 0) {
-		throw IOException("git_read: failed to open repository '%s'", repo_path);
-	}
-
-	const char *workdir = git_repository_workdir(repo);
-	if (!workdir) {
-		git_repository_free(repo);
-		throw IOException("git_read: repository '%s' is bare (no working directory)", repo_path);
-	}
-
-	string abs_path = string(workdir) + file_path;
-	git_repository_free(repo);
+	// Safe path construction (validates no traversal via ../)
+	string abs_path = SafeWorkdirPath(repo_path, file_path);
 
 	// Read from disk
 	LocalFileSystem fs;
@@ -256,7 +243,12 @@ static void ProcessIndexRead(const string &repo_path, const string &file_path, c
 	}
 
 	// Refresh index from disk
-	git_index_read(index, 0);
+	error = git_index_read(index, 0);
+	if (error != 0) {
+		git_index_free(index);
+		git_repository_free(repo);
+		throw IOException("git_read: failed to read index for repository '%s'", repo_path);
+	}
 
 	const git_index_entry *entry = git_index_get_bypath(index, file_path.c_str(), 0);
 	if (!entry) {

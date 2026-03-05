@@ -435,8 +435,6 @@ static void ProcessWorkdirTree(git_repository *repo, const string &repo_path, co
 				row.file_ext = ExtractFileExtension(file_path);
 				row.ref = "WORKDIR";
 				row.kind = "file";
-				row.is_text = true;
-				row.encoding = "utf8";
 				row.commit_date = Timestamp::FromEpochSeconds(0);
 
 				string abs_path = workdir_str + file_path;
@@ -444,6 +442,29 @@ static void ProcessWorkdirTree(git_repository *repo, const string &repo_path, co
 				if (stat(abs_path.c_str(), &st) == 0) {
 					row.size_bytes = st.st_size;
 					row.mode = static_cast<int32_t>(st.st_mode);
+
+					// Detect binary by sampling file for NUL bytes (same heuristic as libgit2)
+					if (st.st_size > 0) {
+						FILE *f = fopen(abs_path.c_str(), "rb");
+						if (f) {
+							char buf[8000];
+							size_t to_read = std::min(static_cast<size_t>(st.st_size), sizeof(buf));
+							size_t nread = fread(buf, 1, to_read, f);
+							fclose(f);
+							bool has_nul = (memchr(buf, 0, nread) != nullptr);
+							row.is_text = !has_nul;
+							row.encoding = has_nul ? "binary" : "utf8";
+						} else {
+							row.is_text = false;
+							row.encoding = "unknown";
+						}
+					} else {
+						row.is_text = true;
+						row.encoding = "utf8";
+					}
+				} else {
+					row.is_text = false;
+					row.encoding = "unknown";
 				}
 
 				rows.push_back(std::move(row));
@@ -465,7 +486,11 @@ static void ProcessIndexTree(git_repository *repo, const string &repo_path, cons
 		throw IOException("git_tree: failed to get index for repository '%s'", repo_path);
 	}
 
-	git_index_read(index, 0);
+	error = git_index_read(index, 0);
+	if (error != 0) {
+		git_index_free(index);
+		throw IOException("git_tree: failed to read index for repository '%s'", repo_path);
+	}
 
 	string norm_prefix;
 	if (!requested_path.empty()) {

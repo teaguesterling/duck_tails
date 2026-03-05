@@ -129,11 +129,13 @@ static void CollectStatusRows(git_repository *repo, const string &repo_path, boo
 		opts.flags |= GIT_STATUS_OPT_INCLUDE_IGNORED;
 	}
 
-	// Path filter
+	// Path filter (exact matching, not glob)
+	char *pathspec_cstr = nullptr;
 	if (!path_filter.empty()) {
+		opts.flags |= GIT_STATUS_OPT_DISABLE_PATHSPEC_MATCH;
 		opts.pathspec.count = 1;
-		const char *pathspec_str = path_filter.c_str();
-		opts.pathspec.strings = const_cast<char **>(&pathspec_str);
+		pathspec_cstr = const_cast<char *>(path_filter.c_str());
+		opts.pathspec.strings = &pathspec_cstr;
 	}
 
 	git_status_list *status_list = nullptr;
@@ -155,10 +157,12 @@ static void CollectStatusRows(git_repository *repo, const string &repo_path, boo
 		row.status_flags = entry->status;
 		row.status = StatusFlagsToString(entry->status);
 
-		// Determine file path from the entry
-		// head_to_index has staged changes, index_to_workdir has unstaged changes
-		row.staged = (entry->head_to_index != nullptr);
-		row.unstaged = (entry->index_to_workdir != nullptr);
+		// Use status flags to determine staged/unstaged (not pointer presence)
+		// This avoids marking untracked files as "unstaged"
+		row.staged = (entry->status & (GIT_STATUS_INDEX_NEW | GIT_STATUS_INDEX_MODIFIED | GIT_STATUS_INDEX_DELETED |
+		                               GIT_STATUS_INDEX_RENAMED | GIT_STATUS_INDEX_TYPECHANGE)) != 0;
+		row.unstaged = (entry->status & (GIT_STATUS_WT_MODIFIED | GIT_STATUS_WT_DELETED | GIT_STATUS_WT_TYPECHANGE |
+		                                 GIT_STATUS_WT_RENAMED)) != 0;
 
 		if (entry->head_to_index) {
 			row.file_path = entry->head_to_index->new_file.path ? entry->head_to_index->new_file.path : "";
@@ -445,7 +449,10 @@ static OperatorResultType GitStatusEachFunction(ExecutionContext &context, Table
 			state.initialized_row = false;
 		}
 
-		return OperatorResultType::HAVE_MORE_OUTPUT;
+		if (output_count > 0) {
+			return OperatorResultType::HAVE_MORE_OUTPUT;
+		}
+		// Zero rows for this input — continue to next input row
 	}
 }
 
