@@ -11,7 +11,6 @@
 
 #include <git2.h>
 #include <algorithm>
-#include <sys/stat.h>
 #include "duckdb/common/local_file_system.hpp"
 
 namespace duckdb {
@@ -333,6 +332,7 @@ static void ProcessWorkdirTree(git_repository *repo, const string &repo_path, co
 		throw IOException("git_tree: repository '%s' is bare (no working directory)", repo_path);
 	}
 	string workdir_str(workdir);
+	LocalFileSystem local_fs;
 
 	// Walk HEAD's tree to get tracked files
 	git_object *head_obj = nullptr;
@@ -378,12 +378,15 @@ static void ProcessWorkdirTree(git_repository *repo, const string &repo_path, co
 				// Convert tracked rows to WORKDIR rows (update metadata from disk where possible)
 				for (auto &row : tracked_rows) {
 					if (row.kind == "file") {
-						// Try to get disk size
+						// Try to get disk size using cross-platform DuckDB filesystem API
 						string abs_path = workdir_str + row.file_path;
-						struct stat st;
-						if (stat(abs_path.c_str(), &st) == 0) {
-							row.size_bytes = st.st_size;
-							row.mode = static_cast<int32_t>(st.st_mode);
+						try {
+							auto handle = local_fs.OpenFile(abs_path, FileOpenFlags::FILE_FLAGS_READ);
+							if (handle) {
+								row.size_bytes = local_fs.GetFileSize(*handle);
+							}
+						} catch (...) {
+							// File may be inaccessible; leave size_bytes as default
 						}
 					}
 					row.commit_hash = ""; // NULL for WORKDIR
@@ -438,31 +441,35 @@ static void ProcessWorkdirTree(git_repository *repo, const string &repo_path, co
 				row.commit_date = Timestamp::FromEpochSeconds(0);
 
 				string abs_path = workdir_str + file_path;
-				struct stat st;
-				if (stat(abs_path.c_str(), &st) == 0) {
-					row.size_bytes = st.st_size;
-					row.mode = static_cast<int32_t>(st.st_mode);
+				try {
+					auto handle = local_fs.OpenFile(abs_path, FileOpenFlags::FILE_FLAGS_READ);
+					if (handle) {
+						row.size_bytes = local_fs.GetFileSize(*handle);
 
-					// Detect binary by sampling file for NUL bytes (same heuristic as libgit2)
-					if (st.st_size > 0) {
-						FILE *f = fopen(abs_path.c_str(), "rb");
-						if (f) {
-							char buf[8000];
-							size_t to_read = std::min(static_cast<size_t>(st.st_size), sizeof(buf));
-							size_t nread = fread(buf, 1, to_read, f);
-							fclose(f);
-							bool has_nul = (memchr(buf, 0, nread) != nullptr);
-							row.is_text = !has_nul;
-							row.encoding = has_nul ? "binary" : "utf8";
+						// Detect binary by sampling file for NUL bytes (same heuristic as libgit2)
+						if (row.size_bytes > 0) {
+							FILE *f = fopen(abs_path.c_str(), "rb");
+							if (f) {
+								char buf[8000];
+								size_t to_read = std::min(static_cast<size_t>(row.size_bytes), sizeof(buf));
+								size_t nread = fread(buf, 1, to_read, f);
+								fclose(f);
+								bool has_nul = (memchr(buf, 0, nread) != nullptr);
+								row.is_text = !has_nul;
+								row.encoding = has_nul ? "binary" : "utf8";
+							} else {
+								row.is_text = false;
+								row.encoding = "unknown";
+							}
 						} else {
-							row.is_text = false;
-							row.encoding = "unknown";
+							row.is_text = true;
+							row.encoding = "utf8";
 						}
 					} else {
-						row.is_text = true;
-						row.encoding = "utf8";
+						row.is_text = false;
+						row.encoding = "unknown";
 					}
-				} else {
+				} catch (...) {
 					row.is_text = false;
 					row.encoding = "unknown";
 				}

@@ -2,6 +2,7 @@
 #include "git_filesystem.hpp"
 #include "git_context_manager.hpp"
 #include "duckdb/common/types/value.hpp"
+#include "duckdb/common/local_file_system.hpp"
 
 namespace duckdb {
 
@@ -93,28 +94,20 @@ string GetWorkdirRoot(const string &repo_path) {
 }
 
 string SafeWorkdirPath(const string &repo_path, const string &file_path) {
+	LocalFileSystem fs;
 	string workdir = GetWorkdirRoot(repo_path);
 	string candidate = workdir + file_path;
 
 	// Resolve to canonical path and verify it's within the workdir
-	char *resolved = realpath(candidate.c_str(), nullptr);
-	if (!resolved) {
-		throw IOException("File not found or inaccessible: '%s'", file_path);
-	}
-	string canonical(resolved);
-	free(resolved);
+	string canonical = fs.CanonicalizePath(candidate, nullptr);
 
 	// Also canonicalize workdir for comparison
-	char *resolved_workdir = realpath(workdir.c_str(), nullptr);
-	if (!resolved_workdir) {
-		throw IOException("Working directory not accessible: '%s'", workdir);
-	}
-	string canonical_workdir(resolved_workdir);
-	free(resolved_workdir);
+	string canonical_workdir = fs.CanonicalizePath(workdir, nullptr);
 
-	// Ensure trailing slash for prefix comparison
-	if (!canonical_workdir.empty() && canonical_workdir.back() != '/') {
-		canonical_workdir += '/';
+	// Ensure trailing separator for prefix comparison
+	string sep = fs.PathSeparator(canonical_workdir);
+	if (!canonical_workdir.empty() && canonical_workdir.back() != sep[0]) {
+		canonical_workdir += sep;
 	}
 
 	if (!StringUtil::StartsWith(canonical, canonical_workdir) &&
