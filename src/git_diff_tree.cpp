@@ -93,8 +93,8 @@ static string DeltaStatusToString(git_delta_t delta) {
 	}
 }
 
-static void CollectDiffRows(git_repository *repo, const string &repo_path, const string &ref,
-                            const string &path_filter, bool include_untracked, vector<GitDiffTreeRow> &rows) {
+static void CollectDiffRows(git_repository *repo, const string &repo_path, const string &ref, const string &path_filter,
+                            bool include_untracked, vector<GitDiffTreeRow> &rows) {
 	// Resolve the ref to a commit, then get its tree
 	git_object *obj = nullptr;
 	int error = git_revparse_single(&obj, repo, ref.c_str());
@@ -284,7 +284,7 @@ static unique_ptr<FunctionData> GitDiffTreeBind(ClientContext &context, TableFun
 //===--------------------------------------------------------------------===//
 
 static unique_ptr<GlobalTableFunctionState> GitDiffTreeInitGlobal(ClientContext &context,
-                                                                   TableFunctionInitInput &input) {
+                                                                  TableFunctionInitInput &input) {
 	auto &bind_data = const_cast<GitDiffTreeFunctionData &>(input.bind_data->Cast<GitDiffTreeFunctionData>());
 
 	if (!bind_data.is_lateral) {
@@ -335,9 +335,8 @@ static void GitDiffTreeFunction(ClientContext &context, TableFunctionInput &data
 // Local Init
 //===--------------------------------------------------------------------===//
 
-static unique_ptr<LocalTableFunctionState> GitDiffTreeLocalInit(ExecutionContext &context,
-                                                                 TableFunctionInitInput &input,
-                                                                 GlobalTableFunctionState *global_state) {
+static unique_ptr<LocalTableFunctionState>
+GitDiffTreeLocalInit(ExecutionContext &context, TableFunctionInitInput &input, GlobalTableFunctionState *global_state) {
 	return make_uniq<GitDiffTreeLocalState>();
 }
 
