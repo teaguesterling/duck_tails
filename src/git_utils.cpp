@@ -4,6 +4,13 @@
 #include "duckdb/common/types/value.hpp"
 #include "duckdb/common/local_file_system.hpp"
 
+#ifdef _WIN32
+#include <stdlib.h> // _fullpath
+#else
+#include <climits> // PATH_MAX
+#include <cstdlib> // realpath
+#endif
+
 namespace duckdb {
 
 // Parse parameters using new unified signature: func(repo_path_or_uri, [optional_ref], [other_params...])
@@ -93,16 +100,41 @@ string GetWorkdirRoot(const string &repo_path) {
 	return result;
 }
 
+// Cross-platform canonical path resolution
+static bool TryResolvePath(const string &input, string &output) {
+#ifdef _WIN32
+	char resolved[_MAX_PATH];
+	if (_fullpath(resolved, input.c_str(), _MAX_PATH) != nullptr) {
+		output = string(resolved);
+		return true;
+	}
+	return false;
+#else
+	char resolved[PATH_MAX];
+	if (realpath(input.c_str(), resolved) != nullptr) {
+		output = string(resolved);
+		return true;
+	}
+	return false;
+#endif
+}
+
 string SafeWorkdirPath(const string &repo_path, const string &file_path) {
 	LocalFileSystem fs;
 	string workdir = GetWorkdirRoot(repo_path);
 	string candidate = workdir + file_path;
 
 	// Resolve to canonical path and verify it's within the workdir
-	string canonical = fs.CanonicalizePath(candidate, nullptr);
+	string canonical;
+	if (!TryResolvePath(candidate, canonical)) {
+		throw IOException("File not found or inaccessible: '%s'", file_path);
+	}
 
 	// Also canonicalize workdir for comparison
-	string canonical_workdir = fs.CanonicalizePath(workdir, nullptr);
+	string canonical_workdir;
+	if (!TryResolvePath(workdir, canonical_workdir)) {
+		throw IOException("Working directory not accessible: '%s'", workdir);
+	}
 
 	// Ensure trailing separator for prefix comparison
 	string sep = fs.PathSeparator(canonical_workdir);
