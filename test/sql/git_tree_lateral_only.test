@@ -1,6 +1,8 @@
 # name: test/sql/git_tree_lateral_only.test
 # group: [sql]
 
+require notwindows
+
 # Test only git_tree LATERAL joins
 statement ok
 PRAGMA threads=1;

@@ -1,6 +1,8 @@
 # name: test/sql/lateral_long_path.test
 # group: [sql]
 
+require notwindows
+
 # Test LATERAL join with long path
 statement ok
 PRAGMA threads=1;

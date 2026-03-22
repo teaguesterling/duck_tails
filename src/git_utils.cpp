@@ -122,7 +122,8 @@ static bool TryResolvePath(const string &input, string &output) {
 string SafeWorkdirPath(const string &repo_path, const string &file_path) {
 	LocalFileSystem fs;
 	string workdir = GetWorkdirRoot(repo_path);
-	string candidate = workdir + file_path;
+	// Don't prepend workdir if file_path is already absolute (e.g. Windows drive letter paths)
+	string candidate = fs.IsPathAbsolute(file_path) ? file_path : (workdir + file_path);
 
 	// Resolve to canonical path and verify it's within the workdir
 	string canonical;

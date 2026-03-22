@@ -16,6 +16,8 @@ Catalog Error: Table Function with name git_parents does not exist!
 # Require statement will ensure this test is run with this extension loaded
 require duck_tails
 
+require notwindows
+
 # Load the extension
 # Use __BUILD_DIRECTORY__ to ensure we load the freshly built extension
 statement ok

@@ -4,6 +4,8 @@
 
 require duck_tails
 
+require notwindows
+
 statement ok
 SET extension_directory='__BUILD_DIRECTORY__/extension';
 

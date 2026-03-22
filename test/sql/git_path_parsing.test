@@ -4,6 +4,8 @@
 
 require duck_tails
 
+require notwindows
+
 # Test 1: Simple path with revision
 query I
 SELECT COUNT(*) > 0 as works

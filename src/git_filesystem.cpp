@@ -35,6 +35,14 @@ GitPath GitPath::Parse(const string &git_url) {
 		url = url.substr(6);
 	}
 
+	// Normalize Windows backslashes to forward slashes for URI parsing
+	// (git URIs always use forward slashes as separators)
+	for (auto &c : url) {
+		if (c == '\\') {
+			c = '/';
+		}
+	}
+
 	// Find @ symbol to separate path from revision
 	// We need to find the LAST @ that is NOT followed by '{' to support reflog syntax
 	// Examples:
