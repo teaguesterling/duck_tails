@@ -14,7 +14,7 @@ PRAGMA enable_verification
 
 # Directories (kind='tree') should have empty file_ext, not their folder name
 # Bug: hidden folders like .github get file_ext='.github' instead of ''
-# dotfile-repo has 3 tree entries: .github, .github/workflows, src
+# dotfile-repo has 4 tree entries: .github, .github/workflows, src, vendor
 query I
 SELECT count(*) FROM git_tree('git://test/tmp/dotfile-repo@HEAD')
 WHERE kind = 'tree' AND file_ext != ''
@@ -26,12 +26,26 @@ query I
 SELECT count(*) FROM git_tree('git://test/tmp/dotfile-repo@HEAD')
 WHERE kind = 'tree' AND file_ext = ''
 ----
-3
+4
+
+# Submodules should also have empty file_ext
+# dotfile-repo has 1 submodule: vendor/sub-lib
+query I
+SELECT count(*) FROM git_tree('git://test/tmp/dotfile-repo@HEAD')
+WHERE kind = 'submodule' AND file_ext != ''
+----
+0
+
+query I
+SELECT count(*) FROM git_tree('git://test/tmp/dotfile-repo@HEAD')
+WHERE kind = 'submodule' AND file_ext = ''
+----
+1
 
 # Files should still have correct file_ext
-# dotfile-repo has 3 files: .github/workflows/ci.yml, README.md, src/main.py
+# dotfile-repo has 4 files: .github/workflows/ci.yml, .gitmodules, README.md, src/main.py
 query I
 SELECT count(*) FROM git_tree('git://test/tmp/dotfile-repo@HEAD')
 WHERE kind = 'file' AND file_ext != ''
 ----
-3
+4
