@@ -12,8 +12,10 @@ SET extension_directory='__BUILD_DIRECTORY__/extension';
 statement ok
 PRAGMA enable_verification
 
+# main-repo fixture has 2 commits: initial commit adds README.md + src/main.cpp,
+# second commit modifies README.md only. So HEAD~1..HEAD = 1 modified file.
+
 # Three-arg form: git_diff_tree(repo, from_ref, to_ref)
-# Diff between HEAD~1 and HEAD in main-repo should show 1 modified file (README.md)
 query III
 SELECT file_path, file_ext, status FROM git_diff_tree('test/tmp/main-repo', 'HEAD~1', 'HEAD')
 ORDER BY file_path
@@ -57,3 +59,30 @@ query I
 SELECT count(*) >= 0 as valid FROM git_diff_tree('test/tmp/main-repo', 'HEAD~1', 'HEAD', untracked:=true)
 ----
 true
+
+# --- LATERAL git_diff_tree_each with commit-to-commit (3-arg form) ---
+
+# Direct call to git_diff_tree_each with three args
+query III
+SELECT file_path, file_ext, status FROM git_diff_tree_each('test/tmp/main-repo', 'HEAD~1', 'HEAD')
+ORDER BY file_path
+----
+README.md	.md	modified
+
+# Schema of git_diff_tree_each 3-arg form matches git_diff_tree 3-arg form
+query I
+SELECT count(*) FROM (DESCRIBE SELECT * FROM git_diff_tree_each('test/tmp/main-repo', 'HEAD~1', 'HEAD'))
+----
+5
+
+# Same ref to same ref via LATERAL should produce no diff
+query I
+SELECT count(*) FROM git_diff_tree_each('test/tmp/main-repo', 'HEAD', 'HEAD')
+----
+0
+
+# Path filter works with LATERAL commit-to-commit form
+query I
+SELECT count(*) FROM git_diff_tree_each('test/tmp/main-repo', 'HEAD~1', 'HEAD', path:='README.md')
+----
+1
