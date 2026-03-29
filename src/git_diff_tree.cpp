@@ -32,14 +32,15 @@ struct GitDiffTreeRow {
 struct GitDiffTreeFunctionData : public TableFunctionData {
 	string repo_path;
 	string ref;
+	string ref2; // When non-empty, diff ref..ref2 (commit-to-commit mode)
 	string path_filter;
 	bool include_untracked;
 	vector<GitDiffTreeRow> rows;
 	bool is_lateral;
 
-	GitDiffTreeFunctionData(const string &repo_path, const string &ref, const string &path_filter,
+	GitDiffTreeFunctionData(const string &repo_path, const string &ref, const string &ref2, const string &path_filter,
 	                        bool include_untracked, bool is_lateral = false)
-	    : repo_path(repo_path), ref(ref), path_filter(path_filter), include_untracked(include_untracked),
+	    : repo_path(repo_path), ref(ref), ref2(ref2), path_filter(path_filter), include_untracked(include_untracked),
 	      is_lateral(is_lateral) {
 	}
 };
@@ -93,57 +94,32 @@ static string DeltaStatusToString(git_delta_t delta) {
 	}
 }
 
-static void CollectDiffRows(git_repository *repo, const string &repo_path, const string &ref, const string &path_filter,
-                            bool include_untracked, vector<GitDiffTreeRow> &rows) {
-	// Resolve the ref to a commit, then get its tree
-	git_object *obj = nullptr;
-	int error = git_revparse_single(&obj, repo, ref.c_str());
+static void ResolveRefToTree(git_repository *repo, const string &ref, git_object **out_obj, git_commit **out_commit,
+                             git_tree **out_tree) {
+	int error = git_revparse_single(out_obj, repo, ref.c_str());
 	if (error != 0) {
 		const git_error *e = git_error_last();
 		throw IOException("git_diff_tree: unable to resolve ref '%s': %s", ref, e ? e->message : "unknown error");
 	}
 
-	git_commit *commit = nullptr;
-	error = git_object_peel(reinterpret_cast<git_object **>(&commit), obj, GIT_OBJECT_COMMIT);
+	error = git_object_peel(reinterpret_cast<git_object **>(out_commit), *out_obj, GIT_OBJECT_COMMIT);
 	if (error != 0) {
-		git_object_free(obj);
+		git_object_free(*out_obj);
+		*out_obj = nullptr;
 		throw IOException("git_diff_tree: ref '%s' does not resolve to a commit", ref);
 	}
 
-	git_tree *tree = nullptr;
-	error = git_commit_tree(&tree, commit);
+	error = git_commit_tree(out_tree, *out_commit);
 	if (error != 0) {
-		git_commit_free(commit);
-		git_object_free(obj);
+		git_commit_free(*out_commit);
+		*out_commit = nullptr;
+		git_object_free(*out_obj);
+		*out_obj = nullptr;
 		throw IOException("git_diff_tree: failed to get tree for ref '%s'", ref);
 	}
+}
 
-	// Set up diff options
-	git_diff_options diff_opts = GIT_DIFF_OPTIONS_INIT;
-	diff_opts.flags = GIT_DIFF_INCLUDE_TYPECHANGE;
-	if (include_untracked) {
-		diff_opts.flags |= GIT_DIFF_INCLUDE_UNTRACKED;
-	}
-
-	// Path filter
-	char *pathspec_cstr = nullptr;
-	if (!path_filter.empty()) {
-		diff_opts.pathspec.count = 1;
-		pathspec_cstr = const_cast<char *>(path_filter.c_str());
-		diff_opts.pathspec.strings = &pathspec_cstr;
-	}
-
-	// Diff the tree against the working directory
-	git_diff *diff = nullptr;
-	error = git_diff_tree_to_workdir_with_index(&diff, repo, tree, &diff_opts);
-	if (error != 0) {
-		const git_error *e = git_error_last();
-		git_tree_free(tree);
-		git_commit_free(commit);
-		git_object_free(obj);
-		throw IOException("git_diff_tree: failed to compute diff: %s", e ? e->message : "unknown error");
-	}
-
+static void CollectDiffDeltas(git_diff *diff, const string &repo_path, vector<GitDiffTreeRow> &rows) {
 	// Enable rename/copy detection
 	git_diff_find_options find_opts = GIT_DIFF_FIND_OPTIONS_INIT;
 	find_opts.flags = GIT_DIFF_FIND_RENAMES | GIT_DIFF_FIND_COPIES;
@@ -182,6 +158,66 @@ static void CollectDiffRows(git_repository *repo, const string &repo_path, const
 
 		rows.push_back(std::move(row));
 	}
+}
+
+static void CollectDiffRows(git_repository *repo, const string &repo_path, const string &ref, const string &ref2,
+                            const string &path_filter, bool include_untracked, vector<GitDiffTreeRow> &rows) {
+	git_object *obj = nullptr;
+	git_commit *commit = nullptr;
+	git_tree *tree = nullptr;
+	ResolveRefToTree(repo, ref, &obj, &commit, &tree);
+
+	// Set up diff options
+	git_diff_options diff_opts = GIT_DIFF_OPTIONS_INIT;
+	diff_opts.flags = GIT_DIFF_INCLUDE_TYPECHANGE;
+	if (include_untracked) {
+		diff_opts.flags |= GIT_DIFF_INCLUDE_UNTRACKED;
+	}
+
+	// Path filter
+	char *pathspec_cstr = nullptr;
+	if (!path_filter.empty()) {
+		diff_opts.pathspec.count = 1;
+		pathspec_cstr = const_cast<char *>(path_filter.c_str());
+		diff_opts.pathspec.strings = &pathspec_cstr;
+	}
+
+	git_diff *diff = nullptr;
+	int error;
+
+	if (!ref2.empty()) {
+		// Commit-to-commit mode: diff tree (ref) against tree (ref2)
+		git_object *obj2 = nullptr;
+		git_commit *commit2 = nullptr;
+		git_tree *tree2 = nullptr;
+		try {
+			ResolveRefToTree(repo, ref2, &obj2, &commit2, &tree2);
+		} catch (...) {
+			git_tree_free(tree);
+			git_commit_free(commit);
+			git_object_free(obj);
+			throw;
+		}
+
+		error = git_diff_tree_to_tree(&diff, repo, tree, tree2, &diff_opts);
+
+		git_tree_free(tree2);
+		git_commit_free(commit2);
+		git_object_free(obj2);
+	} else {
+		// Working directory mode: diff tree against workdir
+		error = git_diff_tree_to_workdir_with_index(&diff, repo, tree, &diff_opts);
+	}
+
+	if (error != 0) {
+		const git_error *e = git_error_last();
+		git_tree_free(tree);
+		git_commit_free(commit);
+		git_object_free(obj);
+		throw IOException("git_diff_tree: failed to compute diff: %s", e ? e->message : "unknown error");
+	}
+
+	CollectDiffDeltas(diff, repo_path, rows);
 
 	git_diff_free(diff);
 	git_tree_free(tree);
@@ -241,6 +277,7 @@ static unique_ptr<FunctionData> GitDiffTreeBind(ClientContext &context, TableFun
 
 	string repo_path = ".";
 	string ref = "HEAD";
+	string ref2;
 	string path_filter;
 	bool include_untracked = false;
 
@@ -262,9 +299,14 @@ static unique_ptr<FunctionData> GitDiffTreeBind(ClientContext &context, TableFun
 		}
 	}
 
-	// Second positional parameter: ref
+	// Second positional parameter: ref (from_ref)
 	if (input.inputs.size() > 1 && !input.inputs[1].IsNull()) {
 		ref = input.inputs[1].GetValue<string>();
+	}
+
+	// Third positional parameter: ref2 (to_ref) — enables commit-to-commit mode
+	if (input.inputs.size() > 2 && !input.inputs[2].IsNull()) {
+		ref2 = input.inputs[2].GetValue<string>();
 	}
 
 	// Parse named parameters
@@ -276,7 +318,7 @@ static unique_ptr<FunctionData> GitDiffTreeBind(ClientContext &context, TableFun
 		}
 	}
 
-	return make_uniq<GitDiffTreeFunctionData>(repo_path, ref, path_filter, include_untracked);
+	return make_uniq<GitDiffTreeFunctionData>(repo_path, ref, ref2, path_filter, include_untracked);
 }
 
 //===--------------------------------------------------------------------===//
@@ -297,7 +339,7 @@ static unique_ptr<GlobalTableFunctionState> GitDiffTreeInitGlobal(ClientContext 
 		}
 
 		try {
-			CollectDiffRows(repo, bind_data.repo_path, bind_data.ref, bind_data.path_filter,
+			CollectDiffRows(repo, bind_data.repo_path, bind_data.ref, bind_data.ref2, bind_data.path_filter,
 			                bind_data.include_untracked, bind_data.rows);
 		} catch (...) {
 			git_repository_free(repo);
@@ -350,12 +392,18 @@ static unique_ptr<FunctionData> GitDiffTreeEachBind(ClientContext &context, Tabl
 	names = GetGitDiffTreeColumnNames();
 
 	string ref = "HEAD";
+	string ref2;
 	string path_filter;
 	bool include_untracked = false;
 
 	// Second positional parameter: ref
 	if (input.inputs.size() > 1 && !input.inputs[1].IsNull()) {
 		ref = input.inputs[1].GetValue<string>();
+	}
+
+	// Third positional parameter: ref2 (commit-to-commit mode)
+	if (input.inputs.size() > 2 && !input.inputs[2].IsNull()) {
+		ref2 = input.inputs[2].GetValue<string>();
 	}
 
 	for (const auto &kv : input.named_parameters) {
@@ -366,7 +414,7 @@ static unique_ptr<FunctionData> GitDiffTreeEachBind(ClientContext &context, Tabl
 		}
 	}
 
-	return make_uniq<GitDiffTreeFunctionData>(".", ref, path_filter, include_untracked, true);
+	return make_uniq<GitDiffTreeFunctionData>(".", ref, ref2, path_filter, include_untracked, true);
 }
 
 static OperatorResultType GitDiffTreeEachFunction(ExecutionContext &context, TableFunctionInput &data_p,
@@ -417,7 +465,7 @@ static OperatorResultType GitDiffTreeEachFunction(ExecutionContext &context, Tab
 			}
 
 			try {
-				CollectDiffRows(repo, resolved_repo_path, bind_data.ref, bind_data.path_filter,
+				CollectDiffRows(repo, resolved_repo_path, bind_data.ref, bind_data.ref2, bind_data.path_filter,
 				                bind_data.include_untracked, state.current_rows);
 			} catch (...) {
 				git_repository_free(repo);
@@ -481,6 +529,14 @@ void RegisterGitDiffTreeFunction(ExtensionLoader &loader) {
 	git_diff_tree_two.named_parameters["untracked"] = LogicalType::BOOLEAN;
 	git_diff_tree_set.AddFunction(git_diff_tree_two);
 
+	// Three parameters: git_diff_tree(repo_path, from_ref, to_ref) — commit-to-commit diff
+	TableFunction git_diff_tree_three({LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR},
+	                                  GitDiffTreeFunction, GitDiffTreeBind, GitDiffTreeInitGlobal);
+	git_diff_tree_three.init_local = GitDiffTreeLocalInit;
+	git_diff_tree_three.named_parameters["path"] = LogicalType::VARCHAR;
+	git_diff_tree_three.named_parameters["untracked"] = LogicalType::BOOLEAN;
+	git_diff_tree_set.AddFunction(git_diff_tree_three);
+
 	loader.RegisterFunction(git_diff_tree_set);
 
 	// LATERAL: git_diff_tree_each
@@ -499,6 +555,13 @@ void RegisterGitDiffTreeFunction(ExtensionLoader &loader) {
 	git_diff_tree_each_two.named_parameters["path"] = LogicalType::VARCHAR;
 	git_diff_tree_each_two.named_parameters["untracked"] = LogicalType::BOOLEAN;
 	git_diff_tree_each_set.AddFunction(git_diff_tree_each_two);
+
+	TableFunction git_diff_tree_each_three({LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR}, nullptr,
+	                                       GitDiffTreeEachBind, nullptr, GitDiffTreeLocalInit);
+	git_diff_tree_each_three.in_out_function = GitDiffTreeEachFunction;
+	git_diff_tree_each_three.named_parameters["path"] = LogicalType::VARCHAR;
+	git_diff_tree_each_three.named_parameters["untracked"] = LogicalType::BOOLEAN;
+	git_diff_tree_each_set.AddFunction(git_diff_tree_each_three);
 
 	loader.RegisterFunction(git_diff_tree_each_set);
 }

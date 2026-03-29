@@ -1,0 +1,59 @@
+# name: test/sql/git_diff_tree_commit_to_commit.test
+# description: Test git_diff_tree() with two refs for commit-to-commit diff (issue #14)
+# group: [sql]
+
+require duck_tails
+
+require notwindows
+
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
+
+statement ok
+PRAGMA enable_verification
+
+# Three-arg form: git_diff_tree(repo, from_ref, to_ref)
+# Diff between HEAD~1 and HEAD in main-repo should show 1 modified file (README.md)
+query III
+SELECT file_path, file_ext, status FROM git_diff_tree('test/tmp/main-repo', 'HEAD~1', 'HEAD')
+ORDER BY file_path
+----
+README.md	.md	modified
+
+# Reversed diff direction should show the same file but possibly different status
+query III
+SELECT file_path, file_ext, status FROM git_diff_tree('test/tmp/main-repo', 'HEAD', 'HEAD~1')
+ORDER BY file_path
+----
+README.md	.md	modified
+
+# Diff between initial commit (HEAD~1) and HEAD should show changed files
+query I
+SELECT count(*) FROM git_diff_tree('test/tmp/main-repo', 'HEAD~1', 'HEAD')
+WHERE status IN ('added', 'deleted', 'modified', 'renamed', 'copied', 'typechange')
+----
+1
+
+# Same ref to same ref should produce no diff
+query I
+SELECT count(*) FROM git_diff_tree('test/tmp/main-repo', 'HEAD', 'HEAD')
+----
+0
+
+# Schema should be identical to the two-arg form (5 columns)
+query I
+SELECT count(*) FROM (DESCRIBE SELECT * FROM git_diff_tree('test/tmp/main-repo', 'HEAD~1', 'HEAD'))
+----
+5
+
+# Path filter should work with commit-to-commit mode
+query I
+SELECT count(*) FROM git_diff_tree('test/tmp/main-repo', 'HEAD~1', 'HEAD', path:='README.md')
+----
+1
+
+# Untracked parameter should be silently accepted (even though meaningless for commit-to-commit)
+query I
+SELECT count(*) >= 0 as valid FROM git_diff_tree('test/tmp/main-repo', 'HEAD~1', 'HEAD', untracked:=true)
+----
+true
