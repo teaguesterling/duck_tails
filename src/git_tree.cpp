@@ -138,7 +138,7 @@ static inline void EmitTreeRow(vector<GitTreeRow> &out, const string &repo_path,
 	row.commit_hash = commit_hash;
 	row.tree_hash = containing_tree_hash;
 	row.file_path = path;
-	row.file_ext = ExtractFileExtension(path);
+	row.file_ext = "";
 	row.ref = commit_hash;
 	row.blob_hash = "0000000000000000000000000000000000000000";
 	row.commit_date = commit_date;
@@ -159,7 +159,7 @@ static inline void EmitSubmoduleRow(vector<GitTreeRow> &out, const string &repo_
 	row.commit_hash = commit_hash;
 	row.tree_hash = containing_tree_hash;
 	row.file_path = path;
-	row.file_ext = ExtractFileExtension(path);
+	row.file_ext = "";
 	row.ref = commit_hash;
 	row.blob_hash = string();
 	row.commit_date = commit_date;
