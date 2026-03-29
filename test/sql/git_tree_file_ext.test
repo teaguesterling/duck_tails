@@ -1,0 +1,51 @@
+# name: test/sql/git_tree_file_ext.test
+# description: Test that file_ext is empty for directories and submodules (issue #13)
+# group: [sql]
+
+require duck_tails
+
+require notwindows
+
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
+
+statement ok
+PRAGMA enable_verification
+
+# Directories (kind='tree') should have empty file_ext, not their folder name
+# Bug: hidden folders like .github get file_ext='.github' instead of ''
+# dotfile-repo has 4 tree entries: .github, .github/workflows, src, vendor
+query I
+SELECT count(*) FROM git_tree('git://test/tmp/dotfile-repo@HEAD')
+WHERE kind = 'tree' AND file_ext != ''
+----
+0
+
+# All tree entries should have empty file_ext
+query I
+SELECT count(*) FROM git_tree('git://test/tmp/dotfile-repo@HEAD')
+WHERE kind = 'tree' AND file_ext = ''
+----
+4
+
+# Submodules should also have empty file_ext
+# dotfile-repo has 1 submodule: vendor/sub-lib
+query I
+SELECT count(*) FROM git_tree('git://test/tmp/dotfile-repo@HEAD')
+WHERE kind = 'submodule' AND file_ext != ''
+----
+0
+
+query I
+SELECT count(*) FROM git_tree('git://test/tmp/dotfile-repo@HEAD')
+WHERE kind = 'submodule' AND file_ext = ''
+----
+1
+
+# Files should still have correct file_ext
+# dotfile-repo has 4 files: .github/workflows/ci.yml, .gitmodules, README.md, src/main.py
+query I
+SELECT count(*) FROM git_tree('git://test/tmp/dotfile-repo@HEAD')
+WHERE kind = 'file' AND file_ext != ''
+----
+4

@@ -40,6 +40,7 @@ setup_fixtures() {
         "empty-repo.tar.gz|main||Minimal repository for edge cases"
         "large-repo.tar.gz|main,branch-1,branch-2,branch-3,branch-4,branch-5,branch-6,branch-7,branch-8,branch-9,branch-10|tag-1,tag-2,tag-3,tag-4,tag-5|Large repository for performance testing"
         "special-chars-repo.tar.gz|main,feature/test-123,bugfix/issue-456|v1.0.0-beta,v1.0.0-rc.1|Repository with special characters"
+        "dotfile-repo.tar.gz|main||Repository with hidden dotfile directories"
     )
     
     # Extract each fixture
