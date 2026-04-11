@@ -157,3 +157,13 @@ SELECT COUNT(*) FROM git_blame('test/tmp/main-repo/README.md',
                                 first_parent := true)
 ----
 2
+
+# git_blame_hunks_each via LATERAL over a values list
+query II
+SELECT v.f, COUNT(*) AS n_hunks
+FROM (VALUES ('test/tmp/main-repo/README.md')) AS v(f),
+     LATERAL git_blame_hunks_each(v.f) h
+GROUP BY v.f
+ORDER BY v.f
+----
+test/tmp/main-repo/README.md	2

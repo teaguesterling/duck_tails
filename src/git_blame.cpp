@@ -578,6 +578,151 @@ static void GitBlameFunction(ClientContext &context, TableFunctionInput &data_p,
 }
 
 //===--------------------------------------------------------------------===//
+// LATERAL variants
+//===--------------------------------------------------------------------===//
+
+// Shared bind for LATERAL forms: stores bind-time named parameters in bind
+// data; the runtime file path/URI and optional revision come from the input
+// DataChunk per row.
+static unique_ptr<FunctionData> GitBlameLateralBind(ClientContext &context, TableFunctionBindInput &input,
+                                                     bool per_line) {
+	auto bind_data = make_uniq<GitBlameBindData>();
+	bind_data->per_line = per_line;
+	bind_data->is_lateral = true;
+	bind_data->revision = "HEAD";
+
+	string override_repo_path; // ignored for LATERAL (runtime provides path)
+	string override_revision;
+	ApplyBlameNamedParams(input, *bind_data, override_repo_path, override_revision);
+	ValidateBlameOptions(bind_data->opts, per_line ? "git_blame_each" : "git_blame_hunks_each");
+
+	if (!override_revision.empty()) {
+		bind_data->revision = override_revision;
+	}
+	return std::move(bind_data);
+}
+
+static unique_ptr<FunctionData> GitBlameHunksEachBind(ClientContext &context, TableFunctionBindInput &input,
+                                                      vector<LogicalType> &return_types, vector<string> &names) {
+	DefineHunksSchema(return_types, names);
+	return GitBlameLateralBind(context, input, /*per_line=*/false);
+}
+
+// Resolve a LATERAL input path (URI or plain path) + optional per-row revision
+// override into (repo_path, file_path, revision).
+static void ResolveLateralInput(const string &raw_input, const string &bind_revision, const string &row_revision,
+                                string &out_repo_path, string &out_file_path, string &out_revision) {
+	// If the input is a git:// URI, let GitContextManager parse it fully.
+	if (StringUtil::StartsWith(raw_input, "git://")) {
+		auto ctx = GitContextManager::Instance().ProcessGitUri(raw_input, "HEAD");
+		out_repo_path = ctx.repo_path;
+		out_file_path = ctx.file_path;
+		// URI @rev wins unless the caller passed an explicit row revision.
+		if (!row_revision.empty()) {
+			out_revision = row_revision;
+		} else if (!ctx.final_ref.empty() && ctx.final_ref != "HEAD") {
+			out_revision = ctx.final_ref;
+		} else {
+			out_revision = bind_revision;
+		}
+		return;
+	}
+
+	// Plain path — discover repo via GitContextManager.
+	auto ctx = GitContextManager::Instance().ProcessGitUri("git://" + raw_input + "@HEAD", "HEAD");
+	out_repo_path = ctx.repo_path;
+	out_file_path = ctx.file_path;
+	out_revision = row_revision.empty() ? bind_revision : row_revision;
+}
+
+static OperatorResultType GitBlameEachImpl(ExecutionContext &context, TableFunctionInput &data_p, DataChunk &input,
+                                            DataChunk &output, bool per_line) {
+	auto &state = data_p.local_state->Cast<GitBlameLocalState>();
+	auto &bind_data = data_p.bind_data->Cast<GitBlameBindData>();
+
+	while (true) {
+		if (!state.initialized_row) {
+			if (state.current_input_row >= input.size()) {
+				state.current_input_row = 0;
+				state.initialized_row = false;
+				return OperatorResultType::NEED_MORE_INPUT;
+			}
+
+			input.Flatten();
+			if (input.ColumnCount() == 0 || FlatVector::IsNull(input.data[0], state.current_input_row)) {
+				state.current_input_row++;
+				continue;
+			}
+
+			auto file_vec = FlatVector::GetData<string_t>(input.data[0]);
+			string raw_input(file_vec[state.current_input_row].GetData(),
+			                 file_vec[state.current_input_row].GetSize());
+
+			string row_revision;
+			if (input.ColumnCount() > 1 && !FlatVector::IsNull(input.data[1], state.current_input_row)) {
+				auto rev_vec = FlatVector::GetData<string_t>(input.data[1]);
+				row_revision = string(rev_vec[state.current_input_row].GetData(),
+				                      rev_vec[state.current_input_row].GetSize());
+			}
+
+			string repo_path, file_path, revision;
+			try {
+				ResolveLateralInput(raw_input, bind_data.revision, row_revision, repo_path, file_path, revision);
+			} catch (...) {
+				state.current_input_row++;
+				continue;
+			}
+
+			state.current_rows.clear();
+			git_repository *repo = nullptr;
+			int error = git_repository_open(&repo, repo_path.c_str());
+			if (error != 0) {
+				state.current_input_row++;
+				continue;
+			}
+			try {
+				// Populate identity fields on each row via caller post-process below.
+				CollectBlameRows(repo, repo_path, file_path, revision, bind_data.opts, per_line, state.current_rows);
+			} catch (...) {
+				git_repository_free(repo);
+				state.current_input_row++;
+				continue;
+			}
+			git_repository_free(repo);
+
+			state.initialized_row = true;
+			state.current_output_row = 0;
+		}
+
+		idx_t output_count = 0;
+		while (output_count < STANDARD_VECTOR_SIZE && state.current_output_row < state.current_rows.size()) {
+			if (per_line) {
+				OutputBlameRow(output, state.current_rows[state.current_output_row], output_count);
+			} else {
+				OutputHunkRow(output, state.current_rows[state.current_output_row], output_count);
+			}
+			state.current_output_row++;
+			output_count++;
+		}
+		output.SetCardinality(output_count);
+
+		if (state.current_output_row >= state.current_rows.size()) {
+			state.current_input_row++;
+			state.initialized_row = false;
+		}
+
+		if (output_count > 0) {
+			return OperatorResultType::HAVE_MORE_OUTPUT;
+		}
+	}
+}
+
+static OperatorResultType GitBlameHunksEachFunction(ExecutionContext &context, TableFunctionInput &data_p,
+                                                     DataChunk &input, DataChunk &output) {
+	return GitBlameEachImpl(context, data_p, input, output, /*per_line=*/false);
+}
+
+//===--------------------------------------------------------------------===//
 // Registration
 //===--------------------------------------------------------------------===//
 
@@ -605,6 +750,30 @@ void RegisterGitBlameFunction(ExtensionLoader &loader) {
 	declare_named_params(blame_one);
 	git_blame_set.AddFunction(blame_one);
 	loader.RegisterFunction(git_blame_set);
+
+	auto declare_lateral_params = [](TableFunction &fn) {
+		fn.named_parameters["revision"] = LogicalType::VARCHAR;
+		fn.named_parameters["min_line"] = LogicalType::BIGINT;
+		fn.named_parameters["max_line"] = LogicalType::BIGINT;
+		fn.named_parameters["ignore_whitespace"] = LogicalType::BOOLEAN;
+		fn.named_parameters["use_mailmap"] = LogicalType::BOOLEAN;
+		fn.named_parameters["first_parent"] = LogicalType::BOOLEAN;
+	};
+
+	TableFunctionSet git_blame_hunks_each_set("git_blame_hunks_each");
+	TableFunction hunks_each_one({LogicalType::VARCHAR}, nullptr, GitBlameHunksEachBind, GitBlameInitGlobal,
+	                              GitBlameLocalInit);
+	hunks_each_one.in_out_function = GitBlameHunksEachFunction;
+	declare_lateral_params(hunks_each_one);
+	git_blame_hunks_each_set.AddFunction(hunks_each_one);
+
+	TableFunction hunks_each_two({LogicalType::VARCHAR, LogicalType::VARCHAR}, nullptr, GitBlameHunksEachBind,
+	                              GitBlameInitGlobal, GitBlameLocalInit);
+	hunks_each_two.in_out_function = GitBlameHunksEachFunction;
+	declare_lateral_params(hunks_each_two);
+	git_blame_hunks_each_set.AddFunction(hunks_each_two);
+
+	loader.RegisterFunction(git_blame_hunks_each_set);
 }
 
 } // namespace duckdb
