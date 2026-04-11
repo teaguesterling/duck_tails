@@ -210,8 +210,7 @@ static void CollectBlameRows(git_repository *repo, const string &repo_path, cons
 		string commit_hash = OidToHex(&hunk->final_commit_id);
 		string orig_commit_hash = OidToHex(&hunk->orig_commit_id);
 		string author_name = hunk->final_signature && hunk->final_signature->name ? hunk->final_signature->name : "";
-		string author_email =
-		    hunk->final_signature && hunk->final_signature->email ? hunk->final_signature->email : "";
+		string author_email = hunk->final_signature && hunk->final_signature->email ? hunk->final_signature->email : "";
 		timestamp_t author_date = timestamp_t(0);
 		if (hunk->final_signature) {
 			// libgit2 git_time is seconds since epoch (UTC).
@@ -275,13 +274,13 @@ static void CollectBlameRows(git_repository *repo, const string &repo_path, cons
 //===--------------------------------------------------------------------===//
 
 static void DefineHunksSchema(vector<LogicalType> &return_types, vector<string> &names) {
-	return_types = {LogicalType::VARCHAR,   LogicalType::VARCHAR,   LogicalType::VARCHAR,  LogicalType::VARCHAR,
-	                LogicalType::BIGINT,    LogicalType::BIGINT,    LogicalType::VARCHAR,  LogicalType::VARCHAR,
-	                LogicalType::VARCHAR,   LogicalType::TIMESTAMP, LogicalType::VARCHAR,  LogicalType::VARCHAR,
-	                LogicalType::BIGINT,    LogicalType::BOOLEAN};
-	names = {"repo_path",        "file_path",   "file_ext",         "revision",     "start_line",
-	         "line_count",       "commit_hash", "author_name",      "author_email", "author_date",
-	         "orig_commit_hash", "orig_path",   "orig_start_line",  "boundary"};
+	return_types = {LogicalType::VARCHAR, LogicalType::VARCHAR,   LogicalType::VARCHAR, LogicalType::VARCHAR,
+	                LogicalType::BIGINT,  LogicalType::BIGINT,    LogicalType::VARCHAR, LogicalType::VARCHAR,
+	                LogicalType::VARCHAR, LogicalType::TIMESTAMP, LogicalType::VARCHAR, LogicalType::VARCHAR,
+	                LogicalType::BIGINT,  LogicalType::BOOLEAN};
+	names = {"repo_path",        "file_path",   "file_ext",        "revision",     "start_line",
+	         "line_count",       "commit_hash", "author_name",     "author_email", "author_date",
+	         "orig_commit_hash", "orig_path",   "orig_start_line", "boundary"};
 }
 
 static void OutputHunkRow(DataChunk &output, const GitBlameRow &row, idx_t row_idx) {
@@ -310,7 +309,7 @@ struct GitBlameBindData : public TableFunctionData {
 	string file_path;
 	string revision;
 	GitBlameOptions opts;
-	bool per_line = true;  // false for *_hunks variants
+	bool per_line = true; // false for *_hunks variants
 	bool is_lateral = false;
 	vector<GitBlameRow> rows; // Materialized at bind time for static forms
 };
@@ -339,8 +338,8 @@ static void ValidateBlameOptions(const GitBlameOptions &opts, const char *func_n
 		throw BinderException("%s: max_line must be >= 1", func_name);
 	}
 	if (opts.min_line > 0 && opts.max_line > 0 && opts.min_line > opts.max_line) {
-		throw BinderException("%s: min_line (%lld) must be <= max_line (%lld)", func_name,
-		                      (long long)opts.min_line, (long long)opts.max_line);
+		throw BinderException("%s: min_line (%lld) must be <= max_line (%lld)", func_name, (long long)opts.min_line,
+		                      (long long)opts.max_line);
 	}
 }
 
@@ -446,8 +445,8 @@ static unique_ptr<GlobalTableFunctionState> GitBlameInitGlobal(ClientContext &co
 	return make_uniq<GlobalTableFunctionState>();
 }
 
-static unique_ptr<LocalTableFunctionState>
-GitBlameLocalInit(ExecutionContext &context, TableFunctionInitInput &input, GlobalTableFunctionState *global_state) {
+static unique_ptr<LocalTableFunctionState> GitBlameLocalInit(ExecutionContext &context, TableFunctionInitInput &input,
+                                                             GlobalTableFunctionState *global_state) {
 	return make_uniq<GitBlameLocalState>();
 }
 
@@ -469,10 +468,10 @@ static void GitBlameHunksFunction(ClientContext &context, TableFunctionInput &da
 //===--------------------------------------------------------------------===//
 
 static void DefineBlameSchema(vector<LogicalType> &return_types, vector<string> &names) {
-	return_types = {LogicalType::VARCHAR,   LogicalType::VARCHAR,   LogicalType::VARCHAR,  LogicalType::VARCHAR,
-	                LogicalType::BIGINT,    LogicalType::VARCHAR,   LogicalType::VARCHAR,  LogicalType::VARCHAR,
-	                LogicalType::VARCHAR,   LogicalType::TIMESTAMP, LogicalType::VARCHAR,  LogicalType::VARCHAR,
-	                LogicalType::BIGINT,    LogicalType::BOOLEAN};
+	return_types = {LogicalType::VARCHAR, LogicalType::VARCHAR,   LogicalType::VARCHAR, LogicalType::VARCHAR,
+	                LogicalType::BIGINT,  LogicalType::VARCHAR,   LogicalType::VARCHAR, LogicalType::VARCHAR,
+	                LogicalType::VARCHAR, LogicalType::TIMESTAMP, LogicalType::VARCHAR, LogicalType::VARCHAR,
+	                LogicalType::BIGINT,  LogicalType::BOOLEAN};
 	names = {"repo_path",        "file_path",   "file_ext",         "revision",     "line_number",
 	         "line_content",     "commit_hash", "author_name",      "author_email", "author_date",
 	         "orig_commit_hash", "orig_path",   "orig_line_number", "boundary"};
@@ -500,7 +499,7 @@ static void OutputBlameRow(DataChunk &output, const GitBlameRow &row, idx_t row_
 }
 
 static unique_ptr<FunctionData> GitBlameBind(ClientContext &context, TableFunctionBindInput &input,
-                                              vector<LogicalType> &return_types, vector<string> &names) {
+                                             vector<LogicalType> &return_types, vector<string> &names) {
 	DefineBlameSchema(return_types, names);
 
 	if (input.inputs.empty()) {
@@ -585,7 +584,7 @@ static void GitBlameFunction(ClientContext &context, TableFunctionInput &data_p,
 // data; the runtime file path/URI and optional revision come from the input
 // DataChunk per row.
 static unique_ptr<FunctionData> GitBlameLateralBind(ClientContext &context, TableFunctionBindInput &input,
-                                                     bool per_line) {
+                                                    bool per_line) {
 	auto bind_data = make_uniq<GitBlameBindData>();
 	bind_data->per_line = per_line;
 	bind_data->is_lateral = true;
@@ -636,7 +635,7 @@ static void ResolveLateralInput(const string &raw_input, const string &bind_revi
 }
 
 static OperatorResultType GitBlameEachImpl(ExecutionContext &context, TableFunctionInput &data_p, DataChunk &input,
-                                            DataChunk &output, bool per_line) {
+                                           DataChunk &output, bool per_line) {
 	auto &state = data_p.local_state->Cast<GitBlameLocalState>();
 	auto &bind_data = data_p.bind_data->Cast<GitBlameBindData>();
 
@@ -655,14 +654,13 @@ static OperatorResultType GitBlameEachImpl(ExecutionContext &context, TableFunct
 			}
 
 			auto file_vec = FlatVector::GetData<string_t>(input.data[0]);
-			string raw_input(file_vec[state.current_input_row].GetData(),
-			                 file_vec[state.current_input_row].GetSize());
+			string raw_input(file_vec[state.current_input_row].GetData(), file_vec[state.current_input_row].GetSize());
 
 			string row_revision;
 			if (input.ColumnCount() > 1 && !FlatVector::IsNull(input.data[1], state.current_input_row)) {
 				auto rev_vec = FlatVector::GetData<string_t>(input.data[1]);
-				row_revision = string(rev_vec[state.current_input_row].GetData(),
-				                      rev_vec[state.current_input_row].GetSize());
+				row_revision =
+				    string(rev_vec[state.current_input_row].GetData(), rev_vec[state.current_input_row].GetSize());
 			}
 
 			string repo_path, file_path, revision;
@@ -718,18 +716,18 @@ static OperatorResultType GitBlameEachImpl(ExecutionContext &context, TableFunct
 }
 
 static OperatorResultType GitBlameHunksEachFunction(ExecutionContext &context, TableFunctionInput &data_p,
-                                                     DataChunk &input, DataChunk &output) {
+                                                    DataChunk &input, DataChunk &output) {
 	return GitBlameEachImpl(context, data_p, input, output, /*per_line=*/false);
 }
 
 static unique_ptr<FunctionData> GitBlameEachBind(ClientContext &context, TableFunctionBindInput &input,
-                                                  vector<LogicalType> &return_types, vector<string> &names) {
+                                                 vector<LogicalType> &return_types, vector<string> &names) {
 	DefineBlameSchema(return_types, names);
 	return GitBlameLateralBind(context, input, /*per_line=*/true);
 }
 
-static OperatorResultType GitBlameEachFunction(ExecutionContext &context, TableFunctionInput &data_p,
-                                                DataChunk &input, DataChunk &output) {
+static OperatorResultType GitBlameEachFunction(ExecutionContext &context, TableFunctionInput &data_p, DataChunk &input,
+                                               DataChunk &output) {
 	return GitBlameEachImpl(context, data_p, input, output, /*per_line=*/true);
 }
 
@@ -773,13 +771,13 @@ void RegisterGitBlameFunction(ExtensionLoader &loader) {
 
 	TableFunctionSet git_blame_hunks_each_set("git_blame_hunks_each");
 	TableFunction hunks_each_one({LogicalType::VARCHAR}, nullptr, GitBlameHunksEachBind, GitBlameInitGlobal,
-	                              GitBlameLocalInit);
+	                             GitBlameLocalInit);
 	hunks_each_one.in_out_function = GitBlameHunksEachFunction;
 	declare_lateral_params(hunks_each_one);
 	git_blame_hunks_each_set.AddFunction(hunks_each_one);
 
 	TableFunction hunks_each_two({LogicalType::VARCHAR, LogicalType::VARCHAR}, nullptr, GitBlameHunksEachBind,
-	                              GitBlameInitGlobal, GitBlameLocalInit);
+	                             GitBlameInitGlobal, GitBlameLocalInit);
 	hunks_each_two.in_out_function = GitBlameHunksEachFunction;
 	declare_lateral_params(hunks_each_two);
 	git_blame_hunks_each_set.AddFunction(hunks_each_two);
@@ -788,13 +786,13 @@ void RegisterGitBlameFunction(ExtensionLoader &loader) {
 
 	TableFunctionSet git_blame_each_set("git_blame_each");
 	TableFunction blame_each_one({LogicalType::VARCHAR}, nullptr, GitBlameEachBind, GitBlameInitGlobal,
-	                              GitBlameLocalInit);
+	                             GitBlameLocalInit);
 	blame_each_one.in_out_function = GitBlameEachFunction;
 	declare_lateral_params(blame_each_one);
 	git_blame_each_set.AddFunction(blame_each_one);
 
 	TableFunction blame_each_two({LogicalType::VARCHAR, LogicalType::VARCHAR}, nullptr, GitBlameEachBind,
-	                              GitBlameInitGlobal, GitBlameLocalInit);
+	                             GitBlameInitGlobal, GitBlameLocalInit);
 	blame_each_two.in_out_function = GitBlameEachFunction;
 	declare_lateral_params(blame_each_two);
 	git_blame_each_set.AddFunction(blame_each_two);
