@@ -106,8 +106,8 @@ static string ApplyExplicitRepoPath(const string &uri, const string &repo_path) 
 	// specifications of the repository and silently preferring one would hide bugs.
 	if (!rest.empty() && rest[0] == '/') {
 		throw InvalidInputException(
-		    "git_read: conflicting repository paths: absolute URI '%s' cannot be combined with repo_path '%s'",
-		    uri, repo_path);
+		    "git_read: conflicting repository paths: absolute URI '%s' cannot be combined with repo_path '%s'", uri,
+		    repo_path);
 	}
 
 	// Relative URI (or bare "git://@REF"): splice repo_path into the URI.
