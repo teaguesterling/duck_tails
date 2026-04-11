@@ -25,10 +25,44 @@ static string ExtractFileExtension(const string &path) {
 	return path.substr(dot_pos);
 }
 
-static string OidToHex(const git_oid *oid) {
+static string oid_to_hex(const git_oid *oid) {
 	char hex[GIT_OID_HEXSZ + 1];
 	git_oid_tostr(hex, sizeof(hex), oid);
 	return string(hex);
+}
+
+// Simple UTF-8 validation to prevent DuckDB VARCHAR verification crashes on
+// non-UTF-8 text files. Mirrors git_read.cpp's IsValidUTF8 — duplicated here
+// rather than extracted until a third caller appears.
+static bool IsValidUTF8(const char *data, size_t length) {
+	const unsigned char *bytes = reinterpret_cast<const unsigned char *>(data);
+	for (size_t i = 0; i < length;) {
+		unsigned char byte = bytes[i];
+		if (byte <= 0x7F) {
+			i++;
+			continue;
+		}
+		int num_bytes = 0;
+		if ((byte & 0xE0) == 0xC0) {
+			num_bytes = 2;
+		} else if ((byte & 0xF0) == 0xE0) {
+			num_bytes = 3;
+		} else if ((byte & 0xF8) == 0xF0) {
+			num_bytes = 4;
+		} else {
+			return false;
+		}
+		if (i + num_bytes > length) {
+			return false;
+		}
+		for (int j = 1; j < num_bytes; j++) {
+			if ((bytes[i + j] & 0xC0) != 0x80) {
+				return false;
+			}
+		}
+		i += num_bytes;
+	}
+	return true;
 }
 
 //===--------------------------------------------------------------------===//
@@ -109,23 +143,32 @@ static bool LoadFileLines(git_repository *repo, git_commit *commit, const string
 	if (!is_binary) {
 		const char *data = static_cast<const char *>(git_blob_rawcontent(blob));
 		size_t size = static_cast<size_t>(git_blob_rawsize(blob));
-		size_t start = 0;
-		for (size_t i = 0; i < size; i++) {
-			if (data[i] == '\n') {
-				size_t end = i;
+
+		// Validate the whole blob as UTF-8 before splitting. DuckDB VARCHAR
+		// requires valid UTF-8; latin-1 and other 8-bit encodings would trip
+		// verification assertions. Mark the file as binary if validation fails
+		// so callers emit NULL line_content rather than garbage.
+		if (!IsValidUTF8(data, size)) {
+			is_binary = true;
+		} else {
+			size_t start = 0;
+			for (size_t i = 0; i < size; i++) {
+				if (data[i] == '\n') {
+					size_t end = i;
+					if (end > start && data[end - 1] == '\r') {
+						end--;
+					}
+					lines.emplace_back(data + start, end - start);
+					start = i + 1;
+				}
+			}
+			if (start < size) {
+				size_t end = size;
 				if (end > start && data[end - 1] == '\r') {
 					end--;
 				}
 				lines.emplace_back(data + start, end - start);
-				start = i + 1;
 			}
-		}
-		if (start < size) {
-			size_t end = size;
-			if (end > start && data[end - 1] == '\r') {
-				end--;
-			}
-			lines.emplace_back(data + start, end - start);
 		}
 	}
 
@@ -207,8 +250,8 @@ static void CollectBlameRows(git_repository *repo, const string &repo_path, cons
 			continue;
 		}
 
-		string commit_hash = OidToHex(&hunk->final_commit_id);
-		string orig_commit_hash = OidToHex(&hunk->orig_commit_id);
+		string commit_hash = oid_to_hex(&hunk->final_commit_id);
+		string orig_commit_hash = oid_to_hex(&hunk->orig_commit_id);
 		string author_name = hunk->final_signature && hunk->final_signature->name ? hunk->final_signature->name : "";
 		string author_email = hunk->final_signature && hunk->final_signature->email ? hunk->final_signature->email : "";
 		timestamp_t author_date = timestamp_t(0);
@@ -328,26 +371,13 @@ struct GitBlameLocalState : public LocalTableFunctionState {
 // git_blame_hunks static bind + exec
 //===--------------------------------------------------------------------===//
 
-// Raise if min_line/max_line are out of range. Internally, 0 means "unset"
-// (GIT_BLAME_OPTIONS_INIT defaults); the user-facing minimum is 1.
-static void ValidateBlameOptions(const GitBlameOptions &opts, const char *func_name) {
-	if (opts.min_line < 0) {
-		throw BinderException("%s: min_line must be >= 1", func_name);
-	}
-	if (opts.max_line < 0) {
-		throw BinderException("%s: max_line must be >= 1", func_name);
-	}
-	if (opts.min_line > 0 && opts.max_line > 0 && opts.min_line > opts.max_line) {
-		throw BinderException("%s: min_line (%lld) must be <= max_line (%lld)", func_name, (long long)opts.min_line,
-		                      (long long)opts.max_line);
-	}
-}
-
-// Extract the named parameters shared by every git_blame* static form.
-// Mutates `bind_data` and returns the overridden repo_path/revision for the
-// caller to apply *after* initial positional parsing.
+// Extract the named parameters shared by every git_blame* form (static and
+// LATERAL). Mutates `bind_data` and returns the overridden repo_path/revision
+// for the caller to apply *after* initial positional parsing. `func_name` is
+// the calling function (used in error messages so `_each` variants report
+// correctly).
 static void ApplyBlameNamedParams(const TableFunctionBindInput &input, GitBlameBindData &bind_data,
-                                  string &override_repo_path, string &override_revision) {
+                                  string &override_repo_path, string &override_revision, const char *func_name) {
 	for (const auto &kv : input.named_parameters) {
 		if (kv.first == "repo_path") {
 			override_repo_path = kv.second.GetValue<string>();
@@ -356,13 +386,13 @@ static void ApplyBlameNamedParams(const TableFunctionBindInput &input, GitBlameB
 		} else if (kv.first == "min_line") {
 			int64_t v = kv.second.GetValue<int64_t>();
 			if (v <= 0) {
-				throw BinderException("git_blame: min_line must be >= 1");
+				throw BinderException("%s: min_line must be >= 1", func_name);
 			}
 			bind_data.opts.min_line = v;
 		} else if (kv.first == "max_line") {
 			int64_t v = kv.second.GetValue<int64_t>();
 			if (v <= 0) {
-				throw BinderException("git_blame: max_line must be >= 1");
+				throw BinderException("%s: max_line must be >= 1", func_name);
 			}
 			bind_data.opts.max_line = v;
 		} else if (kv.first == "ignore_whitespace") {
@@ -372,6 +402,11 @@ static void ApplyBlameNamedParams(const TableFunctionBindInput &input, GitBlameB
 		} else if (kv.first == "first_parent") {
 			bind_data.opts.first_parent = kv.second.GetValue<bool>();
 		}
+	}
+	if (bind_data.opts.min_line > 0 && bind_data.opts.max_line > 0 &&
+	    bind_data.opts.min_line > bind_data.opts.max_line) {
+		throw BinderException("%s: min_line (%lld) must be <= max_line (%lld)", func_name,
+		                      (long long)bind_data.opts.min_line, (long long)bind_data.opts.max_line);
 	}
 }
 
@@ -388,8 +423,7 @@ static unique_ptr<FunctionData> GitBlameHunksBind(ClientContext &context, TableF
 
 	string override_repo_path;
 	string override_revision;
-	ApplyBlameNamedParams(input, *bind_data, override_repo_path, override_revision);
-	ValidateBlameOptions(bind_data->opts, "git_blame_hunks");
+	ApplyBlameNamedParams(input, *bind_data, override_repo_path, override_revision, "git_blame_hunks");
 
 	string first_param = input.inputs[0].GetValue<string>();
 	string resolved_repo_path;
@@ -511,8 +545,7 @@ static unique_ptr<FunctionData> GitBlameBind(ClientContext &context, TableFuncti
 
 	string override_repo_path;
 	string override_revision;
-	ApplyBlameNamedParams(input, *bind_data, override_repo_path, override_revision);
-	ValidateBlameOptions(bind_data->opts, "git_blame");
+	ApplyBlameNamedParams(input, *bind_data, override_repo_path, override_revision, "git_blame");
 
 	string first_param = input.inputs[0].GetValue<string>();
 	string resolved_repo_path;
@@ -592,8 +625,8 @@ static unique_ptr<FunctionData> GitBlameLateralBind(ClientContext &context, Tabl
 
 	string override_repo_path; // ignored for LATERAL (runtime provides path)
 	string override_revision;
-	ApplyBlameNamedParams(input, *bind_data, override_repo_path, override_revision);
-	ValidateBlameOptions(bind_data->opts, per_line ? "git_blame_each" : "git_blame_hunks_each");
+	ApplyBlameNamedParams(input, *bind_data, override_repo_path, override_revision,
+	                      per_line ? "git_blame_each" : "git_blame_hunks_each");
 
 	if (!override_revision.empty()) {
 		bind_data->revision = override_revision;
@@ -634,6 +667,11 @@ static void ResolveLateralInput(const string &raw_input, const string &bind_revi
 	out_revision = row_revision.empty() ? bind_revision : row_revision;
 }
 
+// Shared in/out exec for git_blame_each and git_blame_hunks_each. Per-row
+// failures (unparseable URI, repo open failure, blame computation failure) are
+// silently skipped rather than raised — matches the behavior of git_read_each
+// and git_diff_tree_each so that a single bad row in a LATERAL driver query
+// does not abort the whole join.
 static OperatorResultType GitBlameEachImpl(ExecutionContext &context, TableFunctionInput &data_p, DataChunk &input,
                                            DataChunk &output, bool per_line) {
 	auto &state = data_p.local_state->Cast<GitBlameLocalState>();
