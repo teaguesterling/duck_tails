@@ -33,3 +33,30 @@ ORDER BY start_line
 ----
 1	1	Test User
 2	1	Test User
+
+# git_blame per-line form
+query I
+SELECT COUNT(*) FROM git_blame('test/tmp/main-repo/README.md')
+----
+2
+
+# Line numbers and content for each row
+query III
+SELECT line_number, line_content, author_name
+FROM git_blame('test/tmp/main-repo/README.md')
+ORDER BY line_number
+----
+1	# Test Repository	Test User
+2	# Development features	Test User
+
+# line_number starts at 1
+query I
+SELECT MIN(line_number) FROM git_blame('test/tmp/main-repo/README.md')
+----
+1
+
+# commit_hash should be non-null for every row
+query I
+SELECT COUNT(*) FROM git_blame('test/tmp/main-repo/README.md') WHERE commit_hash IS NULL
+----
+0
