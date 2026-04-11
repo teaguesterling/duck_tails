@@ -60,3 +60,18 @@ query I
 SELECT COUNT(*) FROM git_blame('test/tmp/main-repo/README.md') WHERE commit_hash IS NULL
 ----
 0
+
+# git:// URI form should produce the same result as the plain path form
+query II
+SELECT line_number, author_name
+FROM git_blame('git://test/tmp/main-repo/README.md@HEAD')
+ORDER BY line_number
+----
+1	Test User
+2	Test User
+
+# git_blame_hunks URI form
+query I
+SELECT COUNT(*) FROM git_blame_hunks('git://test/tmp/main-repo/README.md@HEAD')
+----
+2
