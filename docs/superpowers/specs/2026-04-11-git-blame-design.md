@@ -69,10 +69,13 @@ git_blame_each(file_uri, revision)
 
 Same two forms for `git_blame_hunks_each`. Matches `git_read_each`: first
 positional LATERAL input is the URI/path, second optional LATERAL input is the
-per-row revision override. If only the 1-arg form is used, each row is blamed
-at the bind-time `revision` named parameter (default `HEAD`). A `git://` URI
-that embeds its own `@rev` takes precedence over both. Enables blaming the
-same file across many commits in one query:
+per-row revision override. Revision resolution order per row:
+
+1. Second LATERAL positional (if present and non-NULL) — wins unconditionally.
+2. Non-default `@rev` embedded in the input `git://` URI.
+3. Bind-time `revision` named parameter (default `HEAD`).
+
+Enables blaming the same file across many commits in one query:
 
 ```sql
 SELECT l.commit_hash, b.line_number, b.author_name
