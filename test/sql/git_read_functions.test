@@ -108,42 +108,33 @@ FROM git_read('git://src/main.py@HEAD', repo_path := 'test/tmp/main-repo')
 ----
 file	src/main.py
 
-# Absolute URI path that matches repo_path is accepted (repo_path is redundant but consistent).
-query T
-SELECT kind
-FROM git_read('git://test/tmp/main-repo/README.md@HEAD', repo_path := 'test/tmp/main-repo')
-----
-file
-
-# Absolute URI path that disagrees with repo_path must be rejected — the two
-# specifications are conflicting and silently preferring one would hide bugs.
+# An absolute URI (three slashes after "git:") combined with an explicit repo_path is
+# always rejected — the two are independent specifications and silently preferring one
+# would hide bugs. Callers should either drop repo_path or pass a relative URI.
 statement error
 SELECT * FROM git_read('git:///absolute/path/repo/file.txt@HEAD', repo_path := '/other/repo')
 ----
 conflicting repository paths
 
-# Issue #17 (LATERAL): git_read_each also honors repo_path for relative URIs.
+# git_read_each does NOT accept a repo_path named parameter (see git_read.cpp:
+# DuckDB's LATERAL / in_out_function path does not deliver named parameters to the
+# bind function). Callers compose a full git:// URI with the git_uri() scalar helper
+# and pass it as the LATERAL input instead.
 query TT
-WITH inputs(uri) AS (VALUES ('git://README.md@HEAD'), ('git://app.js@HEAD'))
-SELECT i.uri, r.kind
-FROM inputs i, LATERAL git_read_each(i.uri, repo_path := 'test/tmp/main-repo') r
-ORDER BY i.uri
+WITH inputs(file) AS (VALUES ('README.md'), ('app.js'))
+SELECT i.file, r.kind
+FROM inputs i, LATERAL git_read_each(git_uri('test/tmp/main-repo', i.file, 'HEAD')) r
+ORDER BY i.file
 ----
-git://README.md@HEAD	file
-git://app.js@HEAD	file
+README.md	file
+app.js	file
 
-# LATERAL with bare filename (no git:// prefix) should compose under repo_path.
-query T
-WITH inputs(path) AS (VALUES ('README.md'))
-SELECT r.kind
-FROM inputs i, LATERAL git_read_each(i.path, repo_path := 'test/tmp/main-repo') r
-----
-file
-
-# LATERAL: absolute URI that conflicts with repo_path surfaces as an error.
+# LATERAL: an absolute URI pointing at a nonexistent repository surfaces the
+# underlying "no git repository found" error through the LATERAL pipeline instead
+# of producing silently wrong results.
 statement error
 WITH inputs(uri) AS (VALUES ('git:///absolute/path/repo/file.txt@HEAD'))
 SELECT r.kind
-FROM inputs i, LATERAL git_read_each(i.uri, repo_path := '/other/repo') r
+FROM inputs i, LATERAL git_read_each(i.uri) r
 ----
-conflicting repository paths
+No git repository found
