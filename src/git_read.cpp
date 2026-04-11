@@ -102,8 +102,35 @@ static string ApplyExplicitRepoPath(const string &uri, const string &repo_path) 
 
 	// Absolute URI path: validate it lives under repo_path, else report the conflict.
 	if (!rest.empty() && rest[0] == '/') {
-		bool matches = rest == repo || StringUtil::StartsWith(rest, repo + "/") ||
-		               StringUtil::StartsWith(rest, repo + "@");
+		// Split rest into path and revision suffix. Reflog syntax (@{...}) never serves as
+		// the split point; only the last plain '@' does, matching GitPath::Parse's rule.
+		size_t at_marker = string::npos;
+		for (size_t i = 0; i < rest.length(); ++i) {
+			if (rest[i] == '@' && (i + 1 >= rest.length() || rest[i + 1] != '{')) {
+				at_marker = i;
+			}
+		}
+		string path_part = (at_marker == string::npos) ? rest : rest.substr(0, at_marker);
+
+		// Collapse consecutive slashes and strip trailing slashes so URIs with double
+		// separators (e.g. "git:///abs/repo//src/file@HEAD") compare correctly against a
+		// canonical repo_path. GitPath::Parse does its own normalization downstream, but
+		// this conflict check runs earlier and needs to match those semantics.
+		string normalized_path;
+		normalized_path.reserve(path_part.size());
+		bool last_slash = false;
+		for (char c : path_part) {
+			if (c == '/' && last_slash) {
+				continue;
+			}
+			normalized_path.push_back(c);
+			last_slash = (c == '/');
+		}
+		while (normalized_path.size() > 1 && normalized_path.back() == '/') {
+			normalized_path.pop_back();
+		}
+
+		bool matches = normalized_path == repo || StringUtil::StartsWith(normalized_path, repo + "/");
 		if (!matches) {
 			throw InvalidInputException(
 			    "git_read: conflicting repository paths: URI '%s' and repo_path '%s' refer to different repositories",
@@ -580,20 +607,24 @@ static unique_ptr<FunctionData> GitReadBind(ClientContext &context, TableFunctio
 	} else if (!explicit_repo_path.empty()) {
 		// Filesystem path + explicit repo_path: compose the URI directly, skipping cwd
 		// discovery. This makes git_read('README.md', repo_path := '/abs/repo') work.
-		string repo = explicit_repo_path;
-		while (!repo.empty() && repo.back() == '/') {
-			repo.pop_back();
-		}
-		string file = first_param;
-		while (!file.empty() && file.front() == '/') {
-			file.erase(0, 1);
-		}
-		if (file.empty()) {
+		//
+		// Absolute filesystem paths are wrapped verbatim into an absolute URI, then the
+		// conflict check below validates them against repo_path. Relative filesystem paths
+		// are spliced under repo_path here.
+		if (first_param.empty()) {
 			throw BinderException("git_read: filesystem path '%s' does not appear to contain a file component",
 			                      first_param);
 		}
-		uri = "git://" + repo + "/" + file + "@HEAD";
-		repo_path = repo;
+		if (first_param.front() == '/') {
+			uri = "git://" + first_param + "@HEAD";
+		} else {
+			string repo = explicit_repo_path;
+			while (!repo.empty() && repo.back() == '/') {
+				repo.pop_back();
+			}
+			uri = "git://" + repo + "/" + first_param + "@HEAD";
+			repo_path = repo;
+		}
 		fallback_ref = "HEAD";
 	} else {
 		// Filesystem path - use unified parameter parsing to build git:// URI
@@ -610,23 +641,15 @@ static unique_ptr<FunctionData> GitReadBind(ClientContext &context, TableFunctio
 		fallback_ref = params.ref; // Use the parsed ref as fallback
 	}
 
-	// Set default parameters - note parameter indices shift by 1 if ref was provided
+	// Set default parameters
 	int64_t max_bytes = -1; // No limit by default
 	string decode_base64 = "auto";
 	string transcode = "utf8";
 	string filters = "raw";
 
-	// Determine parameter offset based on whether filesystem path had ref parameter
+	// Parse optional positional parameters. Every registered git_read overload places
+	// max_bytes (BIGINT) at index 1, so we start reading options from there directly.
 	int param_offset = 1;
-	if (!StringUtil::StartsWith(first_param, "git://") && input.inputs.size() >= 2 &&
-	    input.inputs[1].type().id() == LogicalTypeId::VARCHAR) {
-		// Second parameter might be ref for filesystem paths - check if third param is int (max_bytes)
-		if (input.inputs.size() >= 3 && input.inputs[2].type().id() == LogicalTypeId::BIGINT) {
-			param_offset = 2; // ref was provided, skip to max_bytes at index 2
-		}
-	}
-
-	// Parse optional parameters with correct offset
 	if (input.inputs.size() > param_offset && !input.inputs[param_offset].IsNull()) {
 		if (input.inputs[param_offset].type().id() == LogicalTypeId::BIGINT) {
 			max_bytes = input.inputs[param_offset].GetValue<int64_t>();
@@ -645,12 +668,12 @@ static unique_ptr<FunctionData> GitReadBind(ClientContext &context, TableFunctio
 		filters = input.inputs[param_offset].GetValue<string>();
 	}
 
-	// Apply explicit repo_path to git:// URIs. For relative URIs this rewrites the URI
-	// so it resolves against the named repository; for absolute URIs that conflict with
-	// repo_path it raises an error. (Issue #17.)
-	if (!explicit_repo_path.empty() && StringUtil::StartsWith(first_param, "git://")) {
+	// Apply explicit repo_path to the URI. For relative URIs this rewrites the URI so it
+	// resolves against the named repository; for absolute URIs that conflict with
+	// repo_path it raises an error. (Issue #17.) The relative-filesystem-path branch
+	// above already spliced repo_path into the URI, so this call is a no-op for it.
+	if (!explicit_repo_path.empty()) {
 		uri = ApplyExplicitRepoPath(uri, explicit_repo_path);
-		// Mirror the explicit repo_path into bind_data so downstream consumers observe it.
 		string normalized = explicit_repo_path;
 		while (!normalized.empty() && normalized.back() == '/') {
 			normalized.pop_back();
@@ -839,7 +862,10 @@ static OperatorResultType GitReadEachFunction(ExecutionContext &context, TableFu
 				}
 			}
 
-			// Canonicalize URI
+			// Canonicalize URI. Non-git:// inputs are wrapped into a git:// URI verbatim —
+			// absolute paths become absolute URIs (ApplyExplicitRepoPath validates them
+			// against bind_data.repo_path), relative paths become relative URIs that get
+			// spliced under bind_data.repo_path.
 			string uri;
 			if (StringUtil::StartsWith(first_param, "git://")) {
 				uri = explicit_ref.empty() ? first_param : first_param + "@" + explicit_ref;
