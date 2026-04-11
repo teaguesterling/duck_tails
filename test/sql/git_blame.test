@@ -187,3 +187,18 @@ ORDER BY g.line_number
 ----
 1	Test User
 2	Test User
+
+# Nonexistent file in an existing repo
+statement error
+SELECT * FROM git_blame('does-not-exist.md', repo_path := 'test/tmp/main-repo')
+----
+
+# Nonexistent revision
+statement error
+SELECT * FROM git_blame('test/tmp/main-repo/README.md', revision := 'this-ref-does-not-exist')
+----
+
+# Nonexistent repository path
+statement error
+SELECT * FROM git_blame('README.md', repo_path := '/nonexistent/repo/path')
+----
