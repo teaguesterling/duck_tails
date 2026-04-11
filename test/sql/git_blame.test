@@ -1,0 +1,35 @@
+# name: test/sql/git_blame.test
+# description: Tests for git_blame and git_blame_hunks table functions (issue #18)
+# group: [sql]
+
+require duck_tails
+
+require notwindows
+
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
+
+statement ok
+PRAGMA enable_verification;
+
+# git_blame_hunks: basic single-positional form. The main-repo fixture's
+# README.md has 2 lines from 2 different commits, so we expect 2 hunks.
+query I
+SELECT COUNT(*) FROM git_blame_hunks('test/tmp/main-repo/README.md')
+----
+2
+
+# Hunk line counts must sum to the file's line count (2)
+query I
+SELECT SUM(line_count) FROM git_blame_hunks('test/tmp/main-repo/README.md')
+----
+2
+
+# First hunk covers line 1 and the author matches the fixture
+query III
+SELECT start_line, line_count, author_name
+FROM git_blame_hunks('test/tmp/main-repo/README.md')
+ORDER BY start_line
+----
+1	1	Test User
+2	1	Test User
