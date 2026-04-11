@@ -1,0 +1,302 @@
+# name: test/sql/git_blame.test
+# description: Tests for git_blame and git_blame_hunks table functions (issue #18)
+# group: [sql]
+
+require duck_tails
+
+require notwindows
+
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
+
+statement ok
+PRAGMA enable_verification;
+
+# git_blame_hunks: basic single-positional form. The main-repo fixture's
+# README.md has 2 lines from 2 different commits, so we expect 2 hunks.
+query I
+SELECT COUNT(*) FROM git_blame_hunks('test/tmp/main-repo/README.md')
+----
+2
+
+# Hunk line counts must sum to the file's line count (2)
+query I
+SELECT SUM(line_count) FROM git_blame_hunks('test/tmp/main-repo/README.md')
+----
+2
+
+# First hunk covers line 1 and the author matches the fixture
+query III
+SELECT start_line, line_count, author_name
+FROM git_blame_hunks('test/tmp/main-repo/README.md')
+ORDER BY start_line
+----
+1	1	Test User
+2	1	Test User
+
+# git_blame per-line form
+query I
+SELECT COUNT(*) FROM git_blame('test/tmp/main-repo/README.md')
+----
+2
+
+# Line numbers and content for each row
+query III
+SELECT line_number, line_content, author_name
+FROM git_blame('test/tmp/main-repo/README.md')
+ORDER BY line_number
+----
+1	# Test Repository	Test User
+2	# Development features	Test User
+
+# line_number starts at 1
+query I
+SELECT MIN(line_number) FROM git_blame('test/tmp/main-repo/README.md')
+----
+1
+
+# commit_hash should be non-null for every row
+query I
+SELECT COUNT(*) FROM git_blame('test/tmp/main-repo/README.md') WHERE commit_hash IS NULL
+----
+0
+
+# git:// URI form should produce the same result as the plain path form
+query II
+SELECT line_number, author_name
+FROM git_blame('git://test/tmp/main-repo/README.md@HEAD')
+ORDER BY line_number
+----
+1	Test User
+2	Test User
+
+# git_blame_hunks URI form
+query I
+SELECT COUNT(*) FROM git_blame_hunks('git://test/tmp/main-repo/README.md@HEAD')
+----
+2
+
+# Explicit revision via named parameter
+query I
+SELECT COUNT(*) FROM git_blame('test/tmp/main-repo/README.md', revision := 'HEAD')
+----
+2
+
+# Explicit repo_path with file_path relative to it
+query II
+SELECT line_number, author_name
+FROM git_blame('README.md', repo_path := 'test/tmp/main-repo')
+ORDER BY line_number
+----
+1	Test User
+2	Test User
+
+# Both named params together
+query I
+SELECT COUNT(*)
+FROM git_blame_hunks('README.md', repo_path := 'test/tmp/main-repo', revision := 'HEAD')
+----
+2
+
+# min_line restricts to the first line only
+query I
+SELECT COUNT(*) FROM git_blame('test/tmp/main-repo/README.md', min_line := 1, max_line := 1)
+----
+1
+
+query II
+SELECT line_number, line_content FROM git_blame('test/tmp/main-repo/README.md', min_line := 1, max_line := 1)
+----
+1	# Test Repository
+
+# max_line alone restricts to line <= 2 (all rows)
+query I
+SELECT COUNT(*) FROM git_blame('test/tmp/main-repo/README.md', max_line := 2)
+----
+2
+
+# min_line alone starts blame at line 2
+query II
+SELECT line_number, line_content FROM git_blame('test/tmp/main-repo/README.md', min_line := 2)
+----
+2	# Development features
+
+# Invalid range: min_line > max_line
+statement error
+SELECT * FROM git_blame('test/tmp/main-repo/README.md', min_line := 5, max_line := 1)
+----
+
+# Invalid: min_line = 0 (must be >= 1)
+statement error
+SELECT * FROM git_blame('test/tmp/main-repo/README.md', min_line := 0)
+----
+
+# ignore_whitespace smoke test
+query I
+SELECT COUNT(*) >= 0 FROM git_blame('test/tmp/main-repo/README.md', ignore_whitespace := true)
+----
+true
+
+# use_mailmap smoke test
+query I
+SELECT COUNT(*) >= 0 FROM git_blame('test/tmp/main-repo/README.md', use_mailmap := true)
+----
+true
+
+# first_parent smoke test
+query I
+SELECT COUNT(*) >= 0 FROM git_blame('test/tmp/main-repo/README.md', first_parent := true)
+----
+true
+
+# All flags at once
+query I
+SELECT COUNT(*) FROM git_blame('test/tmp/main-repo/README.md',
+                                ignore_whitespace := true,
+                                use_mailmap := true,
+                                first_parent := true)
+----
+2
+
+# git_blame_hunks_each via LATERAL over a values list
+query II
+SELECT v.f, COUNT(*) AS n_hunks
+FROM (VALUES ('test/tmp/main-repo/README.md')) AS v(f),
+     LATERAL git_blame_hunks_each(v.f) h
+GROUP BY v.f
+ORDER BY v.f
+----
+test/tmp/main-repo/README.md	2
+
+# git_blame_each: basic per-line via LATERAL
+query III
+SELECT v.f, g.line_number, g.author_name
+FROM (VALUES ('test/tmp/main-repo/README.md')) AS v(f),
+     LATERAL git_blame_each(v.f) g
+ORDER BY v.f, g.line_number
+----
+test/tmp/main-repo/README.md	1	Test User
+test/tmp/main-repo/README.md	2	Test User
+
+# git_blame_each with a per-row revision override (second LATERAL column)
+query II
+SELECT g.line_number, g.author_name
+FROM (VALUES ('test/tmp/main-repo/README.md', 'HEAD')) AS v(f, r),
+     LATERAL git_blame_each(v.f, v.r) g
+ORDER BY g.line_number
+----
+1	Test User
+2	Test User
+
+# Nonexistent file in an existing repo
+statement error
+SELECT * FROM git_blame('does-not-exist.md', repo_path := 'test/tmp/main-repo')
+----
+
+# Nonexistent revision
+statement error
+SELECT * FROM git_blame('test/tmp/main-repo/README.md', revision := 'this-ref-does-not-exist')
+----
+
+# Nonexistent repository path
+statement error
+SELECT * FROM git_blame('README.md', repo_path := '/nonexistent/repo/path')
+----
+
+# git_blame per-line column count = 14
+query I
+SELECT COUNT(*) FROM (DESCRIBE SELECT * FROM git_blame('test/tmp/main-repo/README.md'))
+----
+14
+
+# git_blame_hunks column count = 14
+query I
+SELECT COUNT(*) FROM (DESCRIBE SELECT * FROM git_blame_hunks('test/tmp/main-repo/README.md'))
+----
+14
+
+# git_blame has line_number and line_content columns
+query I
+SELECT COUNT(*) FROM (DESCRIBE SELECT * FROM git_blame('test/tmp/main-repo/README.md'))
+WHERE column_name IN ('line_number', 'line_content')
+----
+2
+
+# git_blame_hunks has start_line and line_count columns
+query I
+SELECT COUNT(*) FROM (DESCRIBE SELECT * FROM git_blame_hunks('test/tmp/main-repo/README.md'))
+WHERE column_name IN ('start_line', 'line_count')
+----
+2
+
+# git_tree(...) driving LATERAL git_blame_each — the canonical pluckit-style
+# pattern: iterate every file in a commit, blame each. main-repo HEAD has 3
+# files (README.md + app.js + src/main.py = 4 lines total).
+query II
+SELECT COUNT(DISTINCT t.file_path) AS files, COUNT(*) AS lines
+FROM git_tree('git://test/tmp/main-repo@HEAD') t,
+     LATERAL git_blame_each(t.git_uri) b
+WHERE t.kind = 'file'
+----
+3	4
+
+# Same pattern with git_blame_hunks_each — one row per hunk, not per line.
+# README.md has 2 hunks (line-per-commit), app.js + main.py have 1 hunk each = 4.
+query I
+SELECT COUNT(*)
+FROM git_tree('git://test/tmp/main-repo@HEAD') t,
+     LATERAL git_blame_hunks_each(t.git_uri) h
+WHERE t.kind = 'file'
+----
+4
+
+# Sum of line_count across all hunks equals total file lines (4).
+query I
+SELECT SUM(h.line_count)
+FROM git_tree('git://test/tmp/main-repo@HEAD') t,
+     LATERAL git_blame_hunks_each(t.git_uri) h
+WHERE t.kind = 'file'
+----
+4
+
+# Multi-file LATERAL via VALUES: verify each file's rows are correctly grouped.
+query II
+SELECT v.f, COUNT(*) AS n_lines
+FROM (VALUES
+      ('test/tmp/main-repo/README.md'),
+      ('test/tmp/main-repo/app.js'),
+      ('test/tmp/main-repo/src/main.py')) AS v(f),
+     LATERAL git_blame_each(v.f) g
+GROUP BY v.f
+ORDER BY v.f
+----
+test/tmp/main-repo/README.md	2
+test/tmp/main-repo/app.js	1
+test/tmp/main-repo/src/main.py	1
+
+# file_path and file_ext propagate correctly through the LATERAL join.
+query III
+SELECT DISTINCT g.file_path, g.file_ext, g.author_name
+FROM (VALUES ('test/tmp/main-repo/src/main.py')) AS v(f),
+     LATERAL git_blame_each(v.f) g
+ORDER BY g.file_path
+----
+src/main.py	.py	Test User
+
+# Querying a subdirectory file via repo_path + relative path (sanity check
+# that the override_repo_path path survives subdirectory traversal).
+query II
+SELECT line_number, line_content
+FROM git_blame('src/main.py', repo_path := 'test/tmp/main-repo')
+ORDER BY line_number
+----
+1	print('hello world')
+
+# line_content is non-NULL for known text files (indirect verification that
+# the UTF-8 validation path doesn't wrongly mark clean ASCII as binary).
+query I
+SELECT COUNT(*)
+FROM git_blame('test/tmp/main-repo/README.md')
+WHERE line_content IS NULL
+----
+0
