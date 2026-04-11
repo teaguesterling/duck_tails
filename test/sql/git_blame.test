@@ -202,3 +202,29 @@ SELECT * FROM git_blame('test/tmp/main-repo/README.md', revision := 'this-ref-do
 statement error
 SELECT * FROM git_blame('README.md', repo_path := '/nonexistent/repo/path')
 ----
+
+# git_blame per-line column count = 14
+query I
+SELECT COUNT(*) FROM (DESCRIBE SELECT * FROM git_blame('test/tmp/main-repo/README.md'))
+----
+14
+
+# git_blame_hunks column count = 14
+query I
+SELECT COUNT(*) FROM (DESCRIBE SELECT * FROM git_blame_hunks('test/tmp/main-repo/README.md'))
+----
+14
+
+# git_blame has line_number and line_content columns
+query I
+SELECT COUNT(*) FROM (DESCRIBE SELECT * FROM git_blame('test/tmp/main-repo/README.md'))
+WHERE column_name IN ('line_number', 'line_content')
+----
+2
+
+# git_blame_hunks has start_line and line_count columns
+query I
+SELECT COUNT(*) FROM (DESCRIBE SELECT * FROM git_blame_hunks('test/tmp/main-repo/README.md'))
+WHERE column_name IN ('start_line', 'line_count')
+----
+2
