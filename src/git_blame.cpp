@@ -722,6 +722,17 @@ static OperatorResultType GitBlameHunksEachFunction(ExecutionContext &context, T
 	return GitBlameEachImpl(context, data_p, input, output, /*per_line=*/false);
 }
 
+static unique_ptr<FunctionData> GitBlameEachBind(ClientContext &context, TableFunctionBindInput &input,
+                                                  vector<LogicalType> &return_types, vector<string> &names) {
+	DefineBlameSchema(return_types, names);
+	return GitBlameLateralBind(context, input, /*per_line=*/true);
+}
+
+static OperatorResultType GitBlameEachFunction(ExecutionContext &context, TableFunctionInput &data_p,
+                                                DataChunk &input, DataChunk &output) {
+	return GitBlameEachImpl(context, data_p, input, output, /*per_line=*/true);
+}
+
 //===--------------------------------------------------------------------===//
 // Registration
 //===--------------------------------------------------------------------===//
@@ -774,6 +785,21 @@ void RegisterGitBlameFunction(ExtensionLoader &loader) {
 	git_blame_hunks_each_set.AddFunction(hunks_each_two);
 
 	loader.RegisterFunction(git_blame_hunks_each_set);
+
+	TableFunctionSet git_blame_each_set("git_blame_each");
+	TableFunction blame_each_one({LogicalType::VARCHAR}, nullptr, GitBlameEachBind, GitBlameInitGlobal,
+	                              GitBlameLocalInit);
+	blame_each_one.in_out_function = GitBlameEachFunction;
+	declare_lateral_params(blame_each_one);
+	git_blame_each_set.AddFunction(blame_each_one);
+
+	TableFunction blame_each_two({LogicalType::VARCHAR, LogicalType::VARCHAR}, nullptr, GitBlameEachBind,
+	                              GitBlameInitGlobal, GitBlameLocalInit);
+	blame_each_two.in_out_function = GitBlameEachFunction;
+	declare_lateral_params(blame_each_two);
+	git_blame_each_set.AddFunction(blame_each_two);
+
+	loader.RegisterFunction(git_blame_each_set);
 }
 
 } // namespace duckdb

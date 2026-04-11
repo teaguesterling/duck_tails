@@ -167,3 +167,23 @@ GROUP BY v.f
 ORDER BY v.f
 ----
 test/tmp/main-repo/README.md	2
+
+# git_blame_each: basic per-line via LATERAL
+query III
+SELECT v.f, g.line_number, g.author_name
+FROM (VALUES ('test/tmp/main-repo/README.md')) AS v(f),
+     LATERAL git_blame_each(v.f) g
+ORDER BY v.f, g.line_number
+----
+test/tmp/main-repo/README.md	1	Test User
+test/tmp/main-repo/README.md	2	Test User
+
+# git_blame_each with a per-row revision override (second LATERAL column)
+query II
+SELECT g.line_number, g.author_name
+FROM (VALUES ('test/tmp/main-repo/README.md', 'HEAD')) AS v(f, r),
+     LATERAL git_blame_each(v.f, v.r) g
+ORDER BY g.line_number
+----
+1	Test User
+2	Test User
