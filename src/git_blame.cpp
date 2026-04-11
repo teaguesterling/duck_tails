@@ -329,6 +329,30 @@ struct GitBlameLocalState : public LocalTableFunctionState {
 // git_blame_hunks static bind + exec
 //===--------------------------------------------------------------------===//
 
+// Extract the named parameters shared by every git_blame* static form.
+// Mutates `bind_data` and returns the overridden repo_path/revision for the
+// caller to apply *after* initial positional parsing.
+static void ApplyBlameNamedParams(const TableFunctionBindInput &input, GitBlameBindData &bind_data,
+                                  string &override_repo_path, string &override_revision) {
+	for (const auto &kv : input.named_parameters) {
+		if (kv.first == "repo_path") {
+			override_repo_path = kv.second.GetValue<string>();
+		} else if (kv.first == "revision") {
+			override_revision = kv.second.GetValue<string>();
+		} else if (kv.first == "min_line") {
+			bind_data.opts.min_line = kv.second.GetValue<int64_t>();
+		} else if (kv.first == "max_line") {
+			bind_data.opts.max_line = kv.second.GetValue<int64_t>();
+		} else if (kv.first == "ignore_whitespace") {
+			bind_data.opts.ignore_whitespace = kv.second.GetValue<bool>();
+		} else if (kv.first == "use_mailmap") {
+			bind_data.opts.use_mailmap = kv.second.GetValue<bool>();
+		} else if (kv.first == "first_parent") {
+			bind_data.opts.first_parent = kv.second.GetValue<bool>();
+		}
+	}
+}
+
 static unique_ptr<FunctionData> GitBlameHunksBind(ClientContext &context, TableFunctionBindInput &input,
                                                   vector<LogicalType> &return_types, vector<string> &names) {
 	DefineHunksSchema(return_types, names);
@@ -337,17 +361,43 @@ static unique_ptr<FunctionData> GitBlameHunksBind(ClientContext &context, TableF
 		throw BinderException("git_blame_hunks requires a file path as its first argument");
 	}
 
-	auto params = ParseUnifiedGitParams(input, /*ref_param_index=*/999);
-	if (params.resolved_file_path.empty()) {
-		throw BinderException("git_blame_hunks: '%s' must refer to a file inside a git repository",
-		                      params.repo_path_or_uri);
+	auto bind_data = make_uniq<GitBlameBindData>();
+	bind_data->per_line = false;
+
+	string override_repo_path;
+	string override_revision;
+	ApplyBlameNamedParams(input, *bind_data, override_repo_path, override_revision);
+
+	string first_param = input.inputs[0].GetValue<string>();
+	string resolved_repo_path;
+	string resolved_file_path;
+	string resolved_revision;
+
+	if (!override_repo_path.empty()) {
+		// User provided repo_path explicitly; first positional is the file path within it.
+		string uri = "git://" + override_repo_path + "/" + first_param + "@HEAD";
+		auto ctx = GitContextManager::Instance().ProcessGitUri(uri, "HEAD");
+		resolved_repo_path = ctx.repo_path;
+		resolved_file_path = ctx.file_path;
+		resolved_revision = "HEAD";
+	} else {
+		auto params = ParseUnifiedGitParams(input, /*ref_param_index=*/999);
+		if (params.resolved_file_path.empty()) {
+			throw BinderException("git_blame_hunks: '%s' must refer to a file inside a git repository",
+			                      params.repo_path_or_uri);
+		}
+		resolved_repo_path = params.resolved_repo_path;
+		resolved_file_path = params.resolved_file_path;
+		resolved_revision = params.ref;
 	}
 
-	auto bind_data = make_uniq<GitBlameBindData>();
-	bind_data->repo_path = params.resolved_repo_path;
-	bind_data->file_path = params.resolved_file_path;
-	bind_data->revision = params.ref;
-	bind_data->per_line = false;
+	if (!override_revision.empty()) {
+		resolved_revision = override_revision;
+	}
+
+	bind_data->repo_path = resolved_repo_path;
+	bind_data->file_path = resolved_file_path;
+	bind_data->revision = resolved_revision;
 
 	git_repository *repo = nullptr;
 	int error = git_repository_open(&repo, bind_data->repo_path.c_str());
@@ -356,7 +406,6 @@ static unique_ptr<FunctionData> GitBlameHunksBind(ClientContext &context, TableF
 		throw BinderException("git_blame_hunks: failed to open repository '%s': %s", bind_data->repo_path,
 		                      e ? e->message : "unknown error");
 	}
-
 	try {
 		CollectBlameRows(repo, bind_data->repo_path, bind_data->file_path, bind_data->revision, bind_data->opts,
 		                 /*per_line=*/false, bind_data->rows);
@@ -434,17 +483,42 @@ static unique_ptr<FunctionData> GitBlameBind(ClientContext &context, TableFuncti
 		throw BinderException("git_blame requires a file path as its first argument");
 	}
 
-	auto params = ParseUnifiedGitParams(input, /*ref_param_index=*/999);
-	if (params.resolved_file_path.empty()) {
-		throw BinderException("git_blame: '%s' must refer to a file inside a git repository",
-		                      params.repo_path_or_uri);
+	auto bind_data = make_uniq<GitBlameBindData>();
+	bind_data->per_line = true;
+
+	string override_repo_path;
+	string override_revision;
+	ApplyBlameNamedParams(input, *bind_data, override_repo_path, override_revision);
+
+	string first_param = input.inputs[0].GetValue<string>();
+	string resolved_repo_path;
+	string resolved_file_path;
+	string resolved_revision;
+
+	if (!override_repo_path.empty()) {
+		string uri = "git://" + override_repo_path + "/" + first_param + "@HEAD";
+		auto ctx = GitContextManager::Instance().ProcessGitUri(uri, "HEAD");
+		resolved_repo_path = ctx.repo_path;
+		resolved_file_path = ctx.file_path;
+		resolved_revision = "HEAD";
+	} else {
+		auto params = ParseUnifiedGitParams(input, /*ref_param_index=*/999);
+		if (params.resolved_file_path.empty()) {
+			throw BinderException("git_blame: '%s' must refer to a file inside a git repository",
+			                      params.repo_path_or_uri);
+		}
+		resolved_repo_path = params.resolved_repo_path;
+		resolved_file_path = params.resolved_file_path;
+		resolved_revision = params.ref;
 	}
 
-	auto bind_data = make_uniq<GitBlameBindData>();
-	bind_data->repo_path = params.resolved_repo_path;
-	bind_data->file_path = params.resolved_file_path;
-	bind_data->revision = params.ref;
-	bind_data->per_line = true;
+	if (!override_revision.empty()) {
+		resolved_revision = override_revision;
+	}
+
+	bind_data->repo_path = resolved_repo_path;
+	bind_data->file_path = resolved_file_path;
+	bind_data->revision = resolved_revision;
 
 	git_repository *repo = nullptr;
 	int error = git_repository_open(&repo, bind_data->repo_path.c_str());
@@ -483,15 +557,27 @@ static void GitBlameFunction(ClientContext &context, TableFunctionInput &data_p,
 //===--------------------------------------------------------------------===//
 
 void RegisterGitBlameFunction(ExtensionLoader &loader) {
+	auto declare_named_params = [](TableFunction &fn) {
+		fn.named_parameters["repo_path"] = LogicalType::VARCHAR;
+		fn.named_parameters["revision"] = LogicalType::VARCHAR;
+		fn.named_parameters["min_line"] = LogicalType::BIGINT;
+		fn.named_parameters["max_line"] = LogicalType::BIGINT;
+		fn.named_parameters["ignore_whitespace"] = LogicalType::BOOLEAN;
+		fn.named_parameters["use_mailmap"] = LogicalType::BOOLEAN;
+		fn.named_parameters["first_parent"] = LogicalType::BOOLEAN;
+	};
+
 	TableFunctionSet git_blame_hunks_set("git_blame_hunks");
 	TableFunction hunks_one({LogicalType::VARCHAR}, GitBlameHunksFunction, GitBlameHunksBind, GitBlameInitGlobal);
 	hunks_one.init_local = GitBlameLocalInit;
+	declare_named_params(hunks_one);
 	git_blame_hunks_set.AddFunction(hunks_one);
 	loader.RegisterFunction(git_blame_hunks_set);
 
 	TableFunctionSet git_blame_set("git_blame");
 	TableFunction blame_one({LogicalType::VARCHAR}, GitBlameFunction, GitBlameBind, GitBlameInitGlobal);
 	blame_one.init_local = GitBlameLocalInit;
+	declare_named_params(blame_one);
 	git_blame_set.AddFunction(blame_one);
 	loader.RegisterFunction(git_blame_set);
 }

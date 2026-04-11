@@ -75,3 +75,25 @@ query I
 SELECT COUNT(*) FROM git_blame_hunks('git://test/tmp/main-repo/README.md@HEAD')
 ----
 2
+
+# Explicit revision via named parameter
+query I
+SELECT COUNT(*) FROM git_blame('test/tmp/main-repo/README.md', revision := 'HEAD')
+----
+2
+
+# Explicit repo_path with file_path relative to it
+query II
+SELECT line_number, author_name
+FROM git_blame('README.md', repo_path := 'test/tmp/main-repo')
+ORDER BY line_number
+----
+1	Test User
+2	Test User
+
+# Both named params together
+query I
+SELECT COUNT(*)
+FROM git_blame_hunks('README.md', repo_path := 'test/tmp/main-repo', revision := 'HEAD')
+----
+2
