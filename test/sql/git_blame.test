@@ -228,3 +228,75 @@ SELECT COUNT(*) FROM (DESCRIBE SELECT * FROM git_blame_hunks('test/tmp/main-repo
 WHERE column_name IN ('start_line', 'line_count')
 ----
 2
+
+# git_tree(...) driving LATERAL git_blame_each — the canonical pluckit-style
+# pattern: iterate every file in a commit, blame each. main-repo HEAD has 3
+# files (README.md + app.js + src/main.py = 4 lines total).
+query II
+SELECT COUNT(DISTINCT t.file_path) AS files, COUNT(*) AS lines
+FROM git_tree('git://test/tmp/main-repo@HEAD') t,
+     LATERAL git_blame_each(t.git_uri) b
+WHERE t.kind = 'file'
+----
+3	4
+
+# Same pattern with git_blame_hunks_each — one row per hunk, not per line.
+# README.md has 2 hunks (line-per-commit), app.js + main.py have 1 hunk each = 4.
+query I
+SELECT COUNT(*)
+FROM git_tree('git://test/tmp/main-repo@HEAD') t,
+     LATERAL git_blame_hunks_each(t.git_uri) h
+WHERE t.kind = 'file'
+----
+4
+
+# Sum of line_count across all hunks equals total file lines (4).
+query I
+SELECT SUM(h.line_count)
+FROM git_tree('git://test/tmp/main-repo@HEAD') t,
+     LATERAL git_blame_hunks_each(t.git_uri) h
+WHERE t.kind = 'file'
+----
+4
+
+# Multi-file LATERAL via VALUES: verify each file's rows are correctly grouped.
+query II
+SELECT v.f, COUNT(*) AS n_lines
+FROM (VALUES
+      ('test/tmp/main-repo/README.md'),
+      ('test/tmp/main-repo/app.js'),
+      ('test/tmp/main-repo/src/main.py')) AS v(f),
+     LATERAL git_blame_each(v.f) g
+GROUP BY v.f
+ORDER BY v.f
+----
+test/tmp/main-repo/README.md	2
+test/tmp/main-repo/app.js	1
+test/tmp/main-repo/src/main.py	1
+
+# file_path and file_ext propagate correctly through the LATERAL join.
+query III
+SELECT DISTINCT g.file_path, g.file_ext, g.author_name
+FROM (VALUES ('test/tmp/main-repo/src/main.py')) AS v(f),
+     LATERAL git_blame_each(v.f) g
+ORDER BY g.file_path
+----
+src/main.py	.py	Test User
+
+# Querying a subdirectory file via repo_path + relative path (sanity check
+# that the override_repo_path path survives subdirectory traversal).
+query II
+SELECT line_number, line_content
+FROM git_blame('src/main.py', repo_path := 'test/tmp/main-repo')
+ORDER BY line_number
+----
+1	print('hello world')
+
+# line_content is non-NULL for known text files (indirect verification that
+# the UTF-8 validation path doesn't wrongly mark clean ASCII as binary).
+query I
+SELECT COUNT(*)
+FROM git_blame('test/tmp/main-repo/README.md')
+WHERE line_content IS NULL
+----
+0
