@@ -97,3 +97,36 @@ SELECT COUNT(*)
 FROM git_blame_hunks('README.md', repo_path := 'test/tmp/main-repo', revision := 'HEAD')
 ----
 2
+
+# min_line restricts to the first line only
+query I
+SELECT COUNT(*) FROM git_blame('test/tmp/main-repo/README.md', min_line := 1, max_line := 1)
+----
+1
+
+query II
+SELECT line_number, line_content FROM git_blame('test/tmp/main-repo/README.md', min_line := 1, max_line := 1)
+----
+1	# Test Repository
+
+# max_line alone restricts to line <= 2 (all rows)
+query I
+SELECT COUNT(*) FROM git_blame('test/tmp/main-repo/README.md', max_line := 2)
+----
+2
+
+# min_line alone starts blame at line 2
+query II
+SELECT line_number, line_content FROM git_blame('test/tmp/main-repo/README.md', min_line := 2)
+----
+2	# Development features
+
+# Invalid range: min_line > max_line
+statement error
+SELECT * FROM git_blame('test/tmp/main-repo/README.md', min_line := 5, max_line := 1)
+----
+
+# Invalid: min_line = 0 (must be >= 1)
+statement error
+SELECT * FROM git_blame('test/tmp/main-repo/README.md', min_line := 0)
+----

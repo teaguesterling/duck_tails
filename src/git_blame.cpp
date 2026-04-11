@@ -329,6 +329,21 @@ struct GitBlameLocalState : public LocalTableFunctionState {
 // git_blame_hunks static bind + exec
 //===--------------------------------------------------------------------===//
 
+// Raise if min_line/max_line are out of range. Internally, 0 means "unset"
+// (GIT_BLAME_OPTIONS_INIT defaults); the user-facing minimum is 1.
+static void ValidateBlameOptions(const GitBlameOptions &opts, const char *func_name) {
+	if (opts.min_line < 0) {
+		throw BinderException("%s: min_line must be >= 1", func_name);
+	}
+	if (opts.max_line < 0) {
+		throw BinderException("%s: max_line must be >= 1", func_name);
+	}
+	if (opts.min_line > 0 && opts.max_line > 0 && opts.min_line > opts.max_line) {
+		throw BinderException("%s: min_line (%lld) must be <= max_line (%lld)", func_name,
+		                      (long long)opts.min_line, (long long)opts.max_line);
+	}
+}
+
 // Extract the named parameters shared by every git_blame* static form.
 // Mutates `bind_data` and returns the overridden repo_path/revision for the
 // caller to apply *after* initial positional parsing.
@@ -340,9 +355,17 @@ static void ApplyBlameNamedParams(const TableFunctionBindInput &input, GitBlameB
 		} else if (kv.first == "revision") {
 			override_revision = kv.second.GetValue<string>();
 		} else if (kv.first == "min_line") {
-			bind_data.opts.min_line = kv.second.GetValue<int64_t>();
+			int64_t v = kv.second.GetValue<int64_t>();
+			if (v <= 0) {
+				throw BinderException("git_blame: min_line must be >= 1");
+			}
+			bind_data.opts.min_line = v;
 		} else if (kv.first == "max_line") {
-			bind_data.opts.max_line = kv.second.GetValue<int64_t>();
+			int64_t v = kv.second.GetValue<int64_t>();
+			if (v <= 0) {
+				throw BinderException("git_blame: max_line must be >= 1");
+			}
+			bind_data.opts.max_line = v;
 		} else if (kv.first == "ignore_whitespace") {
 			bind_data.opts.ignore_whitespace = kv.second.GetValue<bool>();
 		} else if (kv.first == "use_mailmap") {
@@ -367,6 +390,7 @@ static unique_ptr<FunctionData> GitBlameHunksBind(ClientContext &context, TableF
 	string override_repo_path;
 	string override_revision;
 	ApplyBlameNamedParams(input, *bind_data, override_repo_path, override_revision);
+	ValidateBlameOptions(bind_data->opts, "git_blame_hunks");
 
 	string first_param = input.inputs[0].GetValue<string>();
 	string resolved_repo_path;
@@ -489,6 +513,7 @@ static unique_ptr<FunctionData> GitBlameBind(ClientContext &context, TableFuncti
 	string override_repo_path;
 	string override_revision;
 	ApplyBlameNamedParams(input, *bind_data, override_repo_path, override_revision);
+	ValidateBlameOptions(bind_data->opts, "git_blame");
 
 	string first_param = input.inputs[0].GetValue<string>();
 	string resolved_repo_path;
