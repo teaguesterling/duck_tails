@@ -76,3 +76,48 @@ SELECT * FROM git_read('git://test/tmp/main-repo/README.md@HEAD');
 
 statement ok
 SELECT * FROM git_read('git://test/tmp/main-repo/README.md@HEAD')
+
+# Issue #17: relative git:// URI combined with explicit repo_path named parameter
+# should resolve the file inside the repository at repo_path, not against cwd.
+query TT
+SELECT kind, file_path
+FROM git_read('git://README.md@HEAD', repo_path := 'test/tmp/main-repo')
+----
+file	README.md
+
+# Same as above but for a different file in the same fixture repo, to confirm
+# that repo_path + URI path composition works for arbitrary filenames.
+query TT
+SELECT kind, file_path
+FROM git_read('git://app.js@HEAD', repo_path := 'test/tmp/main-repo')
+----
+file	app.js
+
+# The git:// prefix is optional. A bare filesystem path + explicit repo_path
+# should compose into the same lookup.
+query TT
+SELECT kind, file_path
+FROM git_read('README.md', repo_path := 'test/tmp/main-repo')
+----
+file	README.md
+
+# Reading a file from a nested directory under repo_path.
+query TT
+SELECT kind, file_path
+FROM git_read('git://src/main.py@HEAD', repo_path := 'test/tmp/main-repo')
+----
+file	src/main.py
+
+# Absolute URI path that matches repo_path is accepted (repo_path is redundant but consistent).
+query T
+SELECT kind
+FROM git_read('git://test/tmp/main-repo/README.md@HEAD', repo_path := 'test/tmp/main-repo')
+----
+file
+
+# Absolute URI path that disagrees with repo_path must be rejected — the two
+# specifications are conflicting and silently preferring one would hide bugs.
+statement error
+SELECT * FROM git_read('git:///absolute/path/repo/file.txt@HEAD', repo_path := '/other/repo')
+----
+conflicting repository paths
