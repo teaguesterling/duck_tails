@@ -333,6 +333,7 @@ void RegisterGitReadFunction(ExtensionLoader &loader);
 void RegisterGitUriFunction(ExtensionLoader &loader);
 void RegisterGitStatusFunction(ExtensionLoader &loader);
 void RegisterGitDiffTreeFunction(ExtensionLoader &loader);
+void RegisterGitBlameFunction(ExtensionLoader &loader);
 void RegisterGitFunctions(ExtensionLoader &loader);
 
 } // namespace duckdb
