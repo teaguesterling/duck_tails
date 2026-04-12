@@ -141,6 +141,15 @@ GitPath GitPath::Parse(const string &git_url) {
 			                  git_url.c_str(), search_path.c_str());
 		}
 	}
+
+	// Strip leading "./" from file_path — git tree entries use clean relative
+	// paths (e.g. "README.md" not "./README.md").  This can happen when
+	// repo_path is "." and gets spliced into the URI by ApplyExplicitRepoPath,
+	// or when NormalizePath fails to produce a matching prefix on Windows.
+	while (result.file_path.length() >= 2 && result.file_path[0] == '.' && result.file_path[1] == '/') {
+		result.file_path = result.file_path.substr(2);
+	}
+
 	return result;
 }
 
@@ -691,12 +700,40 @@ static bool IsDirectory(const string &path) {
 static string NormalizePath(const string &path) {
 	string current_path = path;
 
+	// Normalize backslashes to forward slashes for uniform handling (Windows)
+	for (auto &c : current_path) {
+		if (c == '\\') {
+			c = '/';
+		}
+	}
+
+	// Detect whether the path is already absolute:
+	//   Unix:    /home/user/...
+	//   Windows: D:/Users/... (drive letter followed by colon)
+	bool is_absolute = (!current_path.empty() && current_path[0] == '/') ||
+	                   (current_path.length() >= 2 && std::isalpha(current_path[0]) && current_path[1] == ':');
+
 	// Resolve relative paths to absolute paths using DuckDB's cross-platform API
-	if (!current_path.empty() && current_path[0] != '/') {
+	if (!is_absolute) {
 		string cwd = FileSystem::GetWorkingDirectory();
+		// Normalize CWD separators as well
+		for (auto &c : cwd) {
+			if (c == '\\') {
+				c = '/';
+			}
+		}
 		if (!cwd.empty()) {
 			current_path = cwd + "/" + current_path;
 		}
+	}
+
+	// Re-check for Windows drive-letter root after possible CWD prepend
+	bool has_drive_letter = (current_path.length() >= 2 && std::isalpha(current_path[0]) && current_path[1] == ':');
+	string drive_prefix; // e.g. "D:"
+	if (has_drive_letter) {
+		drive_prefix = current_path.substr(0, 2);
+		// Remove the drive prefix so the rest can be split uniformly by '/'
+		current_path = current_path.substr(2);
 	}
 
 	// Normalize by resolving .. and . components
@@ -704,7 +741,7 @@ static string NormalizePath(const string &path) {
 	stringstream ss(current_path);
 	string component;
 
-	if (current_path[0] == '/') {
+	if (!current_path.empty() && current_path[0] == '/') {
 		components.push_back("");
 	}
 
@@ -722,9 +759,9 @@ static string NormalizePath(const string &path) {
 
 	// Reconstruct path
 	if (components.empty() || (components.size() == 1 && components[0].empty())) {
-		return "/";
+		return drive_prefix.empty() ? "/" : (drive_prefix + "/");
 	} else {
-		string result = "";
+		string result = drive_prefix;
 		for (const auto &comp : components) {
 			if (!comp.empty()) {
 				result += "/" + comp;
