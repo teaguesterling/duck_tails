@@ -20,6 +20,24 @@ set(EXTENSION_SOURCES src/duck_tails_extension.cpp src/git_filesystem.cpp src/gi
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
 build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})
 
+# Windows MSVC needs /std:c++17 to compile duckdb's vendored fmt/format.h
+# (which uses C++17 inline variables — `error C7525: inline variables require
+# at least '/std:c++17'`). MSVC defaults to /std:c++14. duckdb's own Windows
+# build must already use C++17 since it vendors fmt and links it into the
+# static library; aligning our extension targets here keeps the standard
+# consistent across the link.
+#
+# We deliberately do NOT set CMAKE_CXX_STANDARD or apply this on Linux —
+# duckdb's stable v1.5.x uses -std=c++11 explicitly on Linux/macOS, and
+# forcing our extension to C++17 there causes static-const data members in
+# duckdb's headers to acquire implicit inline linkage in our TUs but not in
+# libduckdb's C++11-built TUs, producing multiple-definition link errors
+# (verified empirically on duckdb_yaml#39).
+if(MSVC)
+    target_compile_options(${EXTENSION_NAME} PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:/std:c++17>")
+    target_compile_options(${LOADABLE_EXTENSION_NAME} PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:/std:c++17>")
+endif()
+
 # Link OpenSSL and libgit2 in both the static library as the loadable extension
 target_link_libraries(${EXTENSION_NAME} OpenSSL::SSL OpenSSL::Crypto libgit2::libgit2package)
 target_link_libraries(${LOADABLE_EXTENSION_NAME} OpenSSL::SSL OpenSSL::Crypto libgit2::libgit2package)
