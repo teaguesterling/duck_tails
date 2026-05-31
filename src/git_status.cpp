@@ -1,4 +1,5 @@
 #include "duckdb.hpp"
+#include "duckdb_compat.hpp"
 #include "git_functions.hpp"
 #include "git_filesystem.hpp"
 #include "git_path.hpp"
@@ -332,7 +333,7 @@ static void GitStatusFunction(ClientContext &context, TableFunctionInput &data_p
 		output_count++;
 	}
 
-	output.SetCardinality(output_count);
+	CompatSetOutputCardinality(output, output_count);
 }
 
 //===--------------------------------------------------------------------===//
@@ -439,7 +440,7 @@ static OperatorResultType GitStatusEachFunction(ExecutionContext &context, Table
 			state.current_output_row++;
 		}
 
-		output.SetCardinality(output_count);
+		CompatSetOutputCardinality(output, output_count);
 
 		if (state.current_output_row >= state.current_rows.size()) {
 			state.current_input_row++;

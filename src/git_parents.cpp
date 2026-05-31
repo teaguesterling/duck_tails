@@ -1,4 +1,5 @@
 #include "duckdb.hpp"
+#include "duckdb_compat.hpp"
 #include "git_functions.hpp"
 #include "git_filesystem.hpp"
 #include "git_path.hpp"
@@ -154,7 +155,7 @@ void GitParentsFunction(ClientContext &context, TableFunctionInput &data_p, Data
 
 	idx_t remaining = bind_data.rows.size() - local_state.current_index;
 	if (remaining == 0) {
-		output.SetCardinality(0);
+		CompatSetOutputCardinality(output, 0);
 		return;
 	}
 
@@ -165,7 +166,7 @@ void GitParentsFunction(ClientContext &context, TableFunctionInput &data_p, Data
 		OutputGitParentsRow(output, i, row, bind_data.repo_path);
 	}
 
-	output.SetCardinality(count);
+	CompatSetOutputCardinality(output, count);
 	local_state.current_index += count;
 }
 
@@ -297,7 +298,7 @@ OperatorResultType GitParentsEachFunction(ExecutionContext &context, TableFuncti
 			state.current_output_row++;
 		}
 
-		output.SetCardinality(output_count);
+		CompatSetOutputCardinality(output, output_count);
 
 		if (state.current_output_row >= state.current_rows.size()) {
 			state.current_input_row++;

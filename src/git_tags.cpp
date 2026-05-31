@@ -1,4 +1,5 @@
 #include "git_functions.hpp"
+#include "duckdb_compat.hpp"
 #include "git_filesystem.hpp"
 #include "git_utils.hpp"
 #include "git_context_manager.hpp"
@@ -211,7 +212,7 @@ void GitTagsFunction(ClientContext &context, TableFunctionInput &data_p, DataChu
 		local_state.current_index++;
 	}
 
-	output.SetCardinality(count);
+	CompatSetOutputCardinality(output, count);
 }
 
 //===--------------------------------------------------------------------===//
@@ -423,7 +424,7 @@ static OperatorResultType GitTagsEachFunction(ExecutionContext &context, TableFu
 			state.current_output_row++;
 		}
 
-		output.SetCardinality(output_count);
+		CompatSetOutputCardinality(output, output_count);
 
 		if (state.current_output_row >= state.current_rows.size()) {
 			state.current_input_row++;

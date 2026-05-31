@@ -1,4 +1,5 @@
 #include "duckdb.hpp"
+#include "duckdb_compat.hpp"
 #include "git_functions.hpp"
 #include "git_filesystem.hpp"
 #include "git_path.hpp"
@@ -494,7 +495,7 @@ static void GitBlameHunksFunction(ClientContext &context, TableFunctionInput &da
 		local_state.current_index++;
 		output_count++;
 	}
-	output.SetCardinality(output_count);
+	CompatSetOutputCardinality(output, output_count);
 }
 
 //===--------------------------------------------------------------------===//
@@ -606,7 +607,7 @@ static void GitBlameFunction(ClientContext &context, TableFunctionInput &data_p,
 		local_state.current_index++;
 		output_count++;
 	}
-	output.SetCardinality(output_count);
+	CompatSetOutputCardinality(output, output_count);
 }
 
 //===--------------------------------------------------------------------===//
@@ -740,7 +741,7 @@ static OperatorResultType GitBlameEachImpl(ExecutionContext &context, TableFunct
 			state.current_output_row++;
 			output_count++;
 		}
-		output.SetCardinality(output_count);
+		CompatSetOutputCardinality(output, output_count);
 
 		if (state.current_output_row >= state.current_rows.size()) {
 			state.current_input_row++;

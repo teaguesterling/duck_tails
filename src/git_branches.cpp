@@ -1,4 +1,5 @@
 #include "git_functions.hpp"
+#include "duckdb_compat.hpp"
 #include "git_filesystem.hpp"
 #include "git_utils.hpp"
 #include "git_context_manager.hpp"
@@ -157,7 +158,7 @@ void GitBranchesFunction(ClientContext &context, TableFunctionInput &data_p, Dat
 		count++;
 	}
 
-	output.SetCardinality(count);
+	CompatSetOutputCardinality(output, count);
 }
 
 //===--------------------------------------------------------------------===//
@@ -338,7 +339,7 @@ static OperatorResultType GitBranchesEachFunction(ExecutionContext &context, Tab
 			state.current_output_row++;
 		}
 
-		output.SetCardinality(output_count);
+		CompatSetOutputCardinality(output, output_count);
 
 		if (state.current_output_row >= state.current_rows.size()) {
 			state.current_input_row++;
