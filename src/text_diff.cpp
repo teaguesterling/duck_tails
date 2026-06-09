@@ -1,4 +1,5 @@
 #include "text_diff.hpp"
+#include "duckdb_compat.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/value.hpp"
@@ -300,7 +301,7 @@ static void TextDiffLinesFunction(ClientContext &context, TableFunctionInput &da
 		output_idx++;
 	}
 
-	output.SetCardinality(output_idx);
+	CompatSetOutputCardinality(output, output_idx);
 }
 
 //===--------------------------------------------------------------------===//
@@ -424,7 +425,7 @@ static void ReadGitDiffFunction(ClientContext &context, TableFunctionInput &data
 
 	if (data.returned_row) {
 		// We only return one row
-		output.SetCardinality(0);
+		CompatSetOutputCardinality(output, 0);
 		return;
 	}
 
@@ -434,7 +435,7 @@ static void ReadGitDiffFunction(ClientContext &context, TableFunctionInput &data
 	output.SetValue(2, 0, Value(data.path2));
 
 	data.returned_row = true;
-	output.SetCardinality(1);
+	CompatSetOutputCardinality(output, 1);
 }
 
 void RegisterTextDiffType(ExtensionLoader &loader) {

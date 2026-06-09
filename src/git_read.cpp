@@ -1,4 +1,5 @@
 #include "git_functions.hpp"
+#include "duckdb_compat.hpp"
 #include "git_filesystem.hpp"
 #include "git_utils.hpp"
 #include "git_context_manager.hpp"
@@ -676,7 +677,7 @@ static void GitReadFunction(ClientContext &context, TableFunctionInput &input, D
 	auto &gstate = input.global_state->Cast<GitReadGlobalState>();
 
 	if (gstate.finished) {
-		output.SetCardinality(0);
+		CompatSetOutputCardinality(output, 0);
 		return;
 	}
 
@@ -714,7 +715,7 @@ static void GitReadFunction(ClientContext &context, TableFunctionInput &input, D
 		FlatVector::SetNull(output.data[15], 0, true);
 	}
 
-	output.SetCardinality(1);
+	CompatSetOutputCardinality(output, 1);
 	gstate.finished = true;
 }
 
@@ -916,7 +917,7 @@ static OperatorResultType GitReadEachFunction(ExecutionContext &context, TableFu
 		}
 
 		// Set cardinality after all values are filled to ensure proper vector initialization
-		output.SetCardinality(count);
+		CompatSetOutputCardinality(output, count);
 
 		// Force vector verification and finalization for LATERAL chain safety
 		if (count > 0) {
@@ -931,7 +932,7 @@ static OperatorResultType GitReadEachFunction(ExecutionContext &context, TableFu
 				}
 			} catch (...) {
 				// If vector operations fail, skip problematic row and continue processing
-				output.SetCardinality(0);
+				CompatSetOutputCardinality(output, 0);
 				state.current_input_row++;
 				state.initialized_row = false;
 				return OperatorResultType::NEED_MORE_INPUT;
