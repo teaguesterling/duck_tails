@@ -1,0 +1,80 @@
+# name: test/sql/git_read_embedded_nul.test
+# description: Regression: git_read/git_read_each must return full text for blobs
+#              with an embedded NUL byte, and '' (not NULL) for empty blobs.
+# group: [sql]
+
+require duck_tails
+
+require notwindows
+
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
+
+statement ok
+PRAGMA enable_verification;
+
+#
+# Embedded NUL blob (committed fixture, ~13.8 KB valid UTF-8 with one 0x00 byte
+# placed past libgit2's binary-detection sample window). git_tree classifies it
+# as text; git_read must therefore return the FULL content as text (DuckDB
+# VARCHAR is length-prefixed and U+0000 is valid UTF-8), not NULL.
+#
+
+# git_tree sees it as text/utf8 with the full byte size.
+query III
+SELECT is_text, encoding, size_bytes
+FROM git_tree('.', 'HEAD')
+WHERE file_path = 'test/fixtures/embedded_nul.txt'
+----
+true	utf8	13832
+
+# git_read agrees and returns the full-length text (no truncation at the NUL).
+# strlen() is the byte length, which must equal size_bytes (the file has multi-byte
+# em-dashes, so the character count length() would be smaller).
+query IIIII
+SELECT is_text, encoding, size_bytes, text IS NOT NULL AS has_text, strlen(text) = size_bytes AS full_len
+FROM git_read('git://test/fixtures/embedded_nul.txt@HEAD')
+----
+true	utf8	13832	true	true
+
+# The embedded NUL byte survives in the returned text.
+query I
+SELECT strpos(text, chr(0)) > 0
+FROM git_read('git://test/fixtures/embedded_nul.txt@HEAD')
+----
+true
+
+# Same via the LATERAL git_read_each path (the originally reported function).
+query IIII
+WITH u(uri) AS (VALUES ('git://test/fixtures/embedded_nul.txt@HEAD'))
+SELECT r.is_text, r.text IS NOT NULL AS has_text, strlen(r.text) = r.size_bytes AS full_len, strpos(r.text, chr(0)) > 0 AS has_nul
+FROM u, LATERAL git_read_each(u.uri) r
+----
+true	true	true	true
+
+#
+# Empty blob: must read back as '' (empty text), not NULL, and not binary.
+#
+
+query III
+SELECT is_text, text IS NOT NULL AS has_text, length(text)
+FROM git_read('git://test/fixtures/empty_file.txt@HEAD')
+----
+true	true	0
+
+query III
+WITH u(uri) AS (VALUES ('git://test/fixtures/empty_file.txt@HEAD'))
+SELECT r.is_text, r.text IS NOT NULL AS has_text, length(r.text)
+FROM u, LATERAL git_read_each(u.uri) r
+----
+true	true	0
+
+#
+# WORKDIR (on-disk) read path must behave identically for the embedded NUL file.
+#
+
+query IIII
+SELECT is_text, text IS NOT NULL AS has_text, strlen(text) = size_bytes AS full_len, strpos(text, chr(0)) > 0 AS has_nul
+FROM git_read('git://./test/fixtures/embedded_nul.txt@WORKDIR')
+----
+true	true	true	true

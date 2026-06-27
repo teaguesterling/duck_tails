@@ -207,32 +207,27 @@ static void PopulateContentFields(const char *raw_content, size_t raw_size, int6
 	}
 
 	if (content_size == 0) {
+		// Empty blob is valid (empty) text, not a NULL and not binary. The text
+		// column must read back '' so an empty file round-trips through is_text.
+		result.is_text = true;
+		result.encoding = "utf8";
+		result.text = string();
 		return;
 	}
 
-	// Check for null bytes
-	bool has_null_bytes = false;
-	for (size_t i = 0; i < content_size; i++) {
-		if (raw_content[i] == '\0') {
-			has_null_bytes = true;
-			break;
-		}
-	}
-
-	bool is_valid_utf8 = !has_null_bytes && IsValidUTF8(raw_content, content_size);
+	// A NUL byte (0x00) is valid UTF-8 (U+0000) and a DuckDB VARCHAR is
+	// length-prefixed, so it can hold embedded NULs. We therefore classify on
+	// UTF-8 validity alone; an embedded NUL no longer forces a text blob to be
+	// reported as binary (which previously caused git_tree to say is_text=true
+	// while git_read returned NULL text for the same blob).
+	bool is_valid_utf8 = IsValidUTF8(raw_content, content_size);
 
 	if (is_valid_utf8) {
 		result.is_text = true;
 		result.encoding = "utf8";
+		// Build the value from an explicit (ptr, length) pair so the full content
+		// survives, including any embedded NUL bytes.
 		result.text = string(raw_content, content_size);
-
-		// Defensive check for suspicious memory patterns
-		if (result.text.find('\xbe') != string::npos) {
-			result.encoding = "binary";
-			result.is_text = false;
-			result.text.clear();
-			result.blob = string(raw_content, content_size);
-		}
 	} else {
 		result.encoding = "binary";
 		result.is_text = false;
@@ -484,58 +479,25 @@ static void ProcessGitURI(const string &uri, const GitReadBindData &bind_data, G
 		const void *raw_content = git_blob_rawcontent(blob);
 		git_off_t raw_size = git_blob_rawsize(blob);
 
-		result.size_bytes = static_cast<int64_t>(raw_size);
-
-		// Apply max_bytes limit
-		size_t content_size = static_cast<size_t>(raw_size);
-		if (bind_data.max_bytes > 0 && content_size > static_cast<size_t>(bind_data.max_bytes)) {
-			content_size = static_cast<size_t>(bind_data.max_bytes);
-			result.truncated = true;
-		}
-
-		if (content_size > 0) {
-			// Use libgit2's efficient binary detection
-			bool is_text = !git_blob_is_binary(blob);
-			result.is_text = is_text;
-
-			if (is_text) {
-				// Create a safe text string with proper memory handling
-				const char *char_content = static_cast<const char *>(raw_content);
-
-				// Check for null bytes (which can cause verification issues)
-				bool has_null_bytes = false;
-				for (size_t i = 0; i < content_size; i++) {
-					if (char_content[i] == '\0') {
-						has_null_bytes = true;
-						break;
-					}
-				}
-
-				// Additional UTF-8 validation
-				bool is_valid_utf8 = !has_null_bytes && IsValidUTF8(char_content, content_size);
-
-				if (is_valid_utf8) {
-					result.encoding = "utf8";
-					result.text = string(char_content, content_size);
-
-					// Defensive check: ensure no uninitialized memory patterns
-					if (result.text.find('\xbe') != string::npos) {
-						// Contains suspicious uninitialized memory pattern - treat as binary
-						result.encoding = "binary";
-						result.is_text = false;
-						result.text.clear();
-						result.blob = string(char_content, content_size);
-					}
-				} else {
-					// Invalid UTF-8 or contains null bytes - treat as binary
-					result.encoding = "binary";
-					result.is_text = false;
-					result.blob = string(char_content, content_size);
-				}
-			} else {
-				result.encoding = "binary";
-				result.blob = string(static_cast<const char *>(raw_content), content_size);
+		// Use libgit2's git_blob_is_binary as the authoritative is_text classifier so
+		// this reader agrees with git_tree/git_tree_each (which use the same call).
+		// When libgit2 considers the blob text, emit the FULL content via the shared
+		// helper: it builds a length-prefixed string, so embedded NUL bytes survive
+		// and an empty blob reads back as '' instead of NULL. (DuckDB VARCHAR is
+		// length-prefixed and U+0000 is valid UTF-8, so embedded NULs are valid.)
+		if (!git_blob_is_binary(blob)) {
+			PopulateContentFields(static_cast<const char *>(raw_content), static_cast<size_t>(raw_size),
+			                      bind_data.max_bytes, result);
+		} else {
+			result.is_text = false;
+			result.encoding = "binary";
+			result.size_bytes = static_cast<int64_t>(raw_size);
+			size_t content_size = static_cast<size_t>(raw_size);
+			if (bind_data.max_bytes > 0 && content_size > static_cast<size_t>(bind_data.max_bytes)) {
+				content_size = static_cast<size_t>(bind_data.max_bytes);
+				result.truncated = true;
 			}
+			result.blob = string(static_cast<const char *>(raw_content), content_size);
 		}
 
 		// Clean up local objects
@@ -701,15 +663,17 @@ static void GitReadFunction(ClientContext &context, TableFunctionInput &input, D
 	output.SetValue(12, 0, Value::BIGINT(result.size_bytes));                                // size_bytes
 	output.SetValue(13, 0, Value::BOOLEAN(result.truncated));                                // truncated
 
-	// Handle TEXT column
-	if (!result.text.empty()) {
-		output.SetValue(14, 0, Value(result.text)); // text
+	// Handle TEXT column. Use is_text (not text.empty()) as the discriminator so a
+	// text blob that is genuinely empty reads back as '' rather than NULL.
+	if (result.is_text) {
+		output.SetValue(14, 0, Value(result.text)); // text ('' for empty text blob)
 	} else {
 		FlatVector::SetNull(output.data[14], 0, true);
 	}
 
-	// BLOB via SetValue (future-proof against non-flat vectors)
-	if (!result.blob.empty()) {
+	// BLOB via SetValue (future-proof against non-flat vectors). Only binary blobs
+	// carry content here; trees/symlinks/errors leave it NULL.
+	if (!result.is_text && !result.blob.empty()) {
 		output.SetValue(15, 0, Value::BLOB_RAW(result.blob));
 	} else {
 		FlatVector::SetNull(output.data[15], 0, true);
@@ -897,18 +861,21 @@ static OperatorResultType GitReadEachFunction(ExecutionContext &context, TableFu
 			if (col_count > 13)
 				output.SetValue(13, i, Value::BOOLEAN(result.truncated)); // truncated
 
-			// Text column (14)
+			// Text column (14). Use is_text as the discriminator so an empty text
+			// blob reads back as '' (not NULL) and a text blob with embedded NULs
+			// reads back its full content.
 			if (col_count > 14) {
-				if (!result.text.empty()) {
-					output.SetValue(14, i, Value(result.text)); // text
+				if (result.is_text) {
+					output.SetValue(14, i, Value(result.text)); // text ('' for empty text blob)
 				} else {
 					FlatVector::SetNull(output.data[14], i, true);
 				}
 			}
 
-			// BLOB column (15) via SetValue (future-proof against non-flat vectors)
+			// BLOB column (15) via SetValue (future-proof against non-flat vectors).
+			// Only binary blobs carry content; trees/symlinks/errors leave it NULL.
 			if (col_count > 15) {
-				if (!result.blob.empty()) {
+				if (!result.is_text && !result.blob.empty()) {
 					output.SetValue(15, i, Value::BLOB_RAW(result.blob));
 				} else {
 					FlatVector::SetNull(output.data[15], i, true);
