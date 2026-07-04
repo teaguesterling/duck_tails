@@ -70,6 +70,15 @@ else
     done
 fi
 
+# LFS object-path hardening regression test. Driven as a shell test because the
+# realistic exploit is a query run from *inside* an untrusted repo (cwd == repo),
+# which the sqllogic harness cannot reproduce. Runs on a full-suite invocation.
+if [ $# -eq 0 ]; then
+    echo "Running LFS object-path hardening regression test..."
+    "$SCRIPT_DIR/scripts/lfs_oid_traversal_test.sh" "./build/$BUILD_TYPE/duckdb" \
+        "./build/$BUILD_TYPE/extension/duck_tails/duck_tails.duckdb_extension"
+fi
+
 echo "Test run complete."
 echo "Test fixtures remain at: $TEST_FIXTURES_DIR"
 echo "Use '$FIXTURES_DIR/setup_fixtures.sh cleanup' to clean up."

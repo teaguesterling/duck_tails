@@ -971,8 +971,12 @@ void GitLFSFileHandle::EnsureRemoteHandleOpened() {
 }
 
 string GitLFSFileHandle::BuildLFSObjectPath(const string &oid) {
-	if (oid.length() < 4) {
-		throw IOException("Invalid LFS OID: too short");
+	// Strict OID validation (defense-in-depth; ParseLFSPointer already rejects
+	// bad OIDs, but every OID->path site must validate so none can drift).
+	if (!IsValidLFSOID(oid)) {
+		throw IOException("Invalid LFS pointer OID '%s': expected exactly 64 lowercase hex characters "
+		                  "(a valid git-lfs sha256 object id)",
+		                  oid);
 	}
 
 	if (!repo_) {
@@ -985,9 +989,11 @@ string GitLFSFileHandle::BuildLFSObjectPath(const string &oid) {
 	}
 
 	// Build path: .git/lfs/objects/ab/cd/abcd1234...
-	string lfs_path = string(repo_path) + "lfs/objects/" + oid.substr(0, 2) + "/" + oid.substr(2, 2) + "/" + oid;
+	string objects_root = string(repo_path) + "lfs/objects";
+	string lfs_path = objects_root + "/" + oid.substr(0, 2) + "/" + oid.substr(2, 2) + "/" + oid;
 
-	return lfs_path;
+	// Confine under the LFS object store (defense-in-depth).
+	return ConfineUnderDirectory(objects_root, lfs_path, "LFS object path");
 }
 
 string GitLFSFileHandle::ResolveLFSDownloadURL() {
@@ -1046,12 +1052,25 @@ LFSInfo GitFileSystem::ParseLFSPointer(const string &pointer_content) {
 		throw IOException("Invalid LFS pointer: missing required fields");
 	}
 
+	// Reject any OID that is not a real git-lfs sha256 object id. A valid OID is
+	// exactly 64 lowercase hex characters and can never contain '/', '.' or
+	// '..', so this closes the LFS-object path-traversal class at the source
+	// (an attacker-controlled pointer cannot escape .git/lfs/objects/).
+	if (!IsValidLFSOID(lfs_info.oid)) {
+		throw IOException("Invalid LFS pointer OID '%s': expected exactly 64 lowercase hex characters "
+		                  "(a valid git-lfs sha256 object id)",
+		                  lfs_info.oid);
+	}
+
 	return lfs_info;
 }
 
 string GitFileSystem::BuildLFSObjectPath(git_repository *repo, const string &oid) {
-	if (oid.length() < 4) {
-		throw IOException("Invalid LFS OID: too short");
+	// Strict OID validation (defense-in-depth; see ParseLFSPointer).
+	if (!IsValidLFSOID(oid)) {
+		throw IOException("Invalid LFS pointer OID '%s': expected exactly 64 lowercase hex characters "
+		                  "(a valid git-lfs sha256 object id)",
+		                  oid);
 	}
 
 	const char *repo_path = git_repository_path(repo);
@@ -1060,9 +1079,11 @@ string GitFileSystem::BuildLFSObjectPath(git_repository *repo, const string &oid
 	}
 
 	// Build path: .git/lfs/objects/ab/cd/abcd1234...
-	string lfs_path = string(repo_path) + "lfs/objects/" + oid.substr(0, 2) + "/" + oid.substr(2, 2) + "/" + oid;
+	string objects_root = string(repo_path) + "lfs/objects";
+	string lfs_path = objects_root + "/" + oid.substr(0, 2) + "/" + oid.substr(2, 2) + "/" + oid;
 
-	return lfs_path;
+	// Confine under the LFS object store (defense-in-depth).
+	return ConfineUnderDirectory(objects_root, lfs_path, "LFS object path");
 }
 
 LFSConfig GitFileSystem::ReadLFSConfig(git_repository *repo) {
