@@ -1,6 +1,6 @@
 #!/bin/bash
 # Generates the LFS OID path-traversal security fixture used by
-# test/sql/duck_tails_lfs_oid_traversal.test.
+# test/scripts/lfs_oid_traversal_test.sh.
 #
 # It builds a small git repo containing:
 #   1. leak.dat        - a valid-looking LFS pointer whose `oid` is a
@@ -12,11 +12,23 @@
 #
 # The canary is a TEST-CREATED temp file (never a real system path such as
 # /etc/passwd). Pre-fix, reading leak.dat leaks SECRET-CANARY; post-fix it is
-# a clean IOException. The traversal string is computed empirically with
-# `realpath -m` and the script FAILS LOUDLY if it cannot construct a string
-# that resolves to the canary -- so the test can never silently pass.
+# a clean IOException. The traversal string is computed empirically by
+# normalizing candidate paths and the script FAILS LOUDLY if it cannot
+# construct a string that resolves to the canary -- so the test can never
+# silently pass.
 
 set -euo pipefail
+
+# Portable path normalization. GNU `realpath -m` normalizes `..` for
+# possibly-nonexistent paths AND resolves symlinks, but BSD/macOS `realpath`
+# lacks the -m flag (aborts with "illegal option -- m"). Python's
+# os.path.realpath does both on every platform, so use it for portability.
+# Both the canary side and the traversal-candidate side go through this same
+# normalizer, keeping symlink resolution (e.g. macOS /var -> /private/var)
+# consistent on both sides of the comparison.
+normalize_path() {
+    python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$1"
+}
 
 # Resolve the test/tmp directory (same location the other fixtures extract to).
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -34,7 +46,7 @@ CANARY_CONTENT="SECRET-CANARY-DO-NOT-LEAK"
 rm -rf "$REPO"
 printf '%s' "$CANARY_CONTENT" > "$CANARY"
 CANARY_SIZE=$(printf '%s' "$CANARY_CONTENT" | wc -c | tr -d ' ')
-CANARY_REAL="$(realpath -m "$CANARY")"
+CANARY_REAL="$(normalize_path "$CANARY")"
 
 mkdir -p "$REPO"
 cd "$REPO"
@@ -65,7 +77,7 @@ for n in $(seq 1 16); do
     prefix=""
     for _ in $(seq 1 "$n"); do prefix="../$prefix"; done
     candidate="${prefix}${CANARY_NAME}"
-    resolved="$(realpath -m "$(build_lfs_path "$candidate")")"
+    resolved="$(normalize_path "$(build_lfs_path "$candidate")")"
     if [ "$resolved" = "$CANARY_REAL" ]; then
         TRAVERSAL_OID="$candidate"
         break
