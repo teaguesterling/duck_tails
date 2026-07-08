@@ -30,7 +30,10 @@ jobs:
     name: Build extension binaries
     uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v1.5-variegata
     with:
-      duckdb_version: v1.5-variegata
+      # Build against the v1.5.4 RELEASE TAG (not the branch tip): branch-tip
+      # builds produce -dev extensions that won't load into a released CLI.
+      # ci_tools_version tracks the v1.5-variegata branch (build scripts only).
+      duckdb_version: v1.5.4
       ci_tools_version: v1.5-variegata
       extension_name: duck_tails
       # See note above: exclude wasm (no libgit2 for wasm) and Windows
@@ -41,7 +44,7 @@ jobs:
     name: Code Quality Check
     uses: duckdb/extension-ci-tools/.github/workflows/_extension_code_quality.yml@v1.5-variegata
     with:
-      duckdb_version: v1.5-variegata
+      duckdb_version: v1.5.4
       ci_tools_version: v1.5-variegata
       extension_name: duck_tails
       # Note: tidy requires libgit2 which isn't available in the code quality runner
