@@ -119,6 +119,80 @@ static bool TryResolvePath(const string &input, string &output) {
 #endif
 }
 
+bool IsValidLFSOID(const string &oid) {
+	if (oid.size() != 64) {
+		return false;
+	}
+	for (char c : oid) {
+		bool is_hex = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
+		if (!is_hex) {
+			return false;
+		}
+	}
+	return true;
+}
+
+string LexicallyNormalizePath(const string &path) {
+	bool absolute = !path.empty() && (path[0] == '/' || path[0] == '\\');
+	vector<string> parts;
+	string cur;
+	auto flush = [&]() {
+		if (cur.empty()) {
+			return;
+		}
+		if (cur == ".") {
+			cur.clear();
+			return;
+		}
+		if (cur == "..") {
+			if (!parts.empty() && parts.back() != "..") {
+				parts.pop_back();
+			} else if (!absolute) {
+				parts.push_back("..");
+			}
+			cur.clear();
+			return;
+		}
+		parts.push_back(cur);
+		cur.clear();
+	};
+	for (char c : path) {
+		if (c == '/' || c == '\\') {
+			flush();
+		} else {
+			cur.push_back(c);
+		}
+	}
+	flush();
+
+	string out = absolute ? "/" : "";
+	for (size_t i = 0; i < parts.size(); i++) {
+		if (i > 0) {
+			out += "/";
+		}
+		out += parts[i];
+	}
+	if (out.empty()) {
+		out = absolute ? "/" : ".";
+	}
+	return out;
+}
+
+string ConfineUnderDirectory(const string &root_dir, const string &candidate, const string &what) {
+	string norm_root = LexicallyNormalizePath(root_dir);
+	string norm_candidate = LexicallyNormalizePath(candidate);
+
+	string root_with_sep = norm_root;
+	if (root_with_sep.empty() || root_with_sep.back() != '/') {
+		root_with_sep += "/";
+	}
+
+	if (norm_candidate != norm_root && !StringUtil::StartsWith(norm_candidate, root_with_sep)) {
+		throw IOException("%s escapes the LFS object store (resolved to '%s')", what, norm_candidate);
+	}
+	return norm_candidate;
+}
+
 string SafeWorkdirPath(const string &repo_path, const string &file_path) {
 	LocalFileSystem fs;
 	string workdir = GetWorkdirRoot(repo_path);

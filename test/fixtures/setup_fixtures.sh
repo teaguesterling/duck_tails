@@ -64,6 +64,12 @@ setup_fixtures() {
         echo "$repo_name|$repo_path|$expected_branches|$expected_tags|$description" >> "$EXTRACTED_REPOS_FILE"
     done
     
+    # Generate the dynamic LFS OID path-traversal security fixture (+ canary).
+    # Kept as a generator (not a committed tarball) so the canary is always a
+    # fresh test-created temp file, never a real system path.
+    echo "Generating LFS OID traversal security fixture..."
+    bash "$FIXTURES_DIR/../scripts/setup_lfs_oid_traversal_fixture.sh" "$TEMP_DIR"
+
     echo "Fixtures extracted successfully to: $TEMP_DIR"
     echo "Run '$0 validate' to verify fixture integrity"
 }

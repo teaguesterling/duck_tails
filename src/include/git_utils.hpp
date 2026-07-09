@@ -172,6 +172,23 @@ string SafeWorkdirPath(const string &repo_path, const string &file_path);
 // Get the workdir root for a repository (with trailing slash). Throws on bare repos.
 string GetWorkdirRoot(const string &repo_path);
 
+// Returns true iff `oid` is a valid git-lfs sha256 object id: exactly 64
+// lowercase hex characters. A real LFS OID can never contain '/', '.' or '..',
+// so validating this at the source closes the LFS-object path-traversal class.
+bool IsValidLFSOID(const string &oid);
+
+// Lexically normalize a path (resolve "." / ".." and collapse separators)
+// WITHOUT touching the filesystem — no symlink resolution, no existence
+// requirement. Used to confine LFS object paths, which may legitimately not
+// exist locally yet (remote-LFS fallback).
+string LexicallyNormalizePath(const string &path);
+
+// Assert that `candidate` lexically resolves to a location under `root_dir`.
+// Throws IOException("<what> escapes ...") otherwise. Returns the normalized
+// candidate. Defense-in-depth for LFS object paths (primary defense is
+// IsValidLFSOID at parse time).
+string ConfineUnderDirectory(const string &root_dir, const string &candidate, const string &what);
+
 // Note: libgit2 is initialized once at extension load time in duck_tails_extension.cpp
 // Individual functions should NOT call git_libgit2_init() or git_libgit2_shutdown()
 

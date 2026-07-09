@@ -21,28 +21,31 @@ jobs:
       ci_tools_version: main
       extension_name: duck_tails
       # wasm: libgit2 (the extension's core dependency) has no wasm build.
-      # windows_amd64(_mingw): DuckDB's vendored fmt fails to compile against
-      # the Windows runner's MSVC STL here (stdext::checked_array_iterator
-      # removed); the community-extensions build environment compiles Windows
-      # fine, so the binary is still published there (matches the webbed setup).
+      # windows_amd64(_mingw): excluded for this repo -- the git:// LFS object
+      # transport this extension is built around is unsupported on Windows, so
+      # Windows builds/tests are not maintained here.
       exclude_archs: 'wasm_mvp;wasm_eh;wasm_threads;windows_amd64;windows_amd64_mingw'
 
   duckdb-stable-build:
     name: Build extension binaries
-    uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v1.5.3
+    uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v1.5-variegata
     with:
-      duckdb_version: v1.5.3
-      ci_tools_version: v1.5.3
+      # Build against the v1.5.4 RELEASE TAG (not the branch tip): branch-tip
+      # builds produce -dev extensions that won't load into a released CLI.
+      # ci_tools_version tracks the v1.5-variegata branch (build scripts only).
+      duckdb_version: v1.5.4
+      ci_tools_version: v1.5-variegata
       extension_name: duck_tails
-      # See note above: exclude wasm (no libgit2) and Windows (MSVC fmt build).
+      # See note above: exclude wasm (no libgit2 for wasm) and Windows
+      # (git:// LFS transport unsupported on Windows).
       exclude_archs: 'wasm_mvp;wasm_eh;wasm_threads;windows_amd64;windows_amd64_mingw'
 
   code-quality-check:
     name: Code Quality Check
-    uses: duckdb/extension-ci-tools/.github/workflows/_extension_code_quality.yml@v1.5.3
+    uses: duckdb/extension-ci-tools/.github/workflows/_extension_code_quality.yml@v1.5-variegata
     with:
-      duckdb_version: v1.5.3
-      ci_tools_version: v1.5.3
+      duckdb_version: v1.5.4
+      ci_tools_version: v1.5-variegata
       extension_name: duck_tails
       # Note: tidy requires libgit2 which isn't available in the code quality runner
       format_checks: 'format'
