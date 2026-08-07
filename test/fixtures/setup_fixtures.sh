@@ -3,7 +3,7 @@
 # This script extracts compressed git repository fixtures to /tmp for testing,
 # ensuring predictable and isolated test environments.
 
-set -e
+set -eo pipefail
 
 FIXTURES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TEMP_DIR=""
@@ -55,7 +55,12 @@ setup_fixtures() {
         
         echo "Extracting $fixture_file..."
         cd "$TEMP_DIR"
-        tar -xzf "$fixture_path"
+        # Decompress via a pipe rather than `tar -xzf <path>`: on Windows the
+        # fixture path carries a drive letter (D:\...), which GNU tar misreads
+        # as a remote host ("Cannot connect to D: resolve failed"). Piping keeps
+        # the colon-bearing path away from tar's -f parsing, and unlike
+        # `--force-local` it stays portable to macOS bsdtar.
+        gzip -dc "$fixture_path" | tar -xf -
         
         # Store repository info
         repo_name="${fixture_file%.tar.gz}"
