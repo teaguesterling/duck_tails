@@ -5,6 +5,8 @@
 # clone sensitivity, not a Windows bug. DELETE BEFORE MERGE.
 require duck_tails
 
+require windows
+
 statement ok
 LOAD duck_tails;
 
