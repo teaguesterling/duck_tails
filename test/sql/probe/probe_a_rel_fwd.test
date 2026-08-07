@@ -1,0 +1,12 @@
+# name: test/sql/probe/probe_a_rel_fwd.test
+# PROBE (#28): relative forward-slash path. Deliberately fails so the CI log
+# prints the observed row count on every platform. DELETE BEFORE MERGE.
+require duck_tails
+
+statement ok
+LOAD duck_tails;
+
+query I
+SELECT 'rel_fwd:count=' || count(*)::VARCHAR FROM git_log('test/tmp/main-repo');
+----
+PROBE_SENTINEL_NEVER_MATCHES

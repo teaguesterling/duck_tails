@@ -1,0 +1,11 @@
+# name: test/sql/probe/probe_b_abs_fwd.test
+# PROBE (#28): absolute forward-slash path. DELETE BEFORE MERGE.
+require duck_tails
+
+statement ok
+LOAD duck_tails;
+
+query I
+SELECT 'abs_fwd:count=' || count(*)::VARCHAR FROM git_log('__WORKING_DIRECTORY__/test/tmp/main-repo');
+----
+PROBE_SENTINEL_NEVER_MATCHES

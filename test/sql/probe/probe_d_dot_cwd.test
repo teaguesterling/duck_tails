@@ -1,0 +1,14 @@
+# name: test/sql/probe/probe_d_dot_cwd.test
+# PROBE (#28): cwd-relative '.' — resolves to the duck_tails checkout itself,
+# which in CI is a SHALLOW clone (fetch-depth 1). If the count is ~1-2 here on
+# ALL platforms, the reporter's "only two commits" symptom is shallow/partial
+# clone sensitivity, not a Windows bug. DELETE BEFORE MERGE.
+require duck_tails
+
+statement ok
+LOAD duck_tails;
+
+query I
+SELECT 'dot_cwd:count=' || count(*)::VARCHAR FROM git_log('.');
+----
+PROBE_SENTINEL_NEVER_MATCHES
