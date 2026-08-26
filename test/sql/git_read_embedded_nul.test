@@ -1,7 +1,8 @@
 # name: test/sql/git_read_embedded_nul.test
 # description: Regression: git_read/git_read_each must return full text for blobs
-#              with an embedded NUL byte, and '' (not NULL) for empty blobs.
 # group: [sql]
+
+#              with an embedded NUL byte, and '' (not NULL) for empty blobs.
 
 require duck_tails
 
