@@ -227,24 +227,63 @@ inline ValidityMask &CompatFlatValidityMutable(Vector &vec) {
 	return CompatFlatValidityMutableImpl<FV>(vec, CompatHasFlatValidityMutable<FV>());
 }
 
-#ifdef DUCKDB_HAS_NEW_VECTOR_HEADERS
-
-// --- Output chunk finalization ---
-// DuckDB main mandates per-vector Size() tracking; DataChunk::SetCardinality only
-// updates chunk.count. SetChildCardinality additionally calls FlatVector::SetSize
-// on every column so query operators reading vec.Size() see the right value.
-// Without this, VariadicExecutor (and similar) reports:
+// --- Output chunk finalization ---------------------------------------------------
+// DuckDB main mandates per-vector Size() tracking. DataChunk::SetCardinality only
+// updates chunk.count (and is [[deprecated]] there); SetChildCardinality
+// additionally calls FlatVector::SetSize on every column, so operators reading
+// vec.Size() see the right value. Without it, VariadicExecutor and friends report:
 //   "Mismatch in input vector sizes ... expected 0 rows but got N"
-inline void CompatSetOutputCardinality(DataChunk &chunk, idx_t count) {
+//
+// PROBED FOR THE MEMBER, not for a header. This dispatch used to hang off
+// __has_include("duckdb/common/vector/list_vector.hpp"), which is the same shape
+// of bug as the identifier.hpp probe above: it asks whether a header landed when
+// the question is whether a method exists. Those headers could be backported to
+// the stable branch without SetChildCardinality coming with them, and the PINNED
+// build would break. The #include gate stays header-based, because that one
+// genuinely is a question about headers.
+//
+// ORDER MATTERS AT THE CALL SITE, and upstream's own comment on the deprecated
+// SetCardinality warns that forwarding it to SetChildCardinality "would
+// resize/overwrite their data" for callers that mutate child vectors first. That
+// warning does NOT apply to this extension, and the distinction is worth stating
+// because it is easy to over-apply:
+//
+//   - Every one of duck_tails' ~25 call sites is WRITE-AT-INDEX-then-set: fill
+//     with output.SetValue(col, row, ...) / FlatVector::SetNull(vec, row, ...),
+//     then set the cardinality once at the end.
+//   - Writing at an index does not update the vector's tracked size, so these
+//     sites NEED SetChildCardinality; SetCardinalityUnsafe would leave every
+//     child at size 0 and reproduce the mismatch above.
+//   - Doing it after the writes is safe: SetChildCardinality only calls
+//     FlatVector::SetSize, which bottoms out in VectorBuffer::SetVectorSize,
+//     which bounds-checks and then assigns v_size. It moves no data and zeroes
+//     nothing (verified in duckdb main, src/common/types/vector_buffer.cpp).
+//
+// The callers upstream is warning about are Vector::Append-style ones, whose
+// vectors already carry a size. If such a call site is ever added here, it needs
+// SetCardinalityUnsafe instead -- and it will compile either way, so the only
+// symptom would be wrong column data on v2.0.
+template <class T, class = void>
+struct CompatHasSetChildCardinality : std::false_type {};
+template <class T>
+struct CompatHasSetChildCardinality<T, decltype(void(std::declval<T &>().SetChildCardinality(idx_t(0))))>
+    : std::true_type {};
+
+// The Impl overloads MUST be templates. Tag dispatch only avoids compiling the
+// untaken branch when that branch is a template that is never instantiated -- as
+// plain functions both bodies are compiled, and the one naming the absent member
+// fails on whichever version lacks it.
+template <class CHUNK>
+inline void CompatSetOutputCardinalityImpl(CHUNK &chunk, idx_t count, std::true_type) {
 	chunk.SetChildCardinality(count);
 }
-
-#else // Old API (v1.4.x / v1.5.x)
-
-inline void CompatSetOutputCardinality(DataChunk &chunk, idx_t count) {
+template <class CHUNK>
+inline void CompatSetOutputCardinalityImpl(CHUNK &chunk, idx_t count, std::false_type) {
 	chunk.SetCardinality(count);
 }
-
-#endif
+template <class CHUNK = DataChunk>
+inline void CompatSetOutputCardinality(CHUNK &chunk, idx_t count) {
+	CompatSetOutputCardinalityImpl(chunk, count, CompatHasSetChildCardinality<CHUNK>());
+}
 
 } // namespace duckdb
