@@ -75,10 +75,16 @@ FROM git_log('duckdb');
 true
 
 # Test 7: Git branches function - verify branch exists (detached HEAD, so no current branch)
+#
+# Accepts the REMOTE spelling as well as the local one. CI checks the duckdb
+# submodule out detached and shallow, so a local `main` branch need not exist
+# there even though it does in a normal clone -- which is why this passed
+# locally and failed in CI. git_branches uses GIT_BRANCH_ALL, so a remote-only
+# checkout still yields `origin/main`.
 query I
 SELECT COUNT(*) >= 1 as has_main_branch
 FROM git_branches('duckdb')
-WHERE branch_name = 'main';
+WHERE branch_name IN ('main', 'origin/main');
 ----
 true
 
