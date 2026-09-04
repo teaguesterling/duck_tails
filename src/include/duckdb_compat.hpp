@@ -65,42 +65,78 @@ inline string CompatMakeName(string name) {
 }
 #endif
 
+// Every shim below dispatches on a TAG rather than with `if constexpr`, so this
+// header also compiles at C++11. Several extensions in this ecosystem build
+// their TUs at C++11 deliberately (forcing C++17 on the extension but not on
+// libduckdb makes static-const members in duckdb's headers acquire implicit
+// inline linkage in one and not the other, which produces multiple-definition
+// link errors), and `if constexpr` is C++17-only. Tag dispatch has the property
+// that matters here: only the selected overload is instantiated, so the branch
+// naming the absent member is never compiled.
+
 // --- LogicalType alias ---------------------------------------------------------
 // v1.5: void SetAlias(string)               -- mutates in place
 // v2.0: LogicalType WithAlias(string) const -- returns a copy, never mutating a
 //       type whose type-info may be shared. SetAlias is REMOVED, not deprecated.
-// `if constexpr` discards the untaken branch only inside a template, hence the
-// template parameter.
+// (Note that only LogicalType::SetAlias went away. BaseExpression::SetAlias is
+// alive and well -- it just takes an Identifier now -- so a bare grep for
+// SetAlias finds sites that must NOT be touched.)
 template <class T, class = void>
 struct CompatHasWithAlias : std::false_type {};
 template <class T>
 struct CompatHasWithAlias<T, decltype(void(std::declval<const T &>().WithAlias(string())))> : std::true_type {};
 
-template <class TYPE = LogicalType>
-inline LogicalType CompatWithAlias(TYPE type, string alias) {
-	if constexpr (CompatHasWithAlias<TYPE>::value) {
-		return type.WithAlias(std::move(alias));
-	} else {
-		type.SetAlias(std::move(alias));
-		return type;
-	}
+template <class TYPE>
+inline LogicalType CompatWithAliasImpl(TYPE type, string alias, std::true_type) {
+	return type.WithAlias(std::move(alias));
+}
+template <class TYPE>
+inline LogicalType CompatWithAliasImpl(TYPE type, string alias, std::false_type) {
+	type.SetAlias(std::move(alias));
+	return type;
+}
+// The ENTRY POINT is deliberately NOT a template. A `template <class TYPE =
+// LogicalType>` form looks equivalent but is not: the default template argument
+// is inert because deduction wins, so the very common call
+//
+//     CompatWithAlias(LogicalType::VARCHAR, "md")
+//
+// deduces TYPE = LogicalTypeId -- `LogicalType::VARCHAR` is a static constexpr
+// LogicalTypeId (types.hpp), not a LogicalType -- and then hard-errors inside
+// the shim with "request for member 'SetAlias' in 'type', which is of non-class
+// type 'duckdb::LogicalTypeId'". A concrete parameter restores the implicit
+// LogicalTypeId -> LogicalType conversion at the call site.
+inline LogicalType CompatWithAlias(LogicalType type, string alias) {
+	return CompatWithAliasImpl(std::move(type), std::move(alias), CompatHasWithAlias<LogicalType>());
 }
 
 // --- Vector::ToUnifiedFormat ---------------------------------------------------
-// v2.0 dropped the count parameter (per-vector size is tracked on the vector).
+// v1.5: ToUnifiedFormat(count, data)  -- the only overload
+// v2.0: ToUnifiedFormat(data)         -- plus the count form kept as [[deprecated]]
+//
+// PROBE FOR THE COUNT-FREE OVERLOAD, not the count-taking one. v2.0 did not
+// remove the count form, it deprecated it, so a probe for the count form is true
+// on BOTH versions and the shim would always take the deprecated path -- silently
+// never calling the new API it exists to reach, and compiling clean the whole
+// time. The count-free form is the one that exists only on v2.0, so it is the
+// one that discriminates.
 template <class T, class = void>
-struct CompatToUnifiedTakesCount : std::false_type {};
+struct CompatToUnifiedWithoutCount : std::false_type {};
 template <class T>
-struct CompatToUnifiedTakesCount<T, decltype(void(std::declval<T &>().ToUnifiedFormat(
-                                        idx_t(0), std::declval<UnifiedVectorFormat &>())))> : std::true_type {};
+struct CompatToUnifiedWithoutCount<T, decltype(void(std::declval<T &>().ToUnifiedFormat(
+                                          std::declval<UnifiedVectorFormat &>())))> : std::true_type {};
 
+template <class VEC>
+inline void CompatToUnifiedFormatImpl(VEC &vec, idx_t, UnifiedVectorFormat &data, std::true_type) {
+	vec.ToUnifiedFormat(data);
+}
+template <class VEC>
+inline void CompatToUnifiedFormatImpl(VEC &vec, idx_t count, UnifiedVectorFormat &data, std::false_type) {
+	vec.ToUnifiedFormat(count, data);
+}
 template <class VEC = Vector>
 inline void CompatToUnifiedFormat(VEC &vec, idx_t count, UnifiedVectorFormat &data) {
-	if constexpr (CompatToUnifiedTakesCount<VEC>::value) {
-		vec.ToUnifiedFormat(count, data);
-	} else {
-		vec.ToUnifiedFormat(data);
-	}
+	CompatToUnifiedFormatImpl(vec, count, data, CompatToUnifiedWithoutCount<VEC>());
 }
 
 // --- Flat/Constant vector mutable data ------------------------------------------
@@ -118,13 +154,21 @@ template <class T>
 struct CompatHasFlatGetDataMutable<T, decltype(void(T::template GetDataMutable<bool>(std::declval<Vector &>())))>
     : std::true_type {};
 
+// NOT interchangeable with const_cast<VALUE *>(FV::GetData<VALUE>(vec)): the
+// mutable accessor goes through BufferMutable(), which un-shares a copy-on-write
+// buffer first. Casting the constness off the read accessor writes into a buffer
+// that may still be shared -- it compiles, and it corrupts silently.
+template <class VALUE, class FV>
+inline VALUE *CompatFlatDataMutableImpl(Vector &vec, std::true_type) {
+	return FV::template GetDataMutable<VALUE>(vec);
+}
+template <class VALUE, class FV>
+inline VALUE *CompatFlatDataMutableImpl(Vector &vec, std::false_type) {
+	return FV::template GetData<VALUE>(vec);
+}
 template <class VALUE, class FV = FlatVector>
 inline VALUE *CompatFlatDataMutable(Vector &vec) {
-	if constexpr (CompatHasFlatGetDataMutable<FV>::value) {
-		return FV::template GetDataMutable<VALUE>(vec);
-	} else {
-		return FV::template GetData<VALUE>(vec);
-	}
+	return CompatFlatDataMutableImpl<VALUE, FV>(vec, CompatHasFlatGetDataMutable<FV>());
 }
 
 // --- Flat vector mutable validity mask -------------------------------------------
@@ -144,13 +188,17 @@ template <class T>
 struct CompatHasFlatValidityMutable<T, decltype(void(T::ValidityMutable(std::declval<Vector &>())))> : std::true_type {
 };
 
+template <class FV>
+inline ValidityMask &CompatFlatValidityMutableImpl(Vector &vec, std::true_type) {
+	return FV::ValidityMutable(vec);
+}
+template <class FV>
+inline ValidityMask &CompatFlatValidityMutableImpl(Vector &vec, std::false_type) {
+	return FV::Validity(vec);
+}
 template <class FV = FlatVector>
 inline ValidityMask &CompatFlatValidityMutable(Vector &vec) {
-	if constexpr (CompatHasFlatValidityMutable<FV>::value) {
-		return FV::ValidityMutable(vec);
-	} else {
-		return FV::Validity(vec);
-	}
+	return CompatFlatValidityMutableImpl<FV>(vec, CompatHasFlatValidityMutable<FV>());
 }
 
 #ifdef DUCKDB_HAS_NEW_VECTOR_HEADERS
