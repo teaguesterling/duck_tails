@@ -1,7 +1,9 @@
 #pragma once
 
 #include "duckdb.hpp"
+#include "duckdb/function/table_function.hpp"
 #include <type_traits>
+#include <utility>
 
 // duckdb_compat.hpp — fleet-standard cross-version shim for DuckDB extensions.
 //
@@ -38,6 +40,9 @@
 // helper is needed rather than an implicit conversion. String LITERALS convert
 // implicitly (Identifier(const char *)), which is why `names = {"a", "b"}` needs
 // no change at all.
+//
+// __has_include ONLY gates whether an Identifier overload of CompatNameStr can
+// exist. It deliberately does NOT decide what CompatName is -- see below.
 #if __has_include("duckdb/common/identifier.hpp")
 #define DUCKDB_HAS_IDENTIFIER 1
 #include "duckdb/common/identifier.hpp"
@@ -47,23 +52,44 @@ namespace duckdb {
 
 // --- bind-signature name type -------------------------------------------------
 // Used wherever a bind callback receives or fills a vector of column names.
-#ifdef DUCKDB_HAS_IDENTIFIER
-using CompatName = Identifier;
-inline string CompatNameStr(const Identifier &id) {
-	return id.GetIdentifierName();
-}
-inline Identifier CompatMakeName(string name) {
-	return Identifier(std::move(name));
-}
-#else
-using CompatName = string;
+//
+// DERIVED FROM DUCKDB, NOT PROBED FOR. This is the one place where the
+// header-presence idiom is actively WRONG, and it fails in the dangerous
+// direction -- on the version we ship, not the one we are porting to:
+//
+//   v1.5-variegata @ our pin      no identifier.hpp    bind takes vector<string>
+//   v1.5-variegata @ branch tip   HAS identifier.hpp   bind takes vector<string>
+//   main (v2.0)                   HAS identifier.hpp   bind takes vector<Identifier>
+//
+// identifier.hpp was BACKPORTED to the stable branch WITHOUT changing
+// table_function_bind_t. So `#if __has_include(identifier.hpp)` is correct today
+// only by the accident that our pin predates the backport; the next routine
+// submodule bump would flip CompatName to Identifier on a DuckDB that still
+// wants strings, and every bind signature in this repo would stop compiling at
+// once. A probe for a header answers "did this header land", which is simply not
+// the question -- the question is "what does the bind callback take".
+//
+// So ask DuckDB directly. TableFunctionBindInput::input_table_names has the same
+// element type as the bind out-parameter on both lines (table_function.hpp:110
+// and :289 on the pin; :123 and :319 on main), and it is a member we can name in
+// a decltype. Deriving from it cannot drift, because if the two ever disagreed
+// DuckDB itself would be inconsistent.
+using CompatName = typename std::remove_reference<decltype(
+    std::declval<TableFunctionBindInput &>().input_table_names)>::type::value_type;
+
+// Returned BY VALUE, not as a reference into the argument: callers routinely
+// write CompatNameStr(CompatMakeName(s)) on a temporary.
 inline string CompatNameStr(const string &name) {
 	return name;
 }
-inline string CompatMakeName(string name) {
-	return name;
+#ifdef DUCKDB_HAS_IDENTIFIER
+inline string CompatNameStr(const Identifier &id) {
+	return id.GetIdentifierName();
 }
 #endif
+inline CompatName CompatMakeName(string name) {
+	return CompatName(std::move(name));
+}
 
 // Every shim below dispatches on a TAG rather than with `if constexpr`, so this
 // header also compiles at C++11. Several extensions in this ecosystem build
