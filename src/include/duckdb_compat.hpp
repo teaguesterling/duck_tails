@@ -127,6 +127,32 @@ inline VALUE *CompatFlatDataMutable(Vector &vec) {
 	}
 }
 
+// --- Flat vector mutable validity mask -------------------------------------------
+// The same const-split applied to the validity mask, and it is a SEPARATE change
+// from the data-pointer one, so it gets its own probe:
+//   v1.5: FlatVector::Validity(Vector &)         returns ValidityMask&
+//   v2.0: FlatVector::Validity(const Vector &)   returns const ValidityMask&
+//         FlatVector::ValidityMutable(Vector &)  returns ValidityMask&
+// On v2.0 the old spelling still COMPILES at the call site and only fails later,
+// where a mutating method is invoked on the returned reference:
+//   error: passing 'const duckdb::ValidityMask' as 'this' argument discards
+//          qualifiers
+// so the reported error line is the SetInvalid/SetValid call, not the accessor.
+template <class T, class = void>
+struct CompatHasFlatValidityMutable : std::false_type {};
+template <class T>
+struct CompatHasFlatValidityMutable<T, decltype(void(T::ValidityMutable(std::declval<Vector &>())))> : std::true_type {
+};
+
+template <class FV = FlatVector>
+inline ValidityMask &CompatFlatValidityMutable(Vector &vec) {
+	if constexpr (CompatHasFlatValidityMutable<FV>::value) {
+		return FV::ValidityMutable(vec);
+	} else {
+		return FV::Validity(vec);
+	}
+}
+
 #ifdef DUCKDB_HAS_NEW_VECTOR_HEADERS
 
 // --- Output chunk finalization ---

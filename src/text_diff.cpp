@@ -176,7 +176,7 @@ static void TextDiffFunction(DataChunk &args, ExpressionState &state, Vector &re
 
 	result.SetVectorType(VectorType::FLAT_VECTOR);
 	auto result_data = CompatFlatDataMutable<string_t>(result);
-	auto &result_validity = FlatVector::Validity(result);
+	auto &result_validity = CompatFlatValidityMutable(result);
 
 	for (idx_t i = 0; i < args.size(); i++) {
 		if (old_vector.GetValue(i).IsNull() || new_vector.GetValue(i).IsNull()) {
@@ -201,7 +201,7 @@ static void DiffTextFunction(DataChunk &args, ExpressionState &state, Vector &re
 
 	result.SetVectorType(VectorType::FLAT_VECTOR);
 	auto result_data = CompatFlatDataMutable<string_t>(result);
-	auto &result_validity = FlatVector::Validity(result);
+	auto &result_validity = CompatFlatValidityMutable(result);
 
 	for (idx_t i = 0; i < args.size(); i++) {
 		if (old_vector.GetValue(i).IsNull() || new_vector.GetValue(i).IsNull()) {
