@@ -514,7 +514,7 @@ static void ProcessGitURI(const string &uri, const GitReadBindData &bind_data, G
 
 // Bind function for static git_read (single URI parameter)
 static unique_ptr<FunctionData> GitReadBind(ClientContext &context, TableFunctionBindInput &input,
-                                            vector<LogicalType> &return_types, vector<string> &names) {
+                                            vector<LogicalType> &return_types, vector<CompatName> &names) {
 	// Extract first parameter (repo_path_or_uri_with_file)
 	if (input.inputs.empty()) {
 		throw BinderException("git_read requires at least one parameter: the file path or git:// URI");
@@ -685,7 +685,7 @@ static void GitReadFunction(ClientContext &context, TableFunctionInput &input, D
 
 // Bind function for git_read_each (Pure LATERAL function)
 static unique_ptr<FunctionData> GitReadEachBind(ClientContext &context, TableFunctionBindInput &input,
-                                                vector<LogicalType> &return_types, vector<string> &names) {
+                                                vector<LogicalType> &return_types, vector<CompatName> &names) {
 	// LATERAL-only: reject direct calls, arguments arrive at runtime via input DataChunk
 	if (!input.inputs.empty()) {
 		throw BinderException("git_read_each is LATERAL-only. For direct calls, use git_read(...) instead");
@@ -764,7 +764,7 @@ static OperatorResultType GitReadEachFunction(ExecutionContext &context, TableFu
 
 			// Read inputs via UnifiedVectorFormat (dictionary/constant safe)
 			UnifiedVectorFormat repo_fmt;
-			input.data[0].ToUnifiedFormat(input.size(), repo_fmt);
+			CompatToUnifiedFormat(input.data[0], input.size(), repo_fmt);
 			const auto *repo_vals = UnifiedVectorFormat::GetData<string_t>(repo_fmt);
 			const auto ridx = repo_fmt.sel->get_index(state.current_input_row);
 			if (!repo_fmt.validity.RowIsValid(ridx)) {
@@ -777,7 +777,7 @@ static OperatorResultType GitReadEachFunction(ExecutionContext &context, TableFu
 			string explicit_ref;
 			if (input.ColumnCount() > 1) {
 				UnifiedVectorFormat ref_fmt;
-				input.data[1].ToUnifiedFormat(input.size(), ref_fmt);
+				CompatToUnifiedFormat(input.data[1], input.size(), ref_fmt);
 				const auto *ref_vals = UnifiedVectorFormat::GetData<string_t>(ref_fmt);
 				const auto r2idx = ref_fmt.sel->get_index(state.current_input_row);
 				if (ref_fmt.validity.RowIsValid(r2idx)) {

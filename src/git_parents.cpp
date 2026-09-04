@@ -22,7 +22,7 @@ static string oid_to_hex(const git_oid *oid) {
 }
 
 // Schema definition for git_parents (ALWAYS includes repo_path as first column)
-static void DefineGitParentsSchema(vector<LogicalType> &return_types, vector<string> &names) {
+static void DefineGitParentsSchema(vector<LogicalType> &return_types, vector<CompatName> &names) {
 	return_types = {
 	    LogicalType::VARCHAR, // repo_path (ALWAYS first)
 	    LogicalType::VARCHAR, // commit_hash
@@ -50,7 +50,7 @@ GitParentsFunctionData::GitParentsFunctionData(const string &ref, const string &
 }
 
 unique_ptr<FunctionData> GitParentsBind(ClientContext &context, TableFunctionBindInput &input,
-                                        vector<LogicalType> &return_types, vector<string> &names) {
+                                        vector<LogicalType> &return_types, vector<CompatName> &names) {
 	bool all_refs = false;
 
 	// Use unified parameter parsing for new signature: git_parents(repo_path_or_uri, [ref])
@@ -311,7 +311,7 @@ OperatorResultType GitParentsEachFunction(ExecutionContext &context, TableFuncti
 
 // Bind function for git_parents_each
 unique_ptr<FunctionData> GitParentsEachBind(ClientContext &context, TableFunctionBindInput &input,
-                                            vector<LogicalType> &return_types, vector<string> &names) {
+                                            vector<LogicalType> &return_types, vector<CompatName> &names) {
 	// Use lateral parameter parsing - ref parameter at index 1 (optional)
 	auto params = ParseLateralGitParams(input, 1); // ref at index 1 (optional)
 

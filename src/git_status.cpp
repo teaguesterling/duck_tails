@@ -193,7 +193,7 @@ static void CollectStatusRows(git_repository *repo, const string &repo_path, boo
 // Schema
 //===--------------------------------------------------------------------===//
 
-static void DefineGitStatusSchema(vector<LogicalType> &return_types, vector<string> &names) {
+static void DefineGitStatusSchema(vector<LogicalType> &return_types, vector<CompatName> &names) {
 	return_types = {
 	    LogicalType::VARCHAR,  // repo_path
 	    LogicalType::VARCHAR,  // file_path
@@ -209,14 +209,14 @@ static void DefineGitStatusSchema(vector<LogicalType> &return_types, vector<stri
 
 static vector<LogicalType> GetGitStatusSchema() {
 	vector<LogicalType> return_types;
-	vector<string> names;
+	vector<CompatName> names;
 	DefineGitStatusSchema(return_types, names);
 	return return_types;
 }
 
-static vector<string> GetGitStatusColumnNames() {
+static vector<CompatName> GetGitStatusColumnNames() {
 	vector<LogicalType> return_types;
-	vector<string> names;
+	vector<CompatName> names;
 	DefineGitStatusSchema(return_types, names);
 	return names;
 }
@@ -241,7 +241,7 @@ static void OutputGitStatusRow(DataChunk &output, const GitStatusRow &row, idx_t
 //===--------------------------------------------------------------------===//
 
 static unique_ptr<FunctionData> GitStatusBind(ClientContext &context, TableFunctionBindInput &input,
-                                              vector<LogicalType> &return_types, vector<string> &names) {
+                                              vector<LogicalType> &return_types, vector<CompatName> &names) {
 	return_types = GetGitStatusSchema();
 	names = GetGitStatusColumnNames();
 
@@ -350,7 +350,7 @@ static unique_ptr<LocalTableFunctionState> GitStatusLocalInit(ExecutionContext &
 //===--------------------------------------------------------------------===//
 
 static unique_ptr<FunctionData> GitStatusEachBind(ClientContext &context, TableFunctionBindInput &input,
-                                                  vector<LogicalType> &return_types, vector<string> &names) {
+                                                  vector<LogicalType> &return_types, vector<CompatName> &names) {
 	return_types = GetGitStatusSchema();
 	names = GetGitStatusColumnNames();
 

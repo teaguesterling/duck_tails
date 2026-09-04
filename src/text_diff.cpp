@@ -175,7 +175,7 @@ static void TextDiffFunction(DataChunk &args, ExpressionState &state, Vector &re
 	auto &new_vector = args.data[1];
 
 	result.SetVectorType(VectorType::FLAT_VECTOR);
-	auto result_data = FlatVector::GetData<string_t>(result);
+	auto result_data = CompatFlatDataMutable<string_t>(result);
 	auto &result_validity = FlatVector::Validity(result);
 
 	for (idx_t i = 0; i < args.size(); i++) {
@@ -200,7 +200,7 @@ static void DiffTextFunction(DataChunk &args, ExpressionState &state, Vector &re
 	auto &new_vector = args.data[1];
 
 	result.SetVectorType(VectorType::FLAT_VECTOR);
-	auto result_data = FlatVector::GetData<string_t>(result);
+	auto result_data = CompatFlatDataMutable<string_t>(result);
 	auto &result_validity = FlatVector::Validity(result);
 
 	for (idx_t i = 0; i < args.size(); i++) {
@@ -239,7 +239,7 @@ static void TextDiffStatsFunction(DataChunk &args, ExpressionState &state, Vecto
 	// For now, return a simple struct with stats
 	// In full implementation, this would parse the TextDiff blob
 	result.SetVectorType(VectorType::CONSTANT_VECTOR);
-	auto result_data = ConstantVector::GetData<string_t>(result);
+	auto result_data = CompatFlatDataMutable<string_t, ConstantVector>(result);
 	result_data[0] = StringVector::AddString(result, "lines_added: 1, lines_removed: 1, lines_modified: 1");
 }
 
@@ -253,7 +253,7 @@ struct TextDiffLinesData : public GlobalTableFunctionState {
 };
 
 static unique_ptr<FunctionData> TextDiffLinesBind(ClientContext &context, TableFunctionBindInput &input,
-                                                  vector<LogicalType> &return_types, vector<string> &names) {
+                                                  vector<LogicalType> &return_types, vector<CompatName> &names) {
 	return_types = {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::BIGINT};
 	names = {"line_type", "content", "line_number"};
 	return nullptr;
@@ -343,7 +343,7 @@ struct ReadGitDiffData : public GlobalTableFunctionState {
 };
 
 static unique_ptr<FunctionData> ReadGitDiffBind(ClientContext &context, TableFunctionBindInput &input,
-                                                vector<LogicalType> &return_types, vector<string> &names) {
+                                                vector<LogicalType> &return_types, vector<CompatName> &names) {
 	// Parse arguments from input.inputs
 	string path1 = input.inputs[0].ToString();
 	string path2;

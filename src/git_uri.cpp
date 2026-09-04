@@ -1,4 +1,5 @@
 #include "git_functions.hpp"
+#include "duckdb_compat.hpp"
 #include "git_filesystem.hpp"
 #include "git_utils.hpp"
 #include "duckdb/common/exception.hpp"
@@ -62,7 +63,7 @@ static void GitUriFunction(DataChunk &args, ExpressionState &state, Vector &resu
 		string uri = ConstructGitUri(repo_path, file_path, commit_ref);
 
 		result.SetVectorType(VectorType::CONSTANT_VECTOR);
-		auto result_data = ConstantVector::GetData<string_t>(result);
+		auto result_data = CompatFlatDataMutable<string_t, ConstantVector>(result);
 		*result_data = StringVector::AddString(result, uri);
 		return;
 	}
@@ -73,9 +74,9 @@ static void GitUriFunction(DataChunk &args, ExpressionState &state, Vector &resu
 	auto &commit_ref_vector = args.data[2];
 
 	UnifiedVectorFormat repo_path_format, file_path_format, commit_ref_format;
-	repo_path_vector.ToUnifiedFormat(args.size(), repo_path_format);
-	file_path_vector.ToUnifiedFormat(args.size(), file_path_format);
-	commit_ref_vector.ToUnifiedFormat(args.size(), commit_ref_format);
+	CompatToUnifiedFormat(repo_path_vector, args.size(), repo_path_format);
+	CompatToUnifiedFormat(file_path_vector, args.size(), file_path_format);
+	CompatToUnifiedFormat(commit_ref_vector, args.size(), commit_ref_format);
 
 	auto repo_path_data = UnifiedVectorFormat::GetData<string_t>(repo_path_format);
 	auto file_path_data = UnifiedVectorFormat::GetData<string_t>(file_path_format);
@@ -83,7 +84,7 @@ static void GitUriFunction(DataChunk &args, ExpressionState &state, Vector &resu
 
 	// Ensure result vector is flat for per-row writes (ChatGPT Fix #1)
 	result.SetVectorType(VectorType::FLAT_VECTOR);
-	auto result_data = FlatVector::GetData<string_t>(result);
+	auto result_data = CompatFlatDataMutable<string_t>(result);
 	for (idx_t i = 0; i < args.size(); i++) {
 		auto repo_idx = repo_path_format.sel->get_index(i);
 		auto file_idx = file_path_format.sel->get_index(i);

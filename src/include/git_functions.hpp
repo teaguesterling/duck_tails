@@ -1,6 +1,7 @@
 #pragma once
 
 #include "duckdb.hpp"
+#include "duckdb_compat.hpp"
 #include "duckdb/function/table_function.hpp"
 #include <git2.h>
 #include "git_path.hpp"
@@ -21,9 +22,9 @@ struct GitLogFunctionData : public TableFunctionData {
 
 void GitLogFunction(ClientContext &context, TableFunctionInput &data_p, DataChunk &output);
 unique_ptr<FunctionData> GitLogBind(ClientContext &context, TableFunctionBindInput &input,
-                                    vector<LogicalType> &return_types, vector<string> &names);
+                                    vector<LogicalType> &return_types, vector<CompatName> &names);
 unique_ptr<FunctionData> GitLogEachBind(ClientContext &context, TableFunctionBindInput &input,
-                                        vector<LogicalType> &return_types, vector<string> &names);
+                                        vector<LogicalType> &return_types, vector<CompatName> &names);
 unique_ptr<GlobalTableFunctionState> GitLogInitGlobal(ClientContext &context, TableFunctionInitInput &input);
 
 // Git log row structure for LATERAL processing
@@ -138,9 +139,9 @@ unique_ptr<LocalTableFunctionState> GitBranchesLocalInit(ExecutionContext &conte
 
 void GitBranchesFunction(ClientContext &context, TableFunctionInput &data_p, DataChunk &output);
 unique_ptr<FunctionData> GitBranchesBind(ClientContext &context, TableFunctionBindInput &input,
-                                         vector<LogicalType> &return_types, vector<string> &names);
+                                         vector<LogicalType> &return_types, vector<CompatName> &names);
 unique_ptr<FunctionData> GitBranchesEachBind(ClientContext &context, TableFunctionBindInput &input,
-                                             vector<LogicalType> &return_types, vector<string> &names);
+                                             vector<LogicalType> &return_types, vector<CompatName> &names);
 unique_ptr<GlobalTableFunctionState> GitBranchesInitGlobal(ClientContext &context, TableFunctionInitInput &input);
 
 // Git tags row structure for LATERAL processing
@@ -204,9 +205,9 @@ unique_ptr<LocalTableFunctionState> GitTagsLocalInit(ExecutionContext &context, 
 
 void GitTagsFunction(ClientContext &context, TableFunctionInput &data_p, DataChunk &output);
 unique_ptr<FunctionData> GitTagsBind(ClientContext &context, TableFunctionBindInput &input,
-                                     vector<LogicalType> &return_types, vector<string> &names);
+                                     vector<LogicalType> &return_types, vector<CompatName> &names);
 unique_ptr<FunctionData> GitTagsEachBind(ClientContext &context, TableFunctionBindInput &input,
-                                         vector<LogicalType> &return_types, vector<string> &names);
+                                         vector<LogicalType> &return_types, vector<CompatName> &names);
 unique_ptr<GlobalTableFunctionState> GitTagsInitGlobal(ClientContext &context, TableFunctionInitInput &input);
 
 // Git tree operation modes
@@ -268,9 +269,9 @@ unique_ptr<LocalTableFunctionState> GitTreeLocalInit(ExecutionContext &context, 
 
 void GitTreeFunction(ClientContext &context, TableFunctionInput &data_p, DataChunk &output);
 unique_ptr<FunctionData> GitTreeBind(ClientContext &context, TableFunctionBindInput &input,
-                                     vector<LogicalType> &return_types, vector<string> &names);
+                                     vector<LogicalType> &return_types, vector<CompatName> &names);
 unique_ptr<FunctionData> GitTreeEachBind(ClientContext &context, TableFunctionBindInput &input,
-                                         vector<LogicalType> &return_types, vector<string> &names);
+                                         vector<LogicalType> &return_types, vector<CompatName> &names);
 unique_ptr<GlobalTableFunctionState> GitTreeInitGlobal(ClientContext &context, TableFunctionInitInput &input);
 
 // Git parents table function
@@ -314,13 +315,13 @@ struct GitParentsEachBindData : public TableFunctionData {
 
 // Function declarations for git_parents_each
 unique_ptr<FunctionData> GitParentsEachBind(ClientContext &context, TableFunctionBindInput &input,
-                                            vector<LogicalType> &return_types, vector<string> &names);
+                                            vector<LogicalType> &return_types, vector<CompatName> &names);
 unique_ptr<LocalTableFunctionState> GitParentsLocalInit(ExecutionContext &context, TableFunctionInitInput &input,
                                                         GlobalTableFunctionState *global_state);
 OperatorResultType GitParentsEachFunction(ExecutionContext &context, TableFunctionInput &data_p, DataChunk &input,
                                           DataChunk &output);
 unique_ptr<FunctionData> GitParentsBind(ClientContext &context, TableFunctionBindInput &input,
-                                        vector<LogicalType> &return_types, vector<string> &names);
+                                        vector<LogicalType> &return_types, vector<CompatName> &names);
 unique_ptr<GlobalTableFunctionState> GitParentsInitGlobal(ClientContext &context, TableFunctionInitInput &input);
 
 // Registration functions

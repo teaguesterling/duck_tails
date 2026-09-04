@@ -24,7 +24,7 @@ GitLogFunctionData::GitLogFunctionData(const string &ref) : repo_path(""), resol
 }
 
 unique_ptr<FunctionData> GitLogBind(ClientContext &context, TableFunctionBindInput &input,
-                                    vector<LogicalType> &return_types, vector<string> &names) {
+                                    vector<LogicalType> &return_types, vector<CompatName> &names) {
 	// Use unified parameter parsing to support both git:// URIs and filesystem paths
 	auto params = ParseUnifiedGitParams(input, 1); // ref parameter at index 1 (optional)
 
@@ -384,7 +384,7 @@ static OperatorResultType GitLogEachFunction(ExecutionContext &context, TableFun
 
 // GitLogEachBind function - LATERAL function bind for dynamic repo_path processing
 unique_ptr<FunctionData> GitLogEachBind(ClientContext &context, TableFunctionBindInput &input,
-                                        vector<LogicalType> &return_types, vector<string> &names) {
+                                        vector<LogicalType> &return_types, vector<CompatName> &names) {
 	// For LATERAL functions, use ParseLateralGitParams to get optional ref parameter
 	// The repo_path will come from runtime DataChunk, not bind time
 	auto params = ParseLateralGitParams(input, 1); // ref parameter at index 1 (optional)

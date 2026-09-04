@@ -21,7 +21,7 @@ namespace duckdb {
 //===--------------------------------------------------------------------===//
 
 // Schema definition for git_tree
-static void DefineGitTreeSchema(vector<LogicalType> &return_types, vector<string> &names) {
+static void DefineGitTreeSchema(vector<LogicalType> &return_types, vector<CompatName> &names) {
 	return_types = {
 	    LogicalType::VARCHAR,   // git_uri (complete git:// URI)
 	    LogicalType::VARCHAR,   // repo_path (repository filesystem path)
@@ -45,15 +45,15 @@ static void DefineGitTreeSchema(vector<LogicalType> &return_types, vector<string
 // Helper to get schema return types
 static vector<LogicalType> GetGitTreeSchema() {
 	vector<LogicalType> return_types;
-	vector<string> names;
+	vector<CompatName> names;
 	DefineGitTreeSchema(return_types, names);
 	return return_types;
 }
 
 // Helper to get schema column names
-static vector<string> GetGitTreeColumnNames() {
+static vector<CompatName> GetGitTreeColumnNames() {
 	vector<LogicalType> return_types;
-	vector<string> names;
+	vector<CompatName> names;
 	DefineGitTreeSchema(return_types, names);
 	return names;
 }
@@ -553,7 +553,7 @@ static void ProcessIndexTree(git_repository *repo, const string &repo_path, cons
 //===--------------------------------------------------------------------===//
 
 unique_ptr<FunctionData> GitTreeBind(ClientContext &context, TableFunctionBindInput &input,
-                                     vector<LogicalType> &return_types, vector<string> &names) {
+                                     vector<LogicalType> &return_types, vector<CompatName> &names) {
 	// Set return schema first
 	return_types = GetGitTreeSchema();
 	names = GetGitTreeColumnNames();
@@ -592,7 +592,7 @@ unique_ptr<FunctionData> GitTreeBind(ClientContext &context, TableFunctionBindIn
 }
 
 unique_ptr<FunctionData> GitTreeEachBind(ClientContext &context, TableFunctionBindInput &input,
-                                         vector<LogicalType> &return_types, vector<string> &names) {
+                                         vector<LogicalType> &return_types, vector<CompatName> &names) {
 	// Set return schema
 	return_types = GetGitTreeSchema();
 	names = GetGitTreeColumnNames();

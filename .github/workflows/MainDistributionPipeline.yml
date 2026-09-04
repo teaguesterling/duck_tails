@@ -12,10 +12,17 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # v2.0 source-compatibility canary. Runs ON DEMAND ONLY
+  # (`gh workflow run MainDistributionPipeline.yml --ref <branch>`): a push and a
+  # pull_request both fire on the same commit and a PR's check rollup includes
+  # both, so an ungated canary would show red on every PR while main is ahead of
+  # what we ship. `if:` rather than `continue-on-error:` because a job calling a
+  # REUSABLE workflow accepts only a fixed key set -- adding continue-on-error
+  # makes the whole file fail to parse and schedules zero jobs.
   duckdb-next-build:
-    name: Build extension binaries
+    name: Build extension binaries (duckdb main canary)
     uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@main
-    if: false
+    if: github.event_name == 'workflow_dispatch'
     with:
       duckdb_version: main
       ci_tools_version: main
