@@ -50,6 +50,12 @@ unique_ptr<FunctionData> GitLogBind(ClientContext &context, TableFunctionBindInp
 		auto ctx = GitContextManager::Instance().ProcessGitUri(params.repo_path_or_uri, params.ref);
 		auto result = make_uniq<GitLogFunctionData>(params.repo_path_or_uri, ctx.repo_path);
 		result->file_path = ctx.file_path;
+		// Carry the ref through to the walk. Dropping it here is what made
+		// git_log('git://repo@develop') answer with main's history: a plausible
+		// commit list belonging to the wrong branch, with no error to notice.
+		// WORKDIR and STAGED name states that have no commit history of their
+		// own, so they keep walking from HEAD.
+		result->ref = (ctx.ref_kind == RefKind::COMMIT) ? ctx.final_ref : "HEAD";
 		return std::move(result);
 	} catch (const std::exception &e) {
 		throw BinderException("git_log: %s", e.what());
@@ -85,11 +91,34 @@ void GitLogFunction(ClientContext &context, TableFunctionInput &data_p, DataChun
 			throw IOException("Failed to create revwalk: %s", e ? e->message : "Unknown error");
 		}
 
-		// Push HEAD
-		error = git_revwalk_push_head(local_state.walker);
-		if (error != 0) {
-			const git_error *e = git_error_last();
-			throw IOException("Failed to push HEAD: %s", e ? e->message : "Unknown error");
+		// Start the walk at the requested ref (HEAD when none was given).
+		if (bind_data.ref.empty() || bind_data.ref == "HEAD") {
+			error = git_revwalk_push_head(local_state.walker);
+			if (error != 0) {
+				const git_error *e = git_error_last();
+				throw IOException("Failed to push HEAD: %s", e ? e->message : "Unknown error");
+			}
+		} else {
+			git_object *ref_obj = nullptr;
+			error = git_revparse_single(&ref_obj, local_state.repo, bind_data.ref.c_str());
+			if (error != 0) {
+				const git_error *e = git_error_last();
+				throw IOException("Failed to resolve ref '%s' in repository '%s': %s", bind_data.ref,
+				                  bind_data.repo_path, e ? e->message : "Unknown error");
+			}
+			// An annotated tag resolves to the tag object; the walk needs a commit.
+			git_object *commit_obj = nullptr;
+			if (git_object_peel(&commit_obj, ref_obj, GIT_OBJECT_COMMIT) == 0) {
+				git_object_free(ref_obj);
+				ref_obj = commit_obj;
+			}
+			error = git_revwalk_push(local_state.walker, git_object_id(ref_obj));
+			git_object_free(ref_obj);
+			if (error != 0) {
+				const git_error *e = git_error_last();
+				throw IOException("Failed to start the log walk at '%s': %s", bind_data.ref,
+				                  e ? e->message : "Unknown error");
+			}
 		}
 
 		local_state.initialized = true;

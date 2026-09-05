@@ -68,14 +68,13 @@ SELECT trim(text, chr(10)) FROM git_read('git://test/tmp/slash-refs-repo/README.
 ----
 feature branch content
 
-# git_log accepts a slash-bearing branch in the URI instead of failing on
-# "feature". (It walks from HEAD rather than from the ref either way: git_log
-# drops the URI's ref, which predates this fix and is equally visible with a
-# slash-free ref such as @develop, so it is not asserted here.)
+# git_log follows a slash-bearing branch: feature/foo has two commits where
+# HEAD (main) has one. (git_log honouring the URI's ref at all is issue #34,
+# covered in test/sql/git_log_uri_ref.test.)
 query I
-SELECT COUNT(*) > 0 FROM git_log('git://test/tmp/slash-refs-repo@feature/foo');
+SELECT COUNT(*) FROM git_log('git://test/tmp/slash-refs-repo@feature/foo');
 ----
-true
+2
 
 # The same branch spelling on the pre-existing tarball fixture
 query I
