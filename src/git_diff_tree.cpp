@@ -230,7 +230,7 @@ static void CollectDiffRows(git_repository *repo, const string &repo_path, const
 // Schema
 //===--------------------------------------------------------------------===//
 
-static void DefineGitDiffTreeSchema(vector<LogicalType> &return_types, vector<string> &names) {
+static void DefineGitDiffTreeSchema(vector<LogicalType> &return_types, vector<CompatName> &names) {
 	return_types = {
 	    LogicalType::VARCHAR, // repo_path
 	    LogicalType::VARCHAR, // file_path
@@ -243,14 +243,14 @@ static void DefineGitDiffTreeSchema(vector<LogicalType> &return_types, vector<st
 
 static vector<LogicalType> GetGitDiffTreeSchema() {
 	vector<LogicalType> return_types;
-	vector<string> names;
+	vector<CompatName> names;
 	DefineGitDiffTreeSchema(return_types, names);
 	return return_types;
 }
 
-static vector<string> GetGitDiffTreeColumnNames() {
+static vector<CompatName> GetGitDiffTreeColumnNames() {
 	vector<LogicalType> return_types;
-	vector<string> names;
+	vector<CompatName> names;
 	DefineGitDiffTreeSchema(return_types, names);
 	return names;
 }
@@ -272,7 +272,7 @@ static void OutputGitDiffTreeRow(DataChunk &output, const GitDiffTreeRow &row, i
 //===--------------------------------------------------------------------===//
 
 static unique_ptr<FunctionData> GitDiffTreeBind(ClientContext &context, TableFunctionBindInput &input,
-                                                vector<LogicalType> &return_types, vector<string> &names) {
+                                                vector<LogicalType> &return_types, vector<CompatName> &names) {
 	return_types = GetGitDiffTreeSchema();
 	names = GetGitDiffTreeColumnNames();
 
@@ -388,7 +388,7 @@ GitDiffTreeLocalInit(ExecutionContext &context, TableFunctionInitInput &input, G
 //===--------------------------------------------------------------------===//
 
 static unique_ptr<FunctionData> GitDiffTreeEachBind(ClientContext &context, TableFunctionBindInput &input,
-                                                    vector<LogicalType> &return_types, vector<string> &names) {
+                                                    vector<LogicalType> &return_types, vector<CompatName> &names) {
 	return_types = GetGitDiffTreeSchema();
 	names = GetGitDiffTreeColumnNames();
 

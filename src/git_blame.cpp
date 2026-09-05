@@ -317,7 +317,7 @@ static void CollectBlameRows(git_repository *repo, const string &repo_path, cons
 // Schemas
 //===--------------------------------------------------------------------===//
 
-static void DefineHunksSchema(vector<LogicalType> &return_types, vector<string> &names) {
+static void DefineHunksSchema(vector<LogicalType> &return_types, vector<CompatName> &names) {
 	return_types = {LogicalType::VARCHAR, LogicalType::VARCHAR,   LogicalType::VARCHAR, LogicalType::VARCHAR,
 	                LogicalType::BIGINT,  LogicalType::BIGINT,    LogicalType::VARCHAR, LogicalType::VARCHAR,
 	                LogicalType::VARCHAR, LogicalType::TIMESTAMP, LogicalType::VARCHAR, LogicalType::VARCHAR,
@@ -412,7 +412,7 @@ static void ApplyBlameNamedParams(const TableFunctionBindInput &input, GitBlameB
 }
 
 static unique_ptr<FunctionData> GitBlameHunksBind(ClientContext &context, TableFunctionBindInput &input,
-                                                  vector<LogicalType> &return_types, vector<string> &names) {
+                                                  vector<LogicalType> &return_types, vector<CompatName> &names) {
 	DefineHunksSchema(return_types, names);
 
 	if (input.inputs.empty()) {
@@ -502,7 +502,7 @@ static void GitBlameHunksFunction(ClientContext &context, TableFunctionInput &da
 // git_blame per-line schema + exec
 //===--------------------------------------------------------------------===//
 
-static void DefineBlameSchema(vector<LogicalType> &return_types, vector<string> &names) {
+static void DefineBlameSchema(vector<LogicalType> &return_types, vector<CompatName> &names) {
 	return_types = {LogicalType::VARCHAR, LogicalType::VARCHAR,   LogicalType::VARCHAR, LogicalType::VARCHAR,
 	                LogicalType::BIGINT,  LogicalType::VARCHAR,   LogicalType::VARCHAR, LogicalType::VARCHAR,
 	                LogicalType::VARCHAR, LogicalType::TIMESTAMP, LogicalType::VARCHAR, LogicalType::VARCHAR,
@@ -534,7 +534,7 @@ static void OutputBlameRow(DataChunk &output, const GitBlameRow &row, idx_t row_
 }
 
 static unique_ptr<FunctionData> GitBlameBind(ClientContext &context, TableFunctionBindInput &input,
-                                             vector<LogicalType> &return_types, vector<string> &names) {
+                                             vector<LogicalType> &return_types, vector<CompatName> &names) {
 	DefineBlameSchema(return_types, names);
 
 	if (input.inputs.empty()) {
@@ -636,7 +636,7 @@ static unique_ptr<FunctionData> GitBlameLateralBind(ClientContext &context, Tabl
 }
 
 static unique_ptr<FunctionData> GitBlameHunksEachBind(ClientContext &context, TableFunctionBindInput &input,
-                                                      vector<LogicalType> &return_types, vector<string> &names) {
+                                                      vector<LogicalType> &return_types, vector<CompatName> &names) {
 	DefineHunksSchema(return_types, names);
 	return GitBlameLateralBind(context, input, /*per_line=*/false);
 }
@@ -760,7 +760,7 @@ static OperatorResultType GitBlameHunksEachFunction(ExecutionContext &context, T
 }
 
 static unique_ptr<FunctionData> GitBlameEachBind(ClientContext &context, TableFunctionBindInput &input,
-                                                 vector<LogicalType> &return_types, vector<string> &names) {
+                                                 vector<LogicalType> &return_types, vector<CompatName> &names) {
 	DefineBlameSchema(return_types, names);
 	return GitBlameLateralBind(context, input, /*per_line=*/true);
 }

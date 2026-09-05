@@ -12,10 +12,17 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # v2.0 source-compatibility canary. Runs ON DEMAND ONLY
+  # (`gh workflow run MainDistributionPipeline.yml --ref <branch>`): a push and a
+  # pull_request both fire on the same commit and a PR's check rollup includes
+  # both, so an ungated canary would show red on every PR while main is ahead of
+  # what we ship. `if:` rather than `continue-on-error:` because a job calling a
+  # REUSABLE workflow accepts only a fixed key set -- adding continue-on-error
+  # makes the whole file fail to parse and schedules zero jobs.
   duckdb-next-build:
-    name: Build extension binaries
+    name: Build extension binaries (duckdb main canary)
     uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@main
-    if: false
+    if: github.event_name == 'workflow_dispatch'
     with:
       duckdb_version: main
       ci_tools_version: main
@@ -25,6 +32,21 @@ jobs:
       # transport this extension is built around is unsupported on Windows, so
       # Windows builds/tests are not maintained here.
       exclude_archs: 'wasm_mvp;wasm_eh;wasm_threads'
+      # TEMPORARY DIAGNOSTIC -- REVERT BEFORE MERGE.
+      # The v2.0 build is green; 6 tests fail at RUNTIME. This runner's harness
+      # prints the failing query and "FAILED" but NOT the actual-vs-expected diff
+      # or any exception text, so the log says nothing about WHY. Re-running the
+      # same files serially through the raw unittest binary does print it.
+      # post_build_command runs after `make release`, before the test phase;
+      # `|| true` keeps the step green so the log survives either way.
+      post_build_command: >-
+        bash test/fixtures/setup_fixtures.sh setup || true ;
+        for t in git_log_path_filter debug_complex_lateral_no_verification
+        duck_tails_comprehensive git_read_each_comprehensive
+        git_tags_each_comprehensive git_tags_comprehensive ; do
+        echo "===== DIAG $t =====" ;
+        ./build/release/test/unittest "test/sql/$t.test" || true ;
+        done
 
   duckdb-stable-build:
     name: Build extension binaries
