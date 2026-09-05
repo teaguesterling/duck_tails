@@ -1,0 +1,85 @@
+# name: test/sql/git_filesystem_tree_glob.test
+# description: Globbing a commit tree through the git:// filesystem (GitFileSystem::ListFiles)
+# group: [sql]
+
+require duck_tails
+
+require notwindows
+
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
+
+# Fixtures:
+#   test/tmp/main-repo        HEAD: README.md, app.js, src/main.py
+#   test/tmp/slash-refs-repo  main: README.md, data/rows.csv (2 rows)
+#                             feature/foo: + feature-only.txt, data/rows.csv (3 rows)
+
+# '**' crawls the whole tree
+query I
+SELECT COUNT(*) FROM glob('git://test/tmp/main-repo@HEAD/**');
+----
+3
+
+# ...and filters on the trailing component
+query I
+SELECT COUNT(*) FROM glob('git://test/tmp/main-repo@HEAD/**/*.py');
+----
+1
+
+# A glob written in the path part of the URI resolves the same way
+query I
+SELECT COUNT(*) FROM glob('git://test/tmp/main-repo/**/*.py@HEAD');
+----
+1
+
+# Wildcards do not cross directory separators
+query I
+SELECT COUNT(*) FROM glob('git://test/tmp/main-repo@HEAD/*.js');
+----
+1
+
+query I
+SELECT COUNT(*) FROM glob('git://test/tmp/main-repo@HEAD/*.py');
+----
+0
+
+# Directory-scoped glob
+query I
+SELECT COUNT(*) FROM glob('git://test/tmp/main-repo@HEAD/src/*.py');
+----
+1
+
+# '?' matches a single character
+query I
+SELECT COUNT(*) FROM glob('git://test/tmp/main-repo@HEAD/app.?s');
+----
+1
+
+# Character classes
+query I
+SELECT COUNT(*) FROM glob('git://test/tmp/main-repo@HEAD/src/[lm]ain.py');
+----
+1
+
+query I
+SELECT COUNT(*) FROM glob('git://test/tmp/main-repo@HEAD/src/[!m]ain.py');
+----
+0
+
+# The URIs handed back by the glob are re-openable, and they keep the revision
+# they were globbed at instead of falling back to HEAD.
+query I
+SELECT COUNT(*) FROM read_csv('git://test/tmp/slash-refs-repo/data/*.csv@feature/foo');
+----
+3
+
+query I
+SELECT COUNT(*) FROM read_csv('git://test/tmp/slash-refs-repo/data/*.csv@main');
+----
+2
+
+# A glob matching nothing in the tree is an empty match, not a crash
+statement error
+SELECT * FROM read_csv('git://test/tmp/main-repo@HEAD/**/*.parquet');
+----
+No files found that match the pattern

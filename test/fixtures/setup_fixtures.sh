@@ -75,6 +75,12 @@ setup_fixtures() {
     echo "Generating LFS OID traversal security fixture..."
     bash "$FIXTURES_DIR/../scripts/setup_lfs_oid_traversal_fixture.sh" "$TEMP_DIR"
 
+    # Generate the slash-bearing-ref fixture (branches feature/foo and
+    # fix/deep/nested, tag release/v1.0). Kept as a generator so the refs it
+    # carries stay readable in the script instead of buried in a tarball.
+    echo "Generating slash-bearing ref fixture..."
+    bash "$FIXTURES_DIR/../scripts/setup_slash_refs_fixture.sh" "$TEMP_DIR"
+
     echo "Fixtures extracted successfully to: $TEMP_DIR"
     echo "Run '$0 validate' to verify fixture integrity"
 }

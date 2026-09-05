@@ -87,6 +87,18 @@ git_object *GitContextManager::ValidateAndResolveReference(const string &repo_pa
 	git_object *obj = nullptr;
 	error = git_revparse_single(&obj, repo, ref.c_str());
 
+	// An annotated tag resolves to the tag object rather than to the commit it
+	// points at, and the consumers of this context all want the commit. Peel it
+	// here, while the repository is still open (peeling reads the object
+	// database); peeling is a no-op for an object that is already a commit.
+	if (error == 0) {
+		git_object *peeled = nullptr;
+		if (git_object_peel(&peeled, obj, GIT_OBJECT_COMMIT) == 0) {
+			git_object_free(obj);
+			obj = peeled;
+		}
+	}
+
 	// Close repository immediately after validation (we don't need it anymore)
 	git_repository_free(repo);
 
