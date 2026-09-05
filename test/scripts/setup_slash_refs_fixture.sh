@@ -75,5 +75,7 @@ git commit -q -m "fix/deep/nested: add a branch-only file"
 git checkout -q main
 
 echo "Slash-ref fixture ready at: $REPO"
-git --no-pager branch --format='  branch %(refname:short)'
-git --no-pager tag --format='  tag %(refname:short)'
+# Plain porcelain here on purpose: `--format` needs git >= 2.13 and this script
+# runs inside whatever container the extension CI builds in.
+git --no-pager branch | sed 's/^/  branch /'
+git --no-pager tag | sed 's/^/  tag /'
