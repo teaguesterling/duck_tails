@@ -604,6 +604,20 @@ int64_t GitFileSystem::Read(FileHandle &handle, void *buffer, int64_t nr_bytes) 
 	}
 }
 
+// Positional read. Blob content is already fully in memory (and the LFS handle
+// delegates to a seekable handle), so this is a seek followed by the sequential
+// read. DuckDB requires the positional form to deliver every requested byte or
+// throw -- a short read here would look like a truncated file to the caller.
+void GitFileSystem::Read(FileHandle &handle, void *buffer, int64_t nr_bytes, idx_t location) {
+	Seek(handle, location);
+	int64_t bytes_read = Read(handle, buffer, nr_bytes);
+	if (bytes_read != nr_bytes) {
+		throw IOException("Could not read all bytes from git file '%s': requested %s bytes at offset %s, got %s",
+		                  handle.GetPath(), std::to_string(nr_bytes), std::to_string(location),
+		                  std::to_string(bytes_read));
+	}
+}
+
 void GitFileSystem::Seek(FileHandle &handle, idx_t location) {
 	if (auto *lfs_handle = dynamic_cast<GitLFSFileHandle *>(&handle)) {
 		lfs_handle->Seek(location);
