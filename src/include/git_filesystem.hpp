@@ -192,7 +192,7 @@ private:
 	git_repository *OpenRepository(const string &repo_path);
 	git_object *ResolveRevision(git_repository *repo, const string &revision);
 	string GetBlobContent(git_repository *repo, const string &file_path, git_object *commit_obj);
-	vector<OpenFileInfo> ListFiles(git_repository *repo, const string &pattern, git_object *commit_obj);
+	vector<OpenFileInfo> ListFiles(git_repository *repo, const GitPath &git_path, git_object *commit_obj);
 
 	// LFS support methods
 	bool IsLFSPointer(const string &content);

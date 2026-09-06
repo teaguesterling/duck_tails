@@ -28,7 +28,9 @@ SELECT * FROM read_csv('git://metrics.csv@v1.0.0');
 SELECT * FROM read_csv('git://../other-repo/config.json@HEAD');
 ```
 
-Git LFS files are automatically detected and streamed from local cache when available.
+Git LFS files are automatically detected and streamed from the local LFS cache
+(`.git/lfs/objects/`). Fetching an object that has not been pulled yet is not implemented: reading
+one raises an error telling you to run `git lfs pull` rather than returning the pointer text.
 
 ### 📊 Git Table Functions
 Query your git repository metadata directly with clean, simple syntax:
@@ -150,13 +152,15 @@ SELECT * FROM read_csv('git://test/data/sales.csv@HEAD');
 ```
 
 ### Testing
-Duck Tails includes a comprehensive test suite with **736 test assertions across 46 test cases** covering all functionality:
+Duck Tails is covered by a sqllogictest suite under `test/sql/`, exercised against generated git
+fixtures (`test/fixtures/setup_fixtures.sh`) so the assertions do not depend on this repository's
+own history:
 
 ```bash
-# Run all tests
+# Set up fixtures and run all tests
 make test
 
-# Expected output: All tests passed (736 assertions in 46 test cases)
+# The run prints the assertion and test-case totals for the current suite
 ```
 
 ## 📋 Examples
@@ -289,7 +293,7 @@ Duck Tails implements a custom DuckDB FileSystem that intercepts `git://` URLs a
 - **Seek Support**: Full random access within git blob content and LFS files
 - **LFS Auto-Detection**: Automatic recognition and handling of LFS pointer files
 - **Local Cache Optimization**: Prefers local `.git/lfs/objects/` cache when available
-- **RAII Design**: Smart pointer usage throughout for memory safety
+- **Scoped Ownership**: DuckDB `unique_ptr`/`shared_ptr` for handles and buffers; the raw libgit2 handles (`git_repository*`, `git_object*`) the filesystem layer holds are freed explicitly at their owning scope
 - **Error Resilient**: Clear error messages ("No git repository found") with comprehensive edge case handling
 - **Mixed File Systems**: Support for local + git://, S3 + git://, and other combinations
 - **Zero-Argument Functions**: Clean syntax defaulting to current directory
@@ -332,7 +336,7 @@ make test
 - **DuckDB Extension API**: FileSystem and table function registration
 - **libgit2**: Git repository access and blob content loading  
 - **vcpkg**: Dependency management for cross-platform builds
-- **RAII**: Smart pointer usage throughout for memory safety
+- **Ownership**: DuckDB smart pointers for file handles and buffers; libgit2 objects are raw C handles freed explicitly by their owner
 
 ### Test-Driven Development
 All new features should include comprehensive tests. Our test suite is designed to be resilient to repository changes and uses flexible assertions that won't break with new commits.
@@ -351,7 +355,7 @@ All new features should include comprehensive tests. Our test suite is designed 
 - **Git LFS Support**: Automatic detection, streaming, and local cache optimization
 - **Memory Management**: Efficient blob loading with seek operations and streaming for large files
 - **Error Handling**: Comprehensive edge case handling with user-friendly error messages
-- **Comprehensive Test Coverage**: 736 assertions across 46 test cases
+- **Comprehensive Test Coverage**: sqllogictest suite over generated git fixtures (`make test`)
 
 ### 📊 Technical Details
 - **7 core components**: GitFileSystem, GitFileHandle, GitLFSFileHandle, GitPath, Table Functions, TextDiff, File Integration

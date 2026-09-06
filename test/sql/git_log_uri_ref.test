@@ -1,0 +1,162 @@
+# name: test/sql/git_log_uri_ref.test
+# description: git_log must walk from the ref in a git:// URI, not from HEAD (issue #34)
+# group: [sql]
+
+require duck_tails
+
+require notwindows
+
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
+
+# Fixtures and the histories these assertions rely on:
+#
+#   test/tmp/main-repo         HEAD = main
+#     main          3 commits: Merge develop into main / Add develop branch / Initial commit
+#     develop       2 commits: Add develop branch / Initial commit
+#     feature/test  3 commits: Add test functionality / Add develop branch / Initial commit
+#   test/tmp/slash-refs-repo   HEAD = main
+#     main          1 commit
+#     feature/foo   2 commits, tagged release/v2.0 (annotated)
+#
+# feature/test is deliberately the same LENGTH as HEAD's history: walking from
+# HEAD returns a list of the right size with the wrong commits in it, so the
+# assertions below check which commits came back, not just how many.
+
+# ==============================================================
+# A branch shorter than HEAD's history
+# ==============================================================
+
+query I
+SELECT COUNT(*) FROM git_log('git://test/tmp/main-repo@develop');
+----
+2
+
+# The merge commit exists only on main; walking from HEAD would include it.
+query I
+SELECT COUNT(*) FROM git_log('git://test/tmp/main-repo@develop') WHERE message LIKE 'Merge develop%';
+----
+0
+
+query I
+SELECT trim(message, chr(10)) FROM git_log('git://test/tmp/main-repo@develop')
+WHERE parent_count = 1;
+----
+Add develop branch
+
+# ==============================================================
+# A branch the same length as HEAD's history, with different commits
+# ==============================================================
+
+query I
+SELECT COUNT(*) FROM git_log('git://test/tmp/main-repo@feature/test');
+----
+3
+
+query I
+SELECT COUNT(*) FROM git_log('git://test/tmp/main-repo@feature/test')
+WHERE message LIKE 'Add test functionality%';
+----
+1
+
+query I
+SELECT COUNT(*) FROM git_log('git://test/tmp/main-repo@feature/test')
+WHERE message LIKE 'Merge develop%';
+----
+0
+
+# ==============================================================
+# Slash-bearing refs, tags and raw commit ids
+# ==============================================================
+
+# slash-refs-repo's HEAD (main) has a single commit; feature/foo has two
+query I
+SELECT COUNT(*) FROM git_log('git://test/tmp/slash-refs-repo@feature/foo');
+----
+2
+
+query I
+SELECT COUNT(*) FROM git_log('git://test/tmp/slash-refs-repo@feature/foo')
+WHERE message LIKE 'feature/foo:%';
+----
+1
+
+query I
+SELECT COUNT(*) FROM git_log('git://test/tmp/slash-refs-repo@fix/deep/nested')
+WHERE message LIKE 'fix/deep/nested:%';
+----
+1
+
+# Annotated tag with a slash, pointing at the feature/foo commit
+query I
+SELECT COUNT(*) FROM git_log('git://test/tmp/slash-refs-repo@release/v2.0');
+----
+2
+
+# Lightweight tag on the main commit
+query I
+SELECT COUNT(*) FROM git_log('git://test/tmp/slash-refs-repo@release/v1.0');
+----
+1
+
+# A raw commit id walks from that commit
+query I
+SELECT COUNT(*) FROM git_log('git://test/tmp/main-repo@98a81b6');
+----
+2
+
+# ==============================================================
+# The ref also selects which commits the path filter sees
+# ==============================================================
+
+# src/test.py exists only on feature/test, so walking from HEAD finds nothing
+query I
+SELECT COUNT(*) FROM git_log('git://test/tmp/main-repo/src/test.py@feature/test');
+----
+1
+
+query I
+SELECT COUNT(*) FROM git_log('git://test/tmp/main-repo/src/main.py@develop');
+----
+1
+
+# ==============================================================
+# git_log and git_log_each agree (git_log_each already honoured the ref)
+# ==============================================================
+
+query I
+SELECT (SELECT COUNT(*) FROM git_log('git://test/tmp/main-repo@develop'))
+     = (SELECT COUNT(*) FROM git_log_each('git://test/tmp/main-repo@develop'));
+----
+true
+
+# ==============================================================
+# Regressions: no ref, and the pseudo-refs, still walk from HEAD
+# ==============================================================
+
+query I
+SELECT COUNT(*) FROM git_log('test/tmp/main-repo');
+----
+3
+
+query I
+SELECT COUNT(*) FROM git_log('git://test/tmp/main-repo@HEAD') WHERE message LIKE 'Merge develop%';
+----
+1
+
+# WORKDIR and STAGED have no history of their own: they walk from HEAD
+query I
+SELECT COUNT(*) FROM git_log('git://test/tmp/main-repo@WORKDIR');
+----
+3
+
+query I
+SELECT COUNT(*) FROM git_log('git://test/tmp/main-repo@STAGED');
+----
+3
+
+# A ref that does not exist is still rejected at bind time
+statement error
+SELECT * FROM git_log('git://test/tmp/main-repo@no-such-ref');
+----
+unable to parse OID

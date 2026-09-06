@@ -1,0 +1,160 @@
+# name: test/sql/git_slash_refs.test
+# description: git:// URIs must keep slash-bearing refs intact (feature/foo, refs/heads/main, release/v1.0)
+# group: [sql]
+
+require duck_tails
+
+require notwindows
+
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
+
+# Fixture: test/tmp/slash-refs-repo, built by
+# test/scripts/setup_slash_refs_fixture.sh (run from setup_fixtures.sh).
+#   main             README.md = "main branch content",    data/rows.csv 2 rows
+#   feature/foo      README.md = "feature branch content", data/rows.csv 3 rows,
+#                    feature-only.txt
+#   fix/deep/nested  deep-only.txt
+#   tags             release/v1.0 (slash) and v1.0, both on the main commit
+#
+# Every ref here is created by the fixture, so nothing depends on the branch
+# the duck_tails checkout itself happens to be on.
+
+# ==============================================================
+# Table functions consuming a git:// URI
+# ==============================================================
+
+# Branch with a slash: git_tree must see the feature commit, not "feature"
+query I
+SELECT COUNT(*) FROM git_tree('git://test/tmp/slash-refs-repo@feature/foo')
+WHERE file_path = 'feature-only.txt';
+----
+1
+
+# Multi-slash branch name
+query I
+SELECT COUNT(*) FROM git_tree('git://test/tmp/slash-refs-repo@fix/deep/nested')
+WHERE file_path = 'deep-only.txt';
+----
+1
+
+# Fully-qualified ref
+query I
+SELECT trim(text, chr(10)) FROM git_read('git://test/tmp/slash-refs-repo/README.md@refs/heads/main');
+----
+main branch content
+
+# Fully-qualified branch ref for the slash-bearing branch: refs/heads/feature/foo
+query I
+SELECT trim(text, chr(10)) FROM git_read('git://test/tmp/slash-refs-repo/README.md@refs/heads/feature/foo');
+----
+feature branch content
+
+# Tag containing a slash
+query I
+SELECT trim(text, chr(10)) FROM git_read('git://test/tmp/slash-refs-repo/README.md@release/v1.0');
+----
+main branch content
+
+# Fully-qualified tag ref
+query I
+SELECT trim(text, chr(10)) FROM git_read('git://test/tmp/slash-refs-repo/README.md@refs/tags/release/v1.0');
+----
+main branch content
+
+# Annotated tag containing a slash (the tag object has to be peeled to a commit)
+query I
+SELECT trim(text, chr(10)) FROM git_read('git://test/tmp/slash-refs-repo/README.md@release/v2.0');
+----
+feature branch content
+
+# git_log follows a slash-bearing branch: feature/foo has two commits where
+# HEAD (main) has one. (git_log honouring the URI's ref at all is issue #34,
+# covered in test/sql/git_log_uri_ref.test.)
+query I
+SELECT COUNT(*) FROM git_log('git://test/tmp/slash-refs-repo@feature/foo');
+----
+2
+
+# The same branch spelling on the pre-existing tarball fixture
+query I
+SELECT COUNT(*) FROM git_tree('git://test/tmp/main-repo@feature/test')
+WHERE file_path = 'src/test.py';
+----
+1
+
+# ==============================================================
+# git:// filesystem (read_text / read_csv)
+# ==============================================================
+
+# Slash-bearing branch through the filesystem layer
+query I
+SELECT trim(content, chr(10)) FROM read_text('git://test/tmp/slash-refs-repo/README.md@feature/foo');
+----
+feature branch content
+
+# ...and the same file on main, to prove the ref actually selects the commit
+query I
+SELECT trim(content, chr(10)) FROM read_text('git://test/tmp/slash-refs-repo/README.md@refs/heads/main');
+----
+main branch content
+
+# A file that only exists on the slash-bearing branch
+query I
+SELECT trim(content, chr(10)) FROM read_text('git://test/tmp/slash-refs-repo/feature-only.txt@feature/foo');
+----
+only on feature/foo
+
+# read_csv honours the slash-bearing ref (feature/foo has one extra row)
+query I
+SELECT COUNT(*) FROM read_csv('git://test/tmp/slash-refs-repo/data/rows.csv@feature/foo');
+----
+3
+
+query I
+SELECT COUNT(*) FROM read_csv('git://test/tmp/slash-refs-repo/data/rows.csv@refs/heads/main');
+----
+2
+
+# Tag with a slash through the filesystem layer
+query I
+SELECT trim(content, chr(10)) FROM read_text('git://test/tmp/slash-refs-repo/README.md@release/v1.0');
+----
+main branch content
+
+# Annotated slash tag through the filesystem layer
+query I
+SELECT trim(content, chr(10)) FROM read_text('git://test/tmp/slash-refs-repo/README.md@release/v2.0');
+----
+feature branch content
+
+# ==============================================================
+# Regressions: revision followed by a real path/glob suffix
+# ==============================================================
+
+# Glob suffix appended after the revision still splits off the ref
+query I
+SELECT COUNT(*) FROM read_csv('git://test/tmp/slash-refs-repo@HEAD/data/*.csv');
+----
+2
+
+# ...including after a slash-bearing ref
+query I
+SELECT COUNT(*) FROM read_csv('git://test/tmp/slash-refs-repo@feature/foo/data/*.csv');
+----
+3
+
+# Plain (non-glob) path suffix after the revision keeps working
+query I
+SELECT trim(content, chr(10)) FROM read_text('git://test/tmp/slash-refs-repo@HEAD/README.md');
+----
+main branch content
+
+# ==============================================================
+# Errors name the whole ref, not the truncated first component
+# ==============================================================
+
+statement error
+SELECT * FROM git_tree('git://test/tmp/slash-refs-repo@feature/does-not-exist');
+----
+feature/does-not-exist

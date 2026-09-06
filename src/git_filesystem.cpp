@@ -4,6 +4,7 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/local_file_system.hpp"
+#include <algorithm>
 #include <cstring>
 #include <vector>
 #include <unordered_map>
@@ -21,6 +22,62 @@ static bool PathExists(const string &path);
 static string GetDirectoryFromPath(const string &path);
 static string GetParentDirectory(const string &path);
 static string NormalizePath(const string &path);
+
+//===--------------------------------------------------------------------===//
+// Revision / path-suffix splitting
+//===--------------------------------------------------------------------===//
+
+// git refuses '*', '?' and '[' in ref names (git-check-ref-format), so the
+// first glob metacharacter in the text after '@' always belongs to a path or
+// glob suffix appended after the ref -- DuckDB appends e.g. "/**/*.csv". The
+// suffix starts at the last '/' before that metacharacter.
+// Returns npos when there is no such suffix.
+static size_t FindGlobSuffixStart(const string &revision_spec) {
+	size_t glob_pos = revision_spec.find_first_of("*?[");
+	if (glob_pos == string::npos) {
+		return string::npos;
+	}
+	return revision_spec.rfind('/', glob_pos);
+}
+
+// A revision in a git:// URI may be followed by a path inside the repository
+// ("git://repo@HEAD/dir/file.csv"), but '/' is also legal -- and extremely
+// common -- inside ref names ("feature/foo", "refs/heads/main", "release/v1.0"),
+// so the split cannot be decided lexically. Only the repository can settle it:
+// keep the longest prefix that actually resolves and treat the remainder as a
+// path. When nothing resolves, the ref is left exactly as written so the error
+// names the ref the user asked for instead of its first component.
+static void SplitRevisionFromPath(const string &repository_path, string &revision, string &path_suffix) {
+	if (revision.find('/') == string::npos) {
+		return; // no ambiguity to resolve
+	}
+
+	// Note: the probing below leaves libgit2's thread-local error slot set when a
+	// candidate does not resolve. Every caller in this file reads that slot only
+	// straight after a call it saw fail, so a stale entry is never reported.
+	git_repository *repo = nullptr;
+	if (git_repository_open_ext(&repo, repository_path.c_str(), 0, nullptr) != 0) {
+		return; // no repository to ask -- keep the ref as written
+	}
+
+	string candidate = revision;
+	while (true) {
+		git_object *obj = nullptr;
+		if (git_revparse_single(&obj, repo, candidate.c_str()) == 0) {
+			git_object_free(obj);
+			path_suffix = revision.substr(candidate.length()) + path_suffix;
+			revision = candidate;
+			break;
+		}
+		size_t last_slash = candidate.rfind('/');
+		if (last_slash == string::npos || last_slash == 0) {
+			break; // nothing resolved; leave the revision untouched
+		}
+		candidate = candidate.substr(0, last_slash);
+	}
+
+	git_repository_free(repo);
+}
 
 //===--------------------------------------------------------------------===//
 // GitPath Implementation
@@ -65,12 +122,15 @@ GitPath GitPath::Parse(const string &git_url) {
 		result.revision = url.substr(at_pos + 1);
 		url = url.substr(0, at_pos);
 
-		// Handle glob patterns appended by DuckDB (e.g., @HEAD/**/*.csv)
-		// Any path component (starting with /) after the revision should be part of the file path
-		size_t slash_pos = result.revision.find('/');
-		if (slash_pos != string::npos) {
-			path_suffix = result.revision.substr(slash_pos);
-			result.revision = result.revision.substr(0, slash_pos);
+		// Split off a glob pattern appended after the revision (e.g. @HEAD/**/*.csv).
+		// Slashes alone cannot mark the split: ref names contain them all the time
+		// (feature/foo, refs/heads/main), so only a glob metacharacter -- which a ref
+		// can never contain -- is decisive here. Anything else that follows the ref is
+		// resolved against the repository by SplitRevisionFromPath below.
+		size_t suffix_pos = FindGlobSuffixStart(result.revision);
+		if (suffix_pos != string::npos) {
+			path_suffix = result.revision.substr(suffix_pos);
+			result.revision = result.revision.substr(0, suffix_pos);
 		}
 	} else {
 		result.revision = "HEAD";
@@ -85,11 +145,16 @@ GitPath GitPath::Parse(const string &git_url) {
 	// Parse repository path and file path - use discovery for ALL paths
 	if (url.empty()) {
 		result.repository_path = ".";
+		// Ask the repository where the ref ends and the path begins.
+		SplitRevisionFromPath(result.repository_path, result.revision, path_suffix);
 		result.file_path = path_suffix.empty() ? "" : path_suffix.substr(1); // Remove leading /
 	} else {
 		// Use repository discovery for ALL paths (simple and complex)
 		try {
 			result.repository_path = FindGitRepository(url);
+
+			// Ask the repository where the ref ends and the path begins.
+			SplitRevisionFromPath(result.repository_path, result.revision, path_suffix);
 
 			// Normalize the URL path for consistent file path calculation
 			string normalized_url = NormalizePath(url);
@@ -425,7 +490,7 @@ vector<OpenFileInfo> GitFileSystem::Glob(const string &pattern, FileOpener *open
 		try {
 			auto repo = OpenRepository(git_path.repository_path);
 			auto commit_obj = ResolveRevision(repo, git_path.revision);
-			return ListFiles(repo, git_path.file_path, commit_obj);
+			return ListFiles(repo, git_path, commit_obj);
 
 		} catch (const std::exception &e) {
 			throw IOException("Failed to glob git pattern '%s': %s", pattern, e.what());
@@ -597,6 +662,15 @@ git_object *GitFileSystem::ResolveRevision(git_repository *repo, const string &r
 		const git_error *e = git_error_last();
 		throw IOException("Failed to resolve revision '%s': %s", revision, e ? e->message : "Unknown error");
 	}
+
+	// An annotated tag resolves to the tag object rather than to the commit it
+	// points at, and every caller here wants the commit. Peeling is a no-op for
+	// objects that are already commits.
+	git_object *commit_obj = nullptr;
+	if (git_object_peel(&commit_obj, obj, GIT_OBJECT_COMMIT) == 0) {
+		git_object_free(obj);
+		return commit_obj;
+	}
 	return obj;
 }
 
@@ -644,26 +718,210 @@ string GitFileSystem::GetBlobContent(git_repository *repo, const string &file_pa
 	return result;
 }
 
-vector<OpenFileInfo> GitFileSystem::ListFiles(git_repository *repo, const string &pattern, git_object *commit_obj) {
-	// For now, implement basic pattern matching
-	// TODO: Implement full tree walking with glob patterns
-	vector<OpenFileInfo> results;
+//===--------------------------------------------------------------------===//
+// Tree globbing
+//===--------------------------------------------------------------------===//
 
-	// If pattern is empty or just *, return all files (simplified for now)
-	if (pattern.empty() || pattern == "*") {
-		// This is a simplified implementation
-		// In a full implementation, we'd walk the entire tree
+static bool PatternHasGlob(const string &pattern) {
+	return pattern.find_first_of("*?[") != string::npos;
+}
+
+// Matches `c` against the character class starting at pattern[p] (a '[').
+// On a well-formed class `next` is advanced past the closing ']'; on an
+// unterminated '[' `next` is left at `p` so the caller can treat it literally.
+static bool MatchCharacterClass(char c, const string &pattern, size_t p, size_t &next) {
+	next = p;
+	size_t i = p + 1;
+	bool negate = false;
+	if (i < pattern.size() && (pattern[i] == '!' || pattern[i] == '^')) {
+		negate = true;
+		i++;
+	}
+	bool matched = false;
+	bool first = true; // a ']' in first position is a literal, as in shell globs
+	while (i < pattern.size() && (pattern[i] != ']' || first)) {
+		if (i + 2 < pattern.size() && pattern[i + 1] == '-' && pattern[i + 2] != ']') {
+			if (c >= pattern[i] && c <= pattern[i + 2]) {
+				matched = true;
+			}
+			i += 3;
+		} else {
+			if (pattern[i] == c) {
+				matched = true;
+			}
+			i++;
+		}
+		first = false;
+	}
+	if (i >= pattern.size()) {
+		return false; // unterminated '['
+	}
+	next = i + 1;
+	return matched != negate;
+}
+
+// Matches one path component against one glob component. Wildcards never cross
+// a '/' here -- spanning directories is what the '**' component does -- which
+// mirrors how DuckDB globs a local path.
+static bool GlobComponentMatches(const string &text, size_t t, const string &pattern, size_t p) {
+	while (p < pattern.size()) {
+		if (pattern[p] == '*') {
+			while (p < pattern.size() && pattern[p] == '*') {
+				p++;
+			}
+			if (p == pattern.size()) {
+				return true;
+			}
+			for (size_t skip = t; skip <= text.size(); skip++) {
+				if (GlobComponentMatches(text, skip, pattern, p)) {
+					return true;
+				}
+			}
+			return false;
+		}
+		if (t >= text.size()) {
+			return false;
+		}
+		if (pattern[p] == '?') {
+			p++;
+			t++;
+			continue;
+		}
+		if (pattern[p] == '[') {
+			size_t next = p;
+			bool matched = MatchCharacterClass(text[t], pattern, p, next);
+			if (next != p) {
+				if (!matched) {
+					return false;
+				}
+				p = next;
+				t++;
+				continue;
+			}
+			// Unterminated '[' -- fall through and compare it literally.
+		}
+		if (pattern[p] != text[t]) {
+			return false;
+		}
+		p++;
+		t++;
+	}
+	return t == text.size();
+}
+
+// Matches a tree path (split on '/') against a glob pattern (also split on '/').
+static bool GlobPathMatches(const vector<string> &parts, size_t pi, const vector<string> &pattern_parts, size_t qi) {
+	while (qi < pattern_parts.size()) {
+		if (pattern_parts[qi] == "**") {
+			// '**' matches zero or more whole path components.
+			for (size_t skip = pi; skip <= parts.size(); skip++) {
+				if (GlobPathMatches(parts, skip, pattern_parts, qi + 1)) {
+					return true;
+				}
+			}
+			return false;
+		}
+		if (pi >= parts.size()) {
+			return false;
+		}
+		if (!GlobComponentMatches(parts[pi], 0, pattern_parts[qi], 0)) {
+			return false;
+		}
+		pi++;
+		qi++;
+	}
+	return pi == parts.size();
+}
+
+struct TreeGlobState {
+	vector<string> pattern_parts;
+	vector<string> matches;
+};
+
+static int CollectMatchingBlobs(const char *root, const git_tree_entry *entry, void *payload) {
+	auto &state = *reinterpret_cast<TreeGlobState *>(payload);
+	if (git_tree_entry_type(entry) != GIT_OBJECT_BLOB) {
+		return 0; // keep descending into subtrees
+	}
+	const char *name = git_tree_entry_name(entry);
+	if (!name) {
+		return 0;
+	}
+	string full_path = string(root ? root : "") + name;
+	auto parts = StringUtil::Split(full_path, '/');
+	if (GlobPathMatches(parts, 0, state.pattern_parts, 0)) {
+		state.matches.push_back(full_path);
+	}
+	return 0;
+}
+
+// Returns the tree of the commit, or nullptr if it cannot be loaded.
+static git_tree *GetCommitTree(git_repository *repo, git_object *commit_obj) {
+	git_commit *commit = nullptr;
+	if (git_commit_lookup(&commit, repo, git_object_id(commit_obj)) != 0) {
+		return nullptr;
+	}
+	git_tree *tree = nullptr;
+	int error = git_commit_tree(&tree, commit);
+	git_commit_free(commit);
+	if (error != 0) {
+		return nullptr;
+	}
+	return tree;
+}
+
+vector<OpenFileInfo> GitFileSystem::ListFiles(git_repository *repo, const GitPath &git_path, git_object *commit_obj) {
+	vector<OpenFileInfo> results;
+	const string &pattern = git_path.file_path;
+
+	// DuckDB re-parses every URI returned here when it opens the file, so each
+	// one has to carry the repository and the revision. Handing back a bare
+	// tree path would quietly reopen the file at HEAD of whatever repository
+	// the working directory happens to be in.
+	auto to_uri = [&](const string &entry_path) {
+		string uri = "git://" + git_path.repository_path + "/" + entry_path;
+		if (!git_path.revision.empty()) {
+			uri += "@" + git_path.revision;
+		}
+		return OpenFileInfo {uri};
+	};
+
+	if (pattern.empty()) {
+		// A repository URI with no path names no file.
 		return results;
 	}
 
-	// For specific files, try to match exactly
-	try {
-		GetBlobContent(repo, pattern, commit_obj);
-		results.emplace_back(OpenFileInfo {"git://" + pattern});
-	} catch (...) {
-		// File doesn't exist, return empty results
+	git_tree *tree = GetCommitTree(repo, commit_obj);
+	if (!tree) {
+		return results;
 	}
 
+	if (!PatternHasGlob(pattern)) {
+		// Exact path: look it up without materializing the blob.
+		git_tree_entry *entry = nullptr;
+		if (git_tree_entry_bypath(&entry, tree, pattern.c_str()) == 0) {
+			if (git_tree_entry_type(entry) == GIT_OBJECT_BLOB) {
+				results.push_back(to_uri(pattern));
+			}
+			git_tree_entry_free(entry);
+		} else {
+		}
+		git_tree_free(tree);
+		return results;
+	}
+
+	// Glob: walk the whole commit tree and keep the blobs that match.
+	TreeGlobState state;
+	state.pattern_parts = StringUtil::Split(pattern, '/');
+	if (git_tree_walk(tree, GIT_TREEWALK_PRE, CollectMatchingBlobs, &state) != 0) {
+	}
+	git_tree_free(tree);
+
+	// Deterministic order regardless of how the tree is stored.
+	std::sort(state.matches.begin(), state.matches.end());
+	for (auto &match : state.matches) {
+		results.push_back(to_uri(match));
+	}
 	return results;
 }
 
@@ -997,12 +1255,17 @@ string GitLFSFileHandle::BuildLFSObjectPath(const string &oid) {
 }
 
 string GitLFSFileHandle::ResolveLFSDownloadURL() {
-	// TODO: Implement LFS Batch API call
-	// For now, throw an error directing users to use local LFS
+	// TODO: Implement the LFS Batch API so objects can be fetched on demand.
+	//
+	// Until then this is an error rather than a silent skip: the file's content
+	// genuinely is not available here, and returning the pointer text (or an
+	// empty file) would feed a query data that looks real and is not. The
+	// message says which object is missing and how to get it.
 	string local_path = BuildLFSObjectPath(lfs_info_.oid);
-	throw IOException(
-	    "Remote LFS not yet implemented. Run 'git lfs pull' to download LFS objects locally. Tried local path: %s",
-	    local_path);
+	throw IOException("Git LFS object for '%s' is not in the local LFS cache, and fetching it from the LFS "
+	                  "server is not implemented yet. Run 'git lfs pull' in the repository to download it. "
+	                  "(object sha256:%s, %s bytes, expected at %s)",
+	                  path, lfs_info_.oid, std::to_string(lfs_info_.size), local_path);
 }
 
 LFSConfig GitLFSFileHandle::ReadLFSConfig() {
