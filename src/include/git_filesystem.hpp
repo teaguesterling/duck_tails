@@ -183,6 +183,11 @@ public:
 
 	// File operations delegation to GitFileHandle
 	int64_t Read(FileHandle &handle, void *buffer, int64_t nr_bytes) override;
+	// Positional read. DuckDB v1.5's readers only ever used the sequential form
+	// above, so this was left to the base class -- which throws. v2.0's readers
+	// call this one, which turned every read through git:// into
+	// "GitFileSystem: Read (with location) is not implemented!".
+	void Read(FileHandle &handle, void *buffer, int64_t nr_bytes, idx_t location) override;
 	void Seek(FileHandle &handle, idx_t location) override;
 	idx_t SeekPosition(FileHandle &handle) override;
 	void Reset(FileHandle &handle) override;
