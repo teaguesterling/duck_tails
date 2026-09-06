@@ -17,17 +17,25 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # v2.0 source-compatibility canary. Runs ON DEMAND ONLY
-  # (`gh workflow run MainDistributionPipeline.yml --ref <branch>`): a push and a
-  # pull_request both fire on the same commit and a PR's check rollup includes
-  # both, so an ungated canary would show red on every PR while main is ahead of
-  # what we ship. `if:` rather than `continue-on-error:` because a job calling a
+  # v2.0 source-compatibility canary. Runs on pushes to MAIN, and on demand
+  # (`gh workflow run MainDistributionPipeline.yml --ref <branch>`).
+  #
+  # NOT on pull_request, and not on pushes to other branches: a branch push fires
+  # a push run AND a pull_request run on the same commit, and a PR's check rollup
+  # includes both, so an ungated canary would show red on every PR while main is
+  # ahead of what we ship. Gating on `refs/heads/main` skips the job on branch
+  # pushes, so it never enters a PR rollup -- which is how the other twelve
+  # extensions in the fleet are configured.
+  #
+  # Dispatch-only was worse: on 2026-09-06 this canary was broken in its own
+  # environment (see test/Makefile.inc, git safe.directory) and main carried a
+  # real v2.0 defect at the same time, with no automatic signal to separate them. `if:` rather than `continue-on-error:` because a job calling a
   # REUSABLE workflow accepts only a fixed key set -- adding continue-on-error
   # makes the whole file fail to parse and schedules zero jobs.
   duckdb-next-build:
     name: Build extension binaries (duckdb main canary)
     uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@main
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     with:
       duckdb_version: main
       ci_tools_version: main
