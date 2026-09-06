@@ -8,7 +8,12 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.head_ref || '' }}-${{ github.base_ref || '' }}-${{ github.ref != 'refs/heads/main' && github.sha || '' }}
+  # github.event_name is part of the key on purpose. Without it a push to a
+  # branch and a workflow_dispatch on that same branch collide: same ref, same
+  # sha, both with empty head_ref/base_ref. cancel-in-progress then kills the
+  # push run every time the canary is dispatched by hand, and a cancelled run
+  # reads as a failed one on the checks dashboard.
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}-${{ github.head_ref || '' }}-${{ github.base_ref || '' }}-${{ github.ref != 'refs/heads/main' && github.sha || '' }}
   cancel-in-progress: true
 
 jobs:
