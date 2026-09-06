@@ -75,49 +75,6 @@ static string ExtractFileExtension(const string &path) {
 	return path.substr(dot_pos);
 }
 
-// Apply an explicit repo_path named parameter to a git:// URI (issue #17).
-//
-// - Relative URI (e.g. "git://src/auth.py@HEAD"): splice repo_path in so the file
-//   resolves against the specified repository instead of the process cwd. A relative
-//   URI that already includes repo_path as a prefix (e.g. "git://my-repo/src/auth.py")
-//   is spliced the same way — the caller is responsible for not double-supplying the
-//   prefix.
-// - Absolute URI (e.g. "git:///abs/repo/src/auth.py@HEAD"): combining with an explicit
-//   repo_path is always ambiguous, so raise an InvalidInputException.
-// - Empty repo_path or non-git:// URIs: returned unchanged.
-static string ApplyExplicitRepoPath(const string &uri, const string &repo_path) {
-	if (repo_path.empty() || !StringUtil::StartsWith(uri, "git://")) {
-		return uri;
-	}
-	const size_t prefix_len = 6; // strlen("git://")
-
-	// Normalize repo_path: strip trailing slashes so joining is consistent.
-	string repo = repo_path;
-	while (!repo.empty() && repo.back() == '/') {
-		repo.pop_back();
-	}
-	if (repo.empty()) {
-		return uri;
-	}
-
-	string rest = uri.substr(prefix_len);
-
-	// Absolute URI path (leading '/' after "git://" — i.e. three slashes in the source
-	// form) cannot be combined with an explicit repo_path: the two are independent
-	// specifications of the repository and silently preferring one would hide bugs.
-	if (!rest.empty() && rest[0] == '/') {
-		throw InvalidInputException(
-		    "git_read: conflicting repository paths: absolute URI '%s' cannot be combined with repo_path '%s'", uri,
-		    repo_path);
-	}
-
-	// Relative URI (or bare "git://@REF"): splice repo_path into the URI.
-	if (rest.empty() || rest[0] == '@') {
-		return "git://" + repo + rest;
-	}
-	return "git://" + repo + "/" + rest;
-}
-
 //===--------------------------------------------------------------------===//
 // Git Read Functions (both static and LATERAL support for reading blob content)
 //===--------------------------------------------------------------------===//
@@ -597,7 +554,7 @@ static unique_ptr<FunctionData> GitReadBind(ClientContext &context, TableFunctio
 	// resolves against the named repository; for absolute URIs that conflict with
 	// repo_path it raises an error. (Issue #17.)
 	if (!explicit_repo_path.empty()) {
-		uri = ApplyExplicitRepoPath(uri, explicit_repo_path);
+		uri = ApplyExplicitRepoPath(uri, explicit_repo_path, "git_read");
 		string normalized = explicit_repo_path;
 		while (!normalized.empty() && normalized.back() == '/') {
 			normalized.pop_back();

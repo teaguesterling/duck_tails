@@ -1,0 +1,143 @@
+# name: test/sql/git_repo_path_param.test
+# description: the repo_path named parameter must select the repository (issue #36)
+# group: [sql]
+
+require duck_tails
+
+require notwindows
+
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
+
+# These functions accept repo_path as a named parameter but resolved the
+# repository from the positional argument alone, so repo_path was bound and
+# then discarded and the query answered from whatever repository the working
+# directory sits in -- here, duck_tails itself. The fixtures are much smaller
+# than the enclosing repository, and the assertions name specific rows, so a
+# result taken from the wrong repository cannot satisfy them.
+#
+#   test/tmp/main-repo        3 commits (HEAD is a merge), 3 branches, 3 tags
+#   test/tmp/slash-refs-repo  1 commit on main, 2 on feature/foo
+
+# ==============================================================
+# git_log
+# ==============================================================
+
+query I
+SELECT COUNT(*) FROM git_log(repo_path := 'test/tmp/main-repo');
+----
+3
+
+query I
+SELECT COUNT(*) FROM git_log(repo_path := 'test/tmp/main-repo') WHERE message LIKE 'Merge develop%';
+----
+1
+
+# A second fixture of a different size, so the numbers cannot both be luck
+query I
+SELECT COUNT(*) FROM git_log(repo_path := 'test/tmp/slash-refs-repo');
+----
+1
+
+query I
+SELECT trim(message, chr(10)) FROM git_log(repo_path := 'test/tmp/slash-refs-repo');
+----
+main: initial commit
+
+# The named parameter and the positional path must name the same repository
+query I
+SELECT (SELECT COUNT(*) FROM git_log(repo_path := 'test/tmp/main-repo'))
+     = (SELECT COUNT(*) FROM git_log('test/tmp/main-repo'));
+----
+true
+
+# ...and neither of them is the enclosing repository, which is much bigger
+query I
+SELECT (SELECT COUNT(*) FROM git_log('.')) > (SELECT COUNT(*) FROM git_log(repo_path := 'test/tmp/main-repo'));
+----
+true
+
+# ==============================================================
+# git_branches, git_tags, git_parents (same helper, same defect)
+# ==============================================================
+
+query I
+SELECT COUNT(*) FROM git_branches(repo_path := 'test/tmp/main-repo');
+----
+3
+
+query I
+SELECT COUNT(*) FROM git_branches(repo_path := 'test/tmp/main-repo') WHERE branch_name = 'feature/test';
+----
+1
+
+query I
+SELECT COUNT(*) FROM git_tags(repo_path := 'test/tmp/main-repo');
+----
+3
+
+query I
+SELECT COUNT(*) FROM git_tags(repo_path := 'test/tmp/main-repo') WHERE tag_name = 'v1.0.0';
+----
+1
+
+# main-repo has 3 commits with 3 parent edges in total (HEAD is a merge)
+query I
+SELECT COUNT(*) FROM git_parents(repo_path := 'test/tmp/main-repo');
+----
+3
+
+query I
+SELECT (SELECT COUNT(*) FROM git_tags(repo_path := 'test/tmp/main-repo'))
+     = (SELECT COUNT(*) FROM git_tags('test/tmp/main-repo'));
+----
+true
+
+# ==============================================================
+# A positional argument alongside repo_path names a path INSIDE that
+# repository, which is how git_read and git_blame already read it
+# ==============================================================
+
+# src/main.py exists only in main-repo, and one commit there touches it
+query I
+SELECT COUNT(*) FROM git_log('src/main.py', repo_path := 'test/tmp/main-repo');
+----
+1
+
+# '.' means the repository root, not a path filter that matches nothing
+query I
+SELECT COUNT(*) FROM git_log('.', repo_path := 'test/tmp/main-repo');
+----
+3
+
+# A relative git:// URI is spliced onto the named repository, ref and all
+query I
+SELECT COUNT(*) FROM git_log('git://data/rows.csv@feature/foo', repo_path := 'test/tmp/slash-refs-repo');
+----
+2
+
+# An absolute URI names the repository itself, so combining the two is refused
+# rather than silently preferring one (same rule git_read applies)
+statement error
+SELECT * FROM git_log('git:///absolute/path/repo/file.txt@HEAD', repo_path := '/other/repo');
+----
+conflicting repository paths
+
+# ==============================================================
+# Regression: without repo_path nothing changes
+# ==============================================================
+
+query I
+SELECT COUNT(*) FROM git_log('test/tmp/main-repo');
+----
+3
+
+query I
+SELECT COUNT(*) FROM git_tags('test/tmp/main-repo');
+----
+3
+
+query I
+SELECT COUNT(*) > 0 FROM git_log('.');
+----
+true

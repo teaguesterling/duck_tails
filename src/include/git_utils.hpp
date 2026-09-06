@@ -27,6 +27,16 @@ struct UnifiedGitParams {
 	}
 };
 
+// Splice an explicit repo_path into a git:// URI.
+// - Relative URI (or a bare "git://@REF"): the repository is spliced in, so
+//   "git://src/x.py@HEAD" + repo "r" becomes "git://r/src/x.py@HEAD".
+// - Absolute URI ("git:///abs/repo/..."): the URI already names a repository, so
+//   combining it with repo_path is ambiguous and raises InvalidInputException
+//   rather than silently preferring one of them.
+// - Empty repo_path or a non-git:// string: returned unchanged.
+// function_name, when given, prefixes the error message.
+string ApplyExplicitRepoPath(const string &uri, const string &repo_path, const string &function_name = "");
+
 // Parse parameters using new unified signature: func(repo_path_or_uri, [optional_ref], [other_params...])
 UnifiedGitParams ParseUnifiedGitParams(TableFunctionBindInput &input, int ref_param_index = 1);
 
