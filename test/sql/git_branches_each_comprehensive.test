@@ -80,11 +80,13 @@ SELECT COUNT(*) > 0 FROM test_repos t, LATERAL git_branches_each(t.repo_path) b
 ----
 true
 
-# Test git_branches with named parameters
-query T
-SELECT COUNT(*) > 0 as has_branches FROM git_branches(repo_path := 'test/tmp/main-repo')
+# Test git_branches with named parameters.
+# Asserted as an exact count on purpose: repo_path used to be dropped (#36), and
+# the enclosing repository answered instead -- which a "> 0" assertion accepts.
+query I
+SELECT COUNT(*) FROM git_branches(repo_path := 'test/tmp/main-repo')
 ----
-true
+3
 
 # Test git_branches count consistency
 query I

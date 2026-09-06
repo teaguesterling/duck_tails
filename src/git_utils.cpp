@@ -13,6 +13,45 @@
 
 namespace duckdb {
 
+string ApplyExplicitRepoPath(const string &uri, const string &repo_path, const string &function_name) {
+	if (repo_path.empty() || !StringUtil::StartsWith(uri, "git://")) {
+		return uri;
+	}
+	const size_t prefix_len = 6; // strlen("git://")
+
+	// Normalize repo_path: strip trailing slashes so joining is consistent.
+	string repo = repo_path;
+	while (!repo.empty() && repo.back() == '/') {
+		repo.pop_back();
+	}
+	if (repo.empty()) {
+		return uri;
+	}
+
+	string rest = uri.substr(prefix_len);
+
+	// Absolute URI path (leading '/' after "git://" -- i.e. three slashes in the source
+	// form) cannot be combined with an explicit repo_path: the two are independent
+	// specifications of the repository and silently preferring one would hide bugs.
+	if (!rest.empty() && rest[0] == '/') {
+		string prefix = function_name.empty() ? "" : function_name + ": ";
+		throw InvalidInputException("%sconflicting repository paths: absolute URI '%s' cannot be combined with "
+		                            "repo_path '%s'",
+		                            prefix, uri, repo_path);
+	}
+
+	// Relative URI (or bare "git://@REF"): splice repo_path into the URI.
+	if (rest.empty() || rest[0] == '@') {
+		return "git://" + repo + rest;
+	}
+	return "git://" + repo + "/" + rest;
+}
+
+// "", "." and "./" all mean the repository root rather than a path inside it.
+static bool IsRepoRootSpelling(const string &path) {
+	return path.empty() || path == "." || path == "./";
+}
+
 // Parse parameters using new unified signature: func(repo_path_or_uri, [optional_ref], [other_params...])
 UnifiedGitParams ParseUnifiedGitParams(TableFunctionBindInput &input, int ref_param_index) {
 	UnifiedGitParams params;
@@ -22,6 +61,34 @@ UnifiedGitParams ParseUnifiedGitParams(TableFunctionBindInput &input, int ref_pa
 		auto &first_arg = input.inputs[0];
 		if (first_arg.type().id() == LogicalTypeId::VARCHAR) {
 			params.repo_path_or_uri = first_arg.GetValue<string>();
+		}
+	}
+
+	// The repository can also arrive as the repo_path named parameter. Every function
+	// that registers it used to accept it and then never read it, so
+	// git_log(repo_path := 'x') answered from whatever repository the working directory
+	// sat in -- a well-formed commit list from the wrong repository, with nothing to
+	// show the parameter had been dropped (#36). git_read and git_blame already honoured
+	// it; these surfaces now agree with them, including how they read a positional
+	// argument alongside it: as a path INSIDE the named repository.
+	string explicit_repo_path;
+	for (const auto &kv : input.named_parameters) {
+		if (kv.first == "repo_path" && !kv.second.IsNull()) {
+			explicit_repo_path = kv.second.GetValue<string>();
+		}
+	}
+	while (!explicit_repo_path.empty() && explicit_repo_path.back() == '/') {
+		explicit_repo_path.pop_back();
+	}
+	if (!explicit_repo_path.empty()) {
+		if (IsRepoRootSpelling(params.repo_path_or_uri)) {
+			// Nothing but the repository was named: resolve it directly, which also
+			// keeps the repo_path output column reading as the caller wrote it.
+			params.repo_path_or_uri = explicit_repo_path;
+		} else {
+			string uri = StringUtil::StartsWith(params.repo_path_or_uri, "git://") ? params.repo_path_or_uri
+			                                                                       : "git://" + params.repo_path_or_uri;
+			params.repo_path_or_uri = ApplyExplicitRepoPath(uri, explicit_repo_path);
 		}
 	}
 
