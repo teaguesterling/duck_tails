@@ -3,8 +3,18 @@
 
 .PHONY: test_setup
 
+# SKIP_TESTS is set by extension-ci-tools for the pass that does not run the
+# tests. On linux the test phase invokes `make test_<type>` TWICE -- once inside
+# the container, then again on the host with LINUX_CI_IN_DOCKER=0, where the
+# Makefile sets SKIP_TESTS=1 and runs nothing. Fixture setup must follow the
+# tests: the container pass creates test/tmp as root, and a second setup from the
+# host (uid 1001) cannot write into it and fails the job.
 test_setup:
-	@bash test/fixtures/setup_fixtures.sh setup
+	@if [ "$(SKIP_TESTS)" = "1" ]; then \
+		echo "Fixture setup skipped: tests are skipped in this run."; \
+	else \
+		bash test/fixtures/setup_fixtures.sh setup; \
+	fi
 
 # Fixture setup has to run wherever the tests run, and extension-ci-tools has
 # used two different target names for that:
