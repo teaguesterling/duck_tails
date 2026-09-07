@@ -1,0 +1,110 @@
+# name: test/sql/git_annotated_tags.test
+# description: annotated tags must resolve without the ^{} suffix (issue #21)
+# group: [sql]
+
+require duck_tails
+
+require notwindows
+
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/repository';
+
+statement ok
+PRAGMA threads=1;
+
+# An annotated tag's ref points at a tag OBJECT, which has to be dereferenced to
+# reach the commit; a lightweight tag points at the commit directly. Every
+# surface that resolves a revision has to peel, or the tag name works only when
+# the caller appends git's ^{} suffix -- which no end-user tool and no agent
+# knows to do.
+#
+# test/tmp/main-repo carries annotated tags v1.0.0 and v2.0.0 and the
+# lightweight tag beta-1. HEAD is a merge, so v2.0.0 has 2 parents.
+
+query I
+SELECT COUNT(*) FROM git_tags('test/tmp/main-repo') WHERE tag_name = 'v1.0.0';
+----
+1
+
+# Each surface must give the same answer for the tag as for the tag peeled by
+# hand. Comparing the two is what distinguishes "resolved the tag" from "raised"
+# and from "silently answered with nothing".
+
+query I
+SELECT (SELECT COUNT(*) FROM git_log('git://test/tmp/main-repo@v1.0.0')) =
+       (SELECT COUNT(*) FROM git_log('git://test/tmp/main-repo@v1.0.0^{}'));
+----
+true
+
+query I
+SELECT (SELECT COUNT(*) FROM git_tree('git://test/tmp/main-repo@v1.0.0')) =
+       (SELECT COUNT(*) FROM git_tree('git://test/tmp/main-repo@v1.0.0^{}'));
+----
+true
+
+query I
+SELECT (SELECT text FROM git_read('git://test/tmp/main-repo/README.md@v1.0.0')) =
+       (SELECT text FROM git_read('git://test/tmp/main-repo/README.md@v1.0.0^{}'));
+----
+true
+
+query I
+SELECT COUNT(*) > 0 FROM git_blame('git://test/tmp/main-repo/README.md@v1.0.0');
+----
+true
+
+query I
+SELECT COUNT(*) > 0 FROM git_diff_tree('test/tmp/main-repo', 'v1.0.0', 'v2.0.0');
+----
+true
+
+query I
+SELECT COUNT(*) > 0 FROM read_git_diff('git://test/tmp/main-repo/README.md@v1.0.0',
+                                       'git://test/tmp/main-repo/README.md@v2.0.0');
+----
+true
+
+# git_parents_each rejected anything that was not already a commit object and
+# skipped the row, so an annotated tag naming a real merge commit produced zero
+# parent rows -- no error, and indistinguishable from a root commit. It was the
+# last resolution path in the extension that did not peel.
+query I
+SELECT COUNT(*) FROM (VALUES ('git://test/tmp/main-repo@v2.0.0')) t(uri),
+                     LATERAL git_parents_each(t.uri);
+----
+2
+
+query I
+SELECT (SELECT COUNT(*) FROM (VALUES ('git://test/tmp/main-repo@v2.0.0')) t(uri),
+                             LATERAL git_parents_each(t.uri)) =
+       (SELECT COUNT(*) FROM (VALUES ('git://test/tmp/main-repo@v2.0.0^{}')) t(uri),
+                             LATERAL git_parents_each(t.uri));
+----
+true
+
+# A lightweight tag needs no peeling and must keep working.
+query I
+SELECT COUNT(*) FROM (VALUES ('git://test/tmp/main-repo@beta-1')) t(uri),
+                     LATERAL git_parents_each(t.uri);
+----
+1
+
+query I
+SELECT (SELECT COUNT(*) FROM git_log('git://test/tmp/main-repo@beta-1')) > 0;
+----
+true
+
+# The other LATERAL surfaces, through the annotated tag.
+query I
+SELECT (SELECT COUNT(*) FROM (VALUES ('git://test/tmp/main-repo@v1.0.0')) t(uri),
+                             LATERAL git_log_each(t.uri)) =
+       (SELECT COUNT(*) FROM git_log('git://test/tmp/main-repo@v1.0.0'));
+----
+true
+
+query I
+SELECT (SELECT COUNT(*) FROM (VALUES ('git://test/tmp/main-repo@v1.0.0')) t(uri),
+                             LATERAL git_tree_each(t.uri)) =
+       (SELECT COUNT(*) FROM git_tree('git://test/tmp/main-repo@v1.0.0'));
+----
+true
