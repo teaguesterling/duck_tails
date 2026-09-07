@@ -1,0 +1,78 @@
+# name: test/sql/git_null_repo_path.test
+# description: a NULL repository path must raise, not answer (issue #8)
+# group: [sql]
+
+require duck_tails
+
+require notwindows
+
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/repository';
+
+statement ok
+PRAGMA threads=1;
+
+# Value::GetValue<string>() renders a NULL as the four characters "NULL", and
+# that resolved as a path INSIDE whatever repository the working directory sat
+# in. git_log(NULL) therefore filtered the history down to commits touching a
+# file named "NULL" and returned zero rows -- an empty commit list is data, not
+# an error, and nothing distinguished it from a repository with no history.
+# git_branches(NULL) never reads the file path, so it answered from the current
+# directory as though nothing were wrong; the disagreement between the two is
+# what made an accidental NULL so hard to trace.
+
+statement error
+SELECT * FROM git_log(NULL);
+----
+must not be NULL
+
+statement error
+SELECT * FROM git_branches(NULL);
+----
+must not be NULL
+
+statement error
+SELECT * FROM git_tree(NULL);
+----
+must not be NULL
+
+statement error
+SELECT * FROM git_tags(NULL);
+----
+must not be NULL
+
+statement error
+SELECT * FROM git_parents(NULL);
+----
+must not be NULL
+
+statement error
+SELECT * FROM git_read(NULL);
+----
+must not be NULL
+
+# An explicitly-written NULL named parameter is just as deliberate, and dropping
+# it silently answered from the current directory instead of the named
+# repository.
+statement error
+SELECT * FROM git_log(repo_path := NULL);
+----
+must not be NULL
+
+# The mechanism, pinned directly: the literal string is what a NULL used to
+# become, and it still resolves to a path filter that matches nothing.
+query I
+SELECT COUNT(*) FROM git_log('NULL');
+----
+0
+
+# Omitting the argument entirely still means "the current directory".
+query I
+SELECT COUNT(*) > 0 FROM git_log();
+----
+true
+
+query I
+SELECT COUNT(*) > 0 FROM git_branches();
+----
+true
