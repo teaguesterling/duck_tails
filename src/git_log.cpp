@@ -58,7 +58,7 @@ unique_ptr<FunctionData> GitLogBind(ClientContext &context, TableFunctionBindInp
 		result->ref = (ctx.ref_kind == RefKind::COMMIT) ? ctx.final_ref : "HEAD";
 		return std::move(result);
 	} catch (const std::exception &e) {
-		throw BinderException("git_log: %s", e.what());
+		throw BinderException("git_log: %s", GitExceptionMessage(e));
 	}
 }
 
@@ -346,7 +346,7 @@ static OperatorResultType GitLogEachFunction(ExecutionContext &context, TableFun
 				final_ref = ctx.final_ref;
 			} catch (const std::exception &e) {
 				// GitContextManager provides consistent error messages
-				throw BinderException("git_log_each: %s", e.what());
+				throw BinderException("git_log_each: %s", GitExceptionMessage(e));
 			}
 
 			// Check if we can reuse cached repository (optimization for LATERAL joins)

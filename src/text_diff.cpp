@@ -1,5 +1,6 @@
 #include "text_diff.hpp"
 #include "duckdb_compat.hpp"
+#include "git_utils.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/value.hpp"
@@ -226,7 +227,7 @@ static void DiffTextFunction(DataChunk &args, ExpressionState &state, Vector &re
 
 		} catch (const std::exception &e) {
 			// Return error as string for now - full implementation would throw proper exceptions
-			string error_str = "Error: " + string(e.what());
+			string error_str = "Error: " + string(GitExceptionMessage(e));
 			result_data[i] = StringVector::AddString(result, error_str);
 		}
 	}
@@ -392,7 +393,7 @@ static unique_ptr<GlobalTableFunctionState> ReadGitDiffInit(ClientContext &conte
 			file_handle1->Close();
 			content1 = string(reinterpret_cast<const char *>(buffer1.get()), file_size1);
 		} catch (const std::exception &e) {
-			throw IOException("Failed to read file '%s': %s", path1, e.what());
+			throw IOException("Failed to read file '%s': %s", path1, GitExceptionMessage(e));
 		}
 
 		// Read second file
@@ -404,7 +405,7 @@ static unique_ptr<GlobalTableFunctionState> ReadGitDiffInit(ClientContext &conte
 			file_handle2->Close();
 			content2 = string(reinterpret_cast<const char *>(buffer2.get()), file_size2);
 		} catch (const std::exception &e) {
-			throw IOException("Failed to read file '%s': %s", path2, e.what());
+			throw IOException("Failed to read file '%s': %s", path2, GitExceptionMessage(e));
 		}
 
 		// Create diff using our TextDiff implementation
@@ -415,7 +416,7 @@ static unique_ptr<GlobalTableFunctionState> ReadGitDiffInit(ClientContext &conte
 
 	} catch (const std::exception &e) {
 		// Return error in diff_text for now
-		string error_diff = "Error: " + string(e.what());
+		string error_diff = "Error: " + string(GitExceptionMessage(e));
 		return make_uniq<ReadGitDiffData>(std::move(error_diff), path1, path2, bind_data.include_metadata);
 	}
 }

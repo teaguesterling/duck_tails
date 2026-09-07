@@ -1,0 +1,76 @@
+# name: test/sql/git_error_messages.test
+# description: layered git errors must not accumulate JSON escaping (issue #22)
+# group: [sql]
+
+require duck_tails
+
+require notwindows
+
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/repository';
+
+statement ok
+PRAGMA threads=1;
+
+# A DuckDB exception carries its message as a JSON document, so what() returns
+# {"exception_type":...,"exception_message":...}. Splicing that into a new
+# exception message re-encodes an already-encoded string, and with several
+# layers each doing so the escaping compounds:
+#
+#   {"exception_type":"IO","exception_message":"Failed to read file '...':
+#    {\"exception_type\":\"IO\",\"exception_message\":\"Failed to parse git path
+#    '...': {\\\"exception_type\\\" ... }}
+#
+# The one line that mattered -- libgit2's own diagnosis -- sat under four rounds
+# of backslashes, unreadable to users and agents alike.
+
+# read_git_diff reports a failure in its diff_text column rather than raising,
+# which makes the message directly assertable as data.
+query I
+SELECT diff_text NOT LIKE '%exception_type%'
+FROM read_git_diff('git://test/tmp/main-repo/README.md@nosuchref',
+                   'git://test/tmp/main-repo/README.md@HEAD');
+----
+true
+
+query I
+SELECT diff_text NOT LIKE '%\\%'
+FROM read_git_diff('git://test/tmp/main-repo/README.md@nosuchref',
+                   'git://test/tmp/main-repo/README.md@HEAD');
+----
+true
+
+# The innermost cause -- the only part a reader needs -- must survive to the top.
+query I
+SELECT diff_text LIKE '%revspec ''nosuchref'' not found%'
+FROM read_git_diff('git://test/tmp/main-repo/README.md@nosuchref',
+                   'git://test/tmp/main-repo/README.md@HEAD');
+----
+true
+
+# The same, for errors that are raised rather than returned. <!REGEX> asserts
+# the message nowhere carries a re-encoded exception document.
+statement error
+SELECT * FROM read_csv('git://test/tmp/main-repo/README.md@nosuchref');
+----
+<!REGEX>:(?s).*exception_type.*
+
+statement error
+SELECT * FROM read_csv('git://test/tmp/main-repo/README.md@nosuchref');
+----
+revspec 'nosuchref' not found
+
+statement error
+SELECT * FROM read_text('git://test/tmp/main-repo/README.md@nosuchref');
+----
+<!REGEX>:(?s).*exception_type.*
+
+statement error
+SELECT * FROM git_log('/nonexistent-top-level-directory-for-duck-tails/repo');
+----
+<!REGEX>:(?s).*exception_type.*
+
+statement error
+SELECT * FROM git_log('/nonexistent-top-level-directory-for-duck-tails/repo');
+----
+No git repository found for path

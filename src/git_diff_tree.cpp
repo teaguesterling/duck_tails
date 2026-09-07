@@ -289,14 +289,15 @@ static unique_ptr<FunctionData> GitDiffTreeBind(ClientContext &context, TableFun
 			auto git_path = GitPath::Parse("git://" + first_param + "@HEAD");
 			repo_path = git_path.repository_path;
 		} catch (const std::exception &e) {
-			throw BinderException("git_diff_tree: failed to resolve repository path '%s': %s", first_param, e.what());
+			throw BinderException("git_diff_tree: failed to resolve repository path '%s': %s", first_param,
+			                      GitExceptionMessage(e));
 		}
 	} else {
 		try {
 			auto git_path = GitPath::Parse("git://.@HEAD");
 			repo_path = git_path.repository_path;
 		} catch (const std::exception &e) {
-			throw BinderException("git_diff_tree: failed to resolve repository: %s", e.what());
+			throw BinderException("git_diff_tree: failed to resolve repository: %s", GitExceptionMessage(e));
 		}
 	}
 
