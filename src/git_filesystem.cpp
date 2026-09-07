@@ -16,13 +16,12 @@ namespace duckdb {
 // Forward declarations for repository discovery functions
 //===--------------------------------------------------------------------===//
 
-static string FindGitRepository(const string &path);
+static string FindGitRepository(const string &path, const string &display_path);
 static bool IsGitRepository(const string &path);
 static bool PathExists(const string &path);
 static string GetDirectoryFromPath(const string &path);
 static string GetParentDirectory(const string &path);
 static string NormalizePath(const string &path);
-
 //===--------------------------------------------------------------------===//
 // Revision / path-suffix splitting
 //===--------------------------------------------------------------------===//
@@ -150,8 +149,12 @@ GitPath GitPath::Parse(const string &git_url) {
 		result.file_path = path_suffix.empty() ? "" : path_suffix.substr(1); // Remove leading /
 	} else {
 		// Use repository discovery for ALL paths (simple and complex)
-		try {
-			result.repository_path = FindGitRepository(url);
+		{
+			// FindGitRepository reports its own failures, naming the URI as the
+			// caller wrote it. It used to be wrapped in a catch that replaced every
+			// one of them with "found no .git directory" -- true only for
+			// GIT_ENOTFOUND, and actively misleading for the rest (#42).
+			result.repository_path = FindGitRepository(url, git_url);
 
 			// Ask the repository where the ref ends and the path begins.
 			SplitRevisionFromPath(result.repository_path, result.revision, path_suffix);
@@ -195,15 +198,6 @@ GitPath GitPath::Parse(const string &git_url) {
 					}
 				}
 			}
-		} catch (const IOException &e) {
-			// No fallback - fail fast with clear error message
-			string search_path = url;
-			if (url.find('/') != string::npos) {
-				search_path = GetDirectoryFromPath(url);
-			}
-			throw IOException("No git repository found for path '%s'. "
-			                  "Searched up directory tree from '%s' but found no .git directory.",
-			                  git_url.c_str(), search_path.c_str());
 		}
 	}
 
@@ -1095,9 +1089,68 @@ static string GetParentDirectory(const string &path) {
 	return clean_path.substr(0, last_slash);
 }
 
+// Names the libgit2 error codes worth naming, so a report carries the symbol a
+// reader can search for rather than a bare integer.
+static const char *GitErrorCodeName(int code) {
+	switch (code) {
+	case GIT_ERROR:
+		return "GIT_ERROR";
+	case GIT_ENOTFOUND:
+		return "GIT_ENOTFOUND";
+	case GIT_EEXISTS:
+		return "GIT_EEXISTS";
+	case GIT_EAMBIGUOUS:
+		return "GIT_EAMBIGUOUS";
+	case GIT_EBUFS:
+		return "GIT_EBUFS";
+	case GIT_EINVALIDSPEC:
+		return "GIT_EINVALIDSPEC";
+	case GIT_ECONFLICT:
+		return "GIT_ECONFLICT";
+	case GIT_ELOCKED:
+		return "GIT_ELOCKED";
+	case GIT_EAUTH:
+		return "GIT_EAUTH";
+	case GIT_ECERTIFICATE:
+		return "GIT_ECERTIFICATE";
+	case GIT_EDIRECTORY:
+		return "GIT_EDIRECTORY";
+	case GIT_EOWNER:
+		return "GIT_EOWNER";
+	default:
+		return nullptr;
+	}
+}
+
+// Renders whatever libgit2 last recorded, plus the symbolic code, for a call the
+// caller has already seen fail.
+static string DescribeGitError(int code) {
+	const git_error *e = git_error_last();
+	string detail = (e && e->message) ? string(e->message) : string("no further detail from libgit2");
+	const char *name = GitErrorCodeName(code);
+	if (name) {
+		detail += StringUtil::Format(" (%s)", name);
+	} else {
+		detail += StringUtil::Format(" (libgit2 error %d)", code);
+	}
+	return detail;
+}
+
 // Finds the git repository root directory by walking up the directory tree from the given path
 // Uses libgit2's git_repository_discover for cross-platform path handling
-static string FindGitRepository(const string &path) {
+//
+// `display_path` is the spelling to name in an error -- the URI the caller
+// actually wrote, which `path` no longer is by the time it reaches here.
+//
+// Every failure used to leave here, and then leave GitPath::Parse, as "Searched
+// up directory tree ... but found no .git directory" regardless of what libgit2
+// had said. That message names a cause instead of reporting one: it is accurate
+// only for GIT_ENOTFOUND, and for anything else -- GIT_EOWNER above all, where
+// the repository is sitting right there and only ownership validation refused
+// it -- it sends the reader looking for a directory that is not missing. Two
+// separate investigations lost hours to it (#42), with the real error one
+// git_error_last() call away the whole time.
+static string FindGitRepository(const string &path, const string &display_path) {
 	// First, try to find an existing starting point for discovery
 	string start_path = path;
 
@@ -1129,38 +1182,59 @@ static string FindGitRepository(const string &path) {
 	if (error == 0) {
 		// Open the repository to get the proper workdir (handles submodules correctly)
 		git_repository *repo = nullptr;
+		string git_dir = discovered_path.ptr ? string(discovered_path.ptr) : string();
 		error = git_repository_open(&repo, discovered_path.ptr);
 		git_buf_dispose(&discovered_path);
 
-		if (error == 0) {
-			string result;
-
-			// For worktrees and submodules, get the workdir path
-			// For bare repos, use the repo path
-			const char *workdir = git_repository_workdir(repo);
-			if (workdir) {
-				result = workdir;
-			} else {
-				// Bare repository - use the repository path itself
-				result = git_repository_path(repo);
-			}
-
-			git_repository_free(repo);
-
-			// Remove trailing slashes
-			while (!result.empty() && (result.back() == '/' || result.back() == '\\')) {
-				result.pop_back();
-			}
-
-			return result.empty() ? "." : result;
+		if (error != 0) {
+			// Discovery succeeded, so the .git directory is there and was found.
+			// Whatever went wrong happened on the way in, and saying "no .git
+			// directory" here would be flatly false.
+			throw IOException("Found a git directory at '%s' for path '%s' but could not open it: %s", git_dir,
+			                  display_path, DescribeGitError(error));
 		}
 
-		// Failed to open - fall through to error
-	} else {
-		git_buf_dispose(&discovered_path);
+		// For worktrees and submodules, get the workdir path
+		// For bare repos, use the repo path
+		string result;
+		const char *workdir = git_repository_workdir(repo);
+		if (workdir) {
+			result = workdir;
+		} else {
+			// Bare repository - use the repository path itself
+			result = git_repository_path(repo);
+		}
+
+		git_repository_free(repo);
+
+		// Remove trailing slashes
+		while (!result.empty() && (result.back() == '/' || result.back() == '\\')) {
+			result.pop_back();
+		}
+
+		return result.empty() ? "." : result;
 	}
 
-	throw IOException("No git repository found for path: %s", path);
+	git_buf_dispose(&discovered_path);
+
+	if (error == GIT_ENOTFOUND) {
+		// The one case where naming the cause is reporting it: libgit2 walked the
+		// tree and there was genuinely nothing there.
+		throw IOException("No git repository found for path '%s'. "
+		                  "Searched up directory tree from '%s' but found no .git directory.",
+		                  display_path, start_path);
+	}
+
+	string message = StringUtil::Format("Could not discover a git repository for path '%s' (searched from '%s'): %s",
+	                                    display_path, start_path, DescribeGitError(error));
+	if (error == GIT_EOWNER) {
+		// GIT_EOWNER is an environment problem with one well-known remedy, and
+		// the repository is present -- the reader needs to be told that, not sent
+		// looking for a .git directory that is right in front of them.
+		message += ". The repository exists but is owned by another user; add it to "
+		           "safe.directory (git config --global --add safe.directory <path>) to allow access";
+	}
+	throw IOException(message);
 }
 
 //===--------------------------------------------------------------------===//

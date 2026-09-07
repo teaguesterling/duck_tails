@@ -1,0 +1,68 @@
+# name: test/sql/git_discovery_errors.test
+# description: discovery failures must report their cause, not assert one (issue #42)
+# group: [sql]
+
+require duck_tails
+
+require notwindows
+
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/repository';
+
+statement ok
+PRAGMA threads=1;
+
+# Every failure of git_repository_discover was caught and rewritten as
+# "Searched up directory tree ... but found no .git directory". That names a
+# cause instead of reporting one: it is accurate only for GIT_ENOTFOUND. The
+# canary failure behind #40 was libgit2 returning GIT_EOWNER -- the repository
+# was present and correct, and only ownership validation refused it -- and
+# because the catch-all rewrote the message, two separate investigations spent
+# hours on working-directory and fixture-path theories. The real error was one
+# git_error_last() call away the whole time.
+
+# test/tmp/malformed-gitfile-repo has a .git FILE whose contents are not a
+# "gitdir:" pointer. libgit2 returns GIT_ERROR, not GIT_ENOTFOUND, so the old
+# message claimed no .git directory was found for a repository marker sitting
+# right there.
+statement error
+SELECT * FROM git_log('test/tmp/malformed-gitfile-repo');
+----
+malformed
+
+# libgit2's symbolic error code travels with the message, so a reader has
+# something to search for.
+statement error
+SELECT * FROM git_log('test/tmp/malformed-gitfile-repo');
+----
+GIT_ERROR
+
+# And the message must NOT claim the tree was searched and nothing was found.
+statement error
+SELECT * FROM git_log('test/tmp/malformed-gitfile-repo');
+----
+<!REGEX>:(?s).*found no .git directory.*
+
+# The one case where naming the cause IS reporting it must keep its wording:
+# libgit2 really did walk the tree and find nothing.
+statement error
+SELECT * FROM git_log('/nonexistent-top-level-directory-for-duck-tails/repo');
+----
+Searched up directory tree
+
+statement error
+SELECT * FROM git_log('/nonexistent-top-level-directory-for-duck-tails/repo');
+----
+found no .git directory
+
+# The same path through the filesystem surface rather than a table function.
+statement error
+SELECT * FROM read_text('git://test/tmp/malformed-gitfile-repo/README.md@HEAD');
+----
+malformed
+
+# A working repository must still resolve, through both spellings.
+query I
+SELECT COUNT(*) > 0 FROM git_log('test/tmp/main-repo');
+----
+true
