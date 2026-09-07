@@ -1,0 +1,113 @@
+# name: test/sql/git_path_spelling.test
+# description: a path spelled differently from libgit2's resolution of it must still resolve (issue #38)
+# group: [sql]
+
+require duck_tails
+
+require notwindows
+
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/repository';
+
+statement ok
+PRAGMA threads=1;
+
+# test/tmp/symlinked-repo is a symlink to test/tmp/main-repo, so libgit2
+# resolves it to a path that does not match the input textually. GitPath::Parse
+# derived the in-repository path by stripping libgit2's repository root off the
+# input as text; when that prefix did not match it fell back to treating the
+# WHOLE input as a path filter inside the repository. Such a filter matches
+# nothing, so every query below returned zero rows and no error -- and an empty
+# result is indistinguishable from an empty file or an empty history.
+#
+# On Windows the same mismatch arises without any symlink: drive-letter case,
+# 8.3 short names, directory junctions, subst and mapped network drives, and
+# \\?\ extended-length prefixes all produce it.
+#
+# main-repo has 3 commits, 4 tree entries at HEAD, 3 branches and 3 tags.
+
+query I
+SELECT COUNT(*) FROM git_log('test/tmp/symlinked-repo');
+----
+3
+
+query I
+SELECT COUNT(*) FROM git_tree('test/tmp/symlinked-repo');
+----
+4
+
+query I
+SELECT COUNT(*) FROM git_tags('test/tmp/symlinked-repo');
+----
+3
+
+# The two spellings must agree on every surface, not merely both be non-empty.
+query I
+SELECT (SELECT COUNT(*) FROM git_log('test/tmp/symlinked-repo')) =
+       (SELECT COUNT(*) FROM git_log('test/tmp/main-repo'));
+----
+true
+
+query I
+SELECT (SELECT COUNT(*) FROM git_tree('test/tmp/symlinked-repo')) =
+       (SELECT COUNT(*) FROM git_tree('test/tmp/main-repo'));
+----
+true
+
+# A path INSIDE the repository, reached through the differing spelling, must
+# name the same file rather than a filter that matches nothing.
+query I
+SELECT (SELECT COUNT(*) FROM git_log('test/tmp/symlinked-repo/README.md')) =
+       (SELECT COUNT(*) FROM git_log('test/tmp/main-repo/README.md'));
+----
+true
+
+query I
+SELECT COUNT(*) > 0 FROM git_log('test/tmp/symlinked-repo/README.md');
+----
+true
+
+# Reading content through the differing spelling must return the file, not an
+# empty string -- read_text returning "" is the case a caller cannot tell from
+# a genuinely empty file.
+query I
+SELECT (SELECT text FROM git_read('git://test/tmp/symlinked-repo/README.md@HEAD')) =
+       (SELECT text FROM git_read('git://test/tmp/main-repo/README.md@HEAD'));
+----
+true
+
+query I
+SELECT LENGTH(text) > 0 FROM git_read('git://test/tmp/symlinked-repo/README.md@HEAD');
+----
+true
+
+# A git:// URI carrying a revision must resolve through the differing spelling too.
+query I
+SELECT COUNT(*) FROM git_tree('git://test/tmp/symlinked-repo@v1.0.0');
+----
+4
+
+# Spellings that were already fine must stay fine.
+query I
+SELECT (SELECT COUNT(*) FROM git_log('test/tmp/main-repo/')) =
+       (SELECT COUNT(*) FROM git_log('test/tmp/main-repo'));
+----
+true
+
+query I
+SELECT (SELECT COUNT(*) FROM git_log('test/tmp/../tmp/main-repo')) =
+       (SELECT COUNT(*) FROM git_log('test/tmp/main-repo'));
+----
+true
+
+query I
+SELECT (SELECT COUNT(*) FROM git_log('./test/tmp/main-repo')) =
+       (SELECT COUNT(*) FROM git_log('test/tmp/main-repo'));
+----
+true
+
+# A path that names no repository at all must still raise rather than answer.
+statement error
+SELECT * FROM git_log('/nonexistent-top-level-directory-for-duck-tails/repo');
+----
+No git repository found for path
