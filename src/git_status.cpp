@@ -252,6 +252,11 @@ static unique_ptr<FunctionData> GitStatusBind(ClientContext &context, TableFunct
 
 	// Parse positional parameters
 	if (!input.inputs.empty()) {
+		// git_status never goes through ParseUnifiedGitParams, so it needs its own
+		// refusal: git_status(NULL) resolved the literal string "NULL", discovery
+		// walked up to the current directory, and the answer was the working
+		// directory's status -- indistinguishable from a correct one (#8).
+		RejectNullRepoPathArgument(input.inputs[0]);
 		string first_param = input.inputs[0].GetValue<string>();
 		// Use GitContextManager for repo discovery (but we only need the repo path, not a ref)
 		// For git_status, we just need the repo root - no ref resolution needed

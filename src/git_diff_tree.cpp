@@ -284,6 +284,11 @@ static unique_ptr<FunctionData> GitDiffTreeBind(ClientContext &context, TableFun
 
 	// Parse positional parameters
 	if (!input.inputs.empty()) {
+		// git_diff_tree never goes through ParseUnifiedGitParams, so it needs its own
+		// refusal. It already declines a NULL second and third argument just below;
+		// the first one was resolved as the literal string "NULL" and answered from
+		// the current directory instead (#8).
+		RejectNullRepoPathArgument(input.inputs[0]);
 		string first_param = input.inputs[0].GetValue<string>();
 		try {
 			auto git_path = GitPath::Parse("git://" + first_param + "@HEAD");

@@ -57,6 +57,15 @@ UnifiedGitParams ParseUnifiedGitParams(TableFunctionBindInput &input, int ref_pa
 // Parse parameters for LATERAL functions where repo_path comes from runtime DataChunk
 UnifiedGitParams ParseLateralGitParams(TableFunctionBindInput &input, int ref_param_index = 1);
 
+// Raise on a NULL repository path rather than resolving the literal string "NULL"
+// that Value::GetValue<string>() produces for one (#8). Every surface has to
+// refuse in the same words, and not all of them go through
+// ParseUnifiedGitParams: git_status and git_diff_tree read input.inputs[0]
+// themselves, and git_read and git_blame read their own repo_path named
+// parameter, so those call these directly.
+void RejectNullRepoPathArgument(const Value &value);
+void RejectNullRepoPathParameter(const Value &value);
+
 // RAII wrapper for git repository
 class GitRepository {
 public:
