@@ -81,6 +81,19 @@ setup_fixtures() {
     echo "Generating slash-bearing ref fixture..."
     bash "$FIXTURES_DIR/../scripts/setup_slash_refs_fixture.sh" "$TEMP_DIR"
 
+    # The index-side counterpart of the slash-refs fixture: a repository whose
+    # index holds more (and different) paths than HEAD, at more than one depth,
+    # so the @STAGED branch of Glob can be tested without an assertion passing
+    # by accidentally reading the commit tree.
+    echo "Generating staged-glob fixture..."
+    bash "$FIXTURES_DIR/../scripts/setup_staged_glob_fixture.sh" "$TEMP_DIR"
+
+    # An LFS-tracked pair: one object present in the local store, one absent.
+    # duck_tails has no LFS Batch API client, so the absent one has to fail
+    # loudly rather than hand back the pointer text as file content (#26).
+    echo "Generating LFS local-cache fixture..."
+    bash "$FIXTURES_DIR/../scripts/setup_lfs_missing_object_fixture.sh" "$TEMP_DIR"
+
     # A second spelling of main-repo whose textual form differs from the one
     # libgit2 resolves it to. GitPath::Parse derived the in-repository path by
     # stripping libgit2's repository root off the input as text, so an input that

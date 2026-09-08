@@ -1,0 +1,141 @@
+# name: test/sql/git_staged_glob.test
+# description: Globbing the git index through the git:// filesystem (@STAGED / @INDEX)
+# group: [sql]
+
+require duck_tails
+
+require notwindows
+
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
+
+# Fixture: test/tmp/staged-glob-repo
+#   HEAD  -> README.md, src/main.py, utf8.txt                        (3 entries)
+#   index -> README.md, app.js, data/rows.csv, notes.txt,
+#            src/main.py, src/util.py, utf8.txt                      (7 entries)
+
+# '**' crawls the whole index. The index branch used to compare the pattern to
+# each entry path with StringUtil::StartsWith, so a pattern that is not a
+# literal path prefix matched nothing and the query returned zero rows with no
+# error at all.
+query I
+SELECT COUNT(*) FROM glob('git://test/tmp/staged-glob-repo@STAGED/**');
+----
+7
+
+# ...and the index really is a different set of files from HEAD
+query I
+SELECT COUNT(*) FROM glob('git://test/tmp/staged-glob-repo@HEAD/**');
+----
+3
+
+# @INDEX is the same pseudo-ref under its other spelling
+query I
+SELECT COUNT(*) FROM glob('git://test/tmp/staged-glob-repo@INDEX/**');
+----
+7
+
+# Filtering on the trailing component
+query I
+SELECT COUNT(*) FROM glob('git://test/tmp/staged-glob-repo@STAGED/**/*.py');
+----
+2
+
+# A glob written in the path part of the URI resolves the same way
+query I
+SELECT COUNT(*) FROM glob('git://test/tmp/staged-glob-repo/**/*.py@STAGED');
+----
+2
+
+# Wildcards do not cross directory separators
+query I
+SELECT COUNT(*) FROM glob('git://test/tmp/staged-glob-repo@STAGED/*.js');
+----
+1
+
+query I
+SELECT COUNT(*) FROM glob('git://test/tmp/staged-glob-repo@STAGED/*.py');
+----
+0
+
+# Directory-scoped glob
+query I
+SELECT COUNT(*) FROM glob('git://test/tmp/staged-glob-repo@STAGED/src/*.py');
+----
+2
+
+# '?' matches a single character
+query I
+SELECT COUNT(*) FROM glob('git://test/tmp/staged-glob-repo@STAGED/app.?s');
+----
+1
+
+# Character classes
+query I
+SELECT COUNT(*) FROM glob('git://test/tmp/staged-glob-repo@STAGED/src/[mu]*.py');
+----
+2
+
+query I
+SELECT COUNT(*) FROM glob('git://test/tmp/staged-glob-repo@STAGED/src/[!m]*.py');
+----
+1
+
+# An exact path names exactly that file...
+query I
+SELECT file LIKE '%/staged-glob-repo/src/util.py@STAGED' FROM glob('git://test/tmp/staged-glob-repo/src/util.py@STAGED');
+----
+true
+
+# ...and a truncation of it names nothing. Prefix matching used to answer this
+# with src/util.py, and a caller that read the result back got content for a
+# path it never asked for.
+query I
+SELECT COUNT(*) FROM glob('git://test/tmp/staged-glob-repo/src/uti@STAGED');
+----
+0
+
+query I
+SELECT COUNT(*) FROM glob('git://test/tmp/staged-glob-repo/src@STAGED');
+----
+0
+
+# A repository URI with no path names no file, exactly as the commit-tree
+# branch answers it. It used to hand back every entry in the index, so
+# read_csv('git://repo@STAGED') fed every staged file to the CSV parser.
+query I
+SELECT COUNT(*) FROM glob('git://test/tmp/staged-glob-repo@STAGED');
+----
+0
+
+# The URIs handed back are re-openable and carry the pseudo-ref, so the read
+# comes from the index and not from the working directory or HEAD.
+query I
+SELECT COUNT(*) FROM read_csv('git://test/tmp/staged-glob-repo/data/*.csv@STAGED');
+----
+2
+
+query I
+SELECT rtrim(content, chr(10)) FROM read_text('git://test/tmp/staged-glob-repo/*.md@STAGED');
+----
+staged
+
+# The same file at HEAD still reads the committed content
+query I
+SELECT rtrim(content, chr(10)) FROM read_text('git://test/tmp/staged-glob-repo/*.md@HEAD');
+----
+committed
+
+# A pseudo-ref followed by a directory-scoped glob. WORKDIR and STAGED are not
+# git refs, so the revision/path split cannot be settled by asking the
+# repository to resolve them: this used to raise
+# "revspec 'STAGED/src' not found", leaving only top-level globs usable.
+query I
+SELECT COUNT(*) FROM glob('git://test/tmp/staged-glob-repo@WORKDIR/src/*.py');
+----
+2
+
+query I
+SELECT COUNT(*) FROM glob('git://test/tmp/staged-glob-repo@WORKDIR/**/*.py');
+----
+2

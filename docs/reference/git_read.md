@@ -159,5 +159,11 @@ SELECT * FROM read_parquet('git://data/metrics.parquet@v1.0');
 - Text files have content in the `text` column
 - Binary files have content in the `blob` column
 - The `truncated` column indicates if content was cut off (for very large files)
-- Git LFS files are automatically detected and their real content is returned
+- `size_bytes` always reports the whole file, never the number of bytes returned
+- A `max_bytes` budget never changes `is_text`: the file is classified whole, and
+  a text file is cut back to a character boundary so `text` stays valid UTF-8
+- Git LFS files are automatically detected and their real content is returned,
+  read from the local LFS object store (`.git/lfs/objects/`). An object that has
+  not been pulled raises an error naming it — the same error `read_text()` gives —
+  rather than returning the pointer text as if it were the file
 - Use `git_read_each()` for efficient multi-file reads via LATERAL joins

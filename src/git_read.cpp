@@ -152,15 +152,62 @@ static unique_ptr<GlobalTableFunctionState> GitReadInitGlobal(ClientContext &con
 	return make_uniq<GitReadGlobalState>();
 }
 
+// An LFS-tracked blob holds a ~130-byte pointer, not the file. read_text() on a
+// git:// URI already resolves that pointer through GitLFSFileHandle; git_read()
+// did not look for it at all, so the same file read two different ways gave two
+// different contents -- the object through one, the pointer text through the
+// other, with is_text=true and size_bytes=127 making the pointer look like a
+// perfectly ordinary small text file. Substitute here so both readers answer
+// the same question, and let a never-pulled object raise the same error
+// read_text() raises rather than answering with the pointer.
+//
+// Only blobs small enough to BE a pointer are copied for the check.
+static bool ResolveLFSContentIfPointer(git_repository *repo, const string &file_path, const char *&content_ptr,
+                                       size_t &content_len, string &holder) {
+	static constexpr size_t MAX_LFS_POINTER_BYTES = 1024;
+	if (content_len == 0 || content_len > MAX_LFS_POINTER_BYTES) {
+		return false;
+	}
+	holder.assign(content_ptr, content_len);
+	if (!SubstituteLFSPointerContent(repo, file_path, holder)) {
+		return false;
+	}
+	content_ptr = holder.data();
+	content_len = holder.size();
+	return true;
+}
+
 // Helper to populate text/blob content fields from raw data
 static void PopulateContentFields(const char *raw_content, size_t raw_size, int64_t max_bytes,
                                   GitReadLocalState::ReadResult &result) {
 	result.size_bytes = static_cast<int64_t>(raw_size);
 
+	// A NUL byte (0x00) is valid UTF-8 (U+0000) and a DuckDB VARCHAR is
+	// length-prefixed, so it can hold embedded NULs. We therefore classify on
+	// UTF-8 validity alone; an embedded NUL no longer forces a text blob to be
+	// reported as binary (which previously caused git_tree to say is_text=true
+	// while git_read returned NULL text for the same blob).
+	//
+	// Classify the WHOLE blob, before applying max_bytes. Cutting first made the
+	// answer depend on where the byte budget happened to land: for a file holding
+	// "café\n" (63 61 66 C3 A9 0A), git_read(..., 4) split the two-byte 'é', the
+	// prefix was not valid UTF-8, and a plain text file came back as
+	// is_text=false, encoding='binary', text=NULL. is_text describes the file, so
+	// it must not change with the byte budget.
+	const bool is_valid_utf8 = raw_size == 0 || IsValidUTF8(raw_content, raw_size);
+
 	size_t content_size = raw_size;
 	if (max_bytes > 0 && content_size > static_cast<size_t>(max_bytes)) {
 		content_size = static_cast<size_t>(max_bytes);
 		result.truncated = true;
+		if (is_valid_utf8) {
+			// Never cut inside a multi-byte sequence: back up to the start of the
+			// character the budget landed in so the text column stays valid UTF-8.
+			// A continuation byte is 10xxxxxx.
+			while (content_size > 0 && (static_cast<unsigned char>(raw_content[content_size]) & 0xC0) == 0x80) {
+				content_size--;
+			}
+		}
 	}
 
 	if (content_size == 0) {
@@ -171,13 +218,6 @@ static void PopulateContentFields(const char *raw_content, size_t raw_size, int6
 		result.text = string();
 		return;
 	}
-
-	// A NUL byte (0x00) is valid UTF-8 (U+0000) and a DuckDB VARCHAR is
-	// length-prefixed, so it can hold embedded NULs. We therefore classify on
-	// UTF-8 validity alone; an embedded NUL no longer forces a text blob to be
-	// reported as binary (which previously caused git_tree to say is_text=true
-	// while git_read returned NULL text for the same blob).
-	bool is_valid_utf8 = IsValidUTF8(raw_content, content_size);
 
 	if (is_valid_utf8) {
 		result.is_text = true;
@@ -273,21 +313,27 @@ static void ProcessIndexRead(const string &repo_path, const string &file_path, c
 	result.kind = "file";
 	result.mode = entry->mode;
 
-	// Use git_blob_is_binary for initial check, then do full validation
-	bool git_says_binary = git_blob_is_binary(blob);
+	const char *content_ptr = static_cast<const char *>(raw_content);
+	size_t content_len = static_cast<size_t>(raw_size);
+	string lfs_holder;
+	bool from_lfs = ResolveLFSContentIfPointer(repo, file_path, content_ptr, content_len, lfs_holder);
+
+	// Use git_blob_is_binary for initial check, then do full validation.
+	// An LFS object is classified on its own bytes: git_blob_is_binary would be
+	// describing the pointer, which is always text.
+	bool git_says_binary = !from_lfs && git_blob_is_binary(blob);
 	if (!git_says_binary) {
-		PopulateContentFields(static_cast<const char *>(raw_content), static_cast<size_t>(raw_size),
-		                      bind_data.max_bytes, result);
+		PopulateContentFields(content_ptr, content_len, bind_data.max_bytes, result);
 	} else {
 		result.is_text = false;
 		result.encoding = "binary";
-		result.size_bytes = static_cast<int64_t>(raw_size);
-		size_t content_size = static_cast<size_t>(raw_size);
+		result.size_bytes = static_cast<int64_t>(content_len);
+		size_t content_size = content_len;
 		if (bind_data.max_bytes > 0 && content_size > static_cast<size_t>(bind_data.max_bytes)) {
 			content_size = static_cast<size_t>(bind_data.max_bytes);
 			result.truncated = true;
 		}
-		result.blob = string(static_cast<const char *>(raw_content), content_size);
+		result.blob = string(content_ptr, content_size);
 	}
 
 	git_blob_free(blob);
@@ -442,19 +488,25 @@ static void ProcessGitURI(const string &uri, const GitReadBindData &bind_data, G
 		// helper: it builds a length-prefixed string, so embedded NUL bytes survive
 		// and an empty blob reads back as '' instead of NULL. (DuckDB VARCHAR is
 		// length-prefixed and U+0000 is valid UTF-8, so embedded NULs are valid.)
-		if (!git_blob_is_binary(blob)) {
-			PopulateContentFields(static_cast<const char *>(raw_content), static_cast<size_t>(raw_size),
-			                      bind_data.max_bytes, result);
+		const char *content_ptr = static_cast<const char *>(raw_content);
+		size_t content_len = static_cast<size_t>(raw_size);
+		string lfs_holder;
+		bool from_lfs = ResolveLFSContentIfPointer(repo, result.file_path, content_ptr, content_len, lfs_holder);
+
+		// An LFS object is classified on its own bytes: git_blob_is_binary would
+		// be describing the pointer, which is always text.
+		if (from_lfs || !git_blob_is_binary(blob)) {
+			PopulateContentFields(content_ptr, content_len, bind_data.max_bytes, result);
 		} else {
 			result.is_text = false;
 			result.encoding = "binary";
-			result.size_bytes = static_cast<int64_t>(raw_size);
-			size_t content_size = static_cast<size_t>(raw_size);
+			result.size_bytes = static_cast<int64_t>(content_len);
+			size_t content_size = content_len;
 			if (bind_data.max_bytes > 0 && content_size > static_cast<size_t>(bind_data.max_bytes)) {
 				content_size = static_cast<size_t>(bind_data.max_bytes);
 				result.truncated = true;
 			}
-			result.blob = string(static_cast<const char *>(raw_content), content_size);
+			result.blob = string(content_ptr, content_size);
 		}
 
 		// Clean up local objects

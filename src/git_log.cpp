@@ -332,6 +332,22 @@ static OperatorResultType GitLogEachFunction(ExecutionContext &context, TableFun
 				throw BinderException("git_log_each: received empty repo_path_or_uri from input");
 			}
 
+			// The ref, when the caller passed one, arrives as the second runtime
+			// column. A correlated (LATERAL) call is bound as a TABLE_IN_OUT
+			// function, and DuckDB leaves TableFunctionBindInput::inputs empty for
+			// those -- every argument comes through the DataChunk instead. Reading
+			// the ref only at bind time meant git_log_each(r.repo, r.ref) walked
+			// HEAD for every driver row while the all-literal call honoured it.
+			string row_ref;
+			if (input.ColumnCount() > 1 && !FlatVector::IsNull(input.data[1], state.current_input_row)) {
+				auto ref_data = FlatVector::GetData<string_t>(input.data[1]);
+				if (ref_data) {
+					row_ref = string(ref_data[state.current_input_row].GetData(),
+					                 ref_data[state.current_input_row].GetSize());
+				}
+			}
+			const string &requested_ref = row_ref.empty() ? bind_data.ref : row_ref;
+
 			// Apply unified parameter processing at runtime
 			// Use GitContextManager for unified git URI processing and reference validation
 			string resolved_file_path, final_ref;
@@ -340,7 +356,7 @@ static OperatorResultType GitLogEachFunction(ExecutionContext &context, TableFun
 				// GitContextManager handles both git:// URIs and filesystem paths
 				// It also validates references and throws consistent "unable to parse OID" errors
 				// Use bind_data.ref as fallback (defaults to "HEAD" from ParseLateralGitParams)
-				auto ctx = GitContextManager::Instance().ProcessGitUri(repo_path_or_uri, bind_data.ref);
+				auto ctx = GitContextManager::Instance().ProcessGitUri(repo_path_or_uri, requested_ref);
 				resolved_repo_path = ctx.repo_path;
 				resolved_file_path = ctx.file_path;
 				final_ref = ctx.final_ref;

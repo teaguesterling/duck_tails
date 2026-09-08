@@ -1,0 +1,136 @@
+# name: test/sql/git_each_lateral_ref.test
+# description: The _each table functions must honour a ref supplied by a correlated (LATERAL) argument
+# group: [sql]
+
+require duck_tails
+
+require notwindows
+
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
+
+# Fixture: test/tmp/slash-refs-repo
+#   main         1 commit,  README.md, data/, data/rows.csv          (3 tree rows)
+#   feature/foo  2 commits, + feature-only.txt                       (4 tree rows)
+#
+# DuckDB binds a table function two different ways. With all-literal arguments
+# it is a STANDARD_TABLE_FUNCTION and TableFunctionBindInput carries them; a
+# correlated call is bound as a TABLE_IN_OUT_FUNCTION and `inputs` is left
+# empty, so every argument arrives in the runtime DataChunk instead. Reading
+# the ref only at bind time therefore worked for the literal call and silently
+# ignored it for the LATERAL form -- which is the form the docs lead with.
+# Every assertion below is written as literal-vs-LATERAL so a regression cannot
+# hide behind a fixture whose refs happen to agree.
+
+# --- git_tree_each ---------------------------------------------------
+
+query I
+SELECT COUNT(*) FROM git_tree_each('test/tmp/slash-refs-repo', 'main');
+----
+3
+
+query I
+SELECT COUNT(*) FROM git_tree_each('test/tmp/slash-refs-repo', 'feature/foo');
+----
+4
+
+query II
+SELECT r.ref, COUNT(*)
+FROM (VALUES ('main'), ('feature/foo')) AS r(ref),
+     LATERAL git_tree_each('test/tmp/slash-refs-repo', r.ref) t
+GROUP BY r.ref ORDER BY r.ref;
+----
+feature/foo	4
+main	3
+
+# The branch-only file is only ever reported for the branch that carries it.
+query I
+SELECT COUNT(*)
+FROM (VALUES ('main')) AS r(ref),
+     LATERAL git_tree_each('test/tmp/slash-refs-repo', r.ref) t
+WHERE t.file_path = 'feature-only.txt';
+----
+0
+
+query I
+SELECT COUNT(*)
+FROM (VALUES ('feature/foo')) AS r(ref),
+     LATERAL git_tree_each('test/tmp/slash-refs-repo', r.ref) t
+WHERE t.file_path = 'feature-only.txt';
+----
+1
+
+# --- git_log_each ----------------------------------------------------
+
+query I
+SELECT COUNT(*) FROM git_log_each('test/tmp/slash-refs-repo', 'main');
+----
+1
+
+query I
+SELECT COUNT(*) FROM git_log_each('test/tmp/slash-refs-repo', 'feature/foo');
+----
+2
+
+query II
+SELECT r.ref, COUNT(*)
+FROM (VALUES ('main'), ('feature/foo')) AS r(ref),
+     LATERAL git_log_each('test/tmp/slash-refs-repo', r.ref) l
+GROUP BY r.ref ORDER BY r.ref;
+----
+feature/foo	2
+main	1
+
+# --- git_diff_tree_each ----------------------------------------------
+#
+# With no second ref, CollectDiffRows diffs against the working directory --
+# a different question entirely. A LATERAL call that supplied both refs used to
+# fall into that branch, because the bind data kept ref='HEAD' and ref2=''.
+# main..feature/foo changes README.md and data/rows.csv and adds
+# feature-only.txt.
+
+query I
+SELECT COUNT(*) FROM git_diff_tree_each('test/tmp/slash-refs-repo', 'main', 'feature/foo');
+----
+3
+
+query I
+SELECT COUNT(*)
+FROM (VALUES ('test/tmp/slash-refs-repo')) AS r(repo),
+     LATERAL git_diff_tree_each(r.repo, 'main', 'feature/foo') d;
+----
+3
+
+query I
+SELECT COUNT(*)
+FROM (VALUES ('main', 'feature/foo')) AS r(a, b),
+     LATERAL git_diff_tree_each('test/tmp/slash-refs-repo', r.a, r.b) d
+WHERE d.file_path = 'feature-only.txt';
+----
+1
+
+# --- pseudo-refs through _each ---------------------------------------
+#
+# git_tree_each called ProcessSingleCommit unconditionally and swallowed the
+# failure, so a WORKDIR/STAGED URI returned zero rows with no error while
+# git_tree() on the very same URI returned the full listing.
+
+query I
+SELECT COUNT(*) FROM git_tree('git://test/tmp/staged-glob-repo@WORKDIR') WHERE kind = 'file';
+----
+3
+
+query I
+SELECT COUNT(*) FROM git_tree_each('git://test/tmp/staged-glob-repo@WORKDIR') WHERE kind = 'file';
+----
+3
+
+query I
+SELECT COUNT(*) FROM git_tree('git://test/tmp/staged-glob-repo@STAGED');
+----
+7
+
+query I
+SELECT COUNT(*) FROM git_tree_each('git://test/tmp/staged-glob-repo@STAGED');
+----
+7

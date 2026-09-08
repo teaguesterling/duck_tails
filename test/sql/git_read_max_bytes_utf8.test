@@ -1,0 +1,59 @@
+# name: test/sql/git_read_max_bytes_utf8.test
+# description: git_read's max_bytes budget must not change what the file is
+# group: [sql]
+
+require duck_tails
+
+require notwindows
+
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
+
+# Fixture: test/tmp/staged-glob-repo/utf8.txt holds 'caf\xc3\xa9\n' -- six bytes,
+# with a two-byte character spanning offsets 3 and 4.
+
+query IIII
+SELECT is_text, encoding, truncated, size_bytes
+FROM git_read('git://test/tmp/staged-glob-repo/utf8.txt@HEAD');
+----
+true	utf8	false	6
+
+# A budget landing inside the multi-byte character used to split it. The prefix
+# was then not valid UTF-8, so a plain text file was reported as
+# is_text=false, encoding='binary', text=NULL -- the byte budget silently
+# changed the answer to "what kind of file is this?".
+query IIII
+SELECT is_text, encoding, truncated, size_bytes
+FROM git_read('git://test/tmp/staged-glob-repo/utf8.txt@HEAD', 4);
+----
+true	utf8	true	6
+
+# The text is cut back to a character boundary rather than mid-sequence.
+query I
+SELECT text FROM git_read('git://test/tmp/staged-glob-repo/utf8.txt@HEAD', 4);
+----
+caf
+
+query I
+SELECT text FROM git_read('git://test/tmp/staged-glob-repo/utf8.txt@HEAD', 5);
+----
+café
+
+# size_bytes always reports the blob, never the budget.
+query II
+SELECT truncated, size_bytes FROM git_read('git://test/tmp/staged-glob-repo/utf8.txt@HEAD', 100);
+----
+false	6
+
+# A budget that cannot hold even the first character yields empty text, not a
+# broken one.
+query II
+SELECT truncated, text FROM git_read('git://test/tmp/staged-glob-repo/utf8.txt@HEAD', 1);
+----
+true	c
+
+# An ASCII file is unaffected by any of this.
+query III
+SELECT is_text, truncated, text FROM git_read('git://test/tmp/staged-glob-repo/src/main.py@HEAD', 5);
+----
+true	true	print

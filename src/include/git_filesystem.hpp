@@ -192,6 +192,15 @@ public:
 	idx_t SeekPosition(FileHandle &handle) override;
 	void Reset(FileHandle &handle) override;
 
+	// LFS pointer recognition and resolution. Public and static because the
+	// table functions have to reach the same answer this filesystem reaches:
+	// git_read() used to hand back the 130-byte pointer text as a file's
+	// content while read_text() on the same URI returned the object, and
+	// neither raised anything.
+	static bool IsLFSPointer(const string &content);
+	static LFSInfo ParseLFSPointer(const string &pointer_content);
+	static string BuildLFSObjectPath(git_repository *repo, const string &oid);
+
 private:
 	// Git repository management
 	git_repository *OpenRepository(const string &repo_path);
@@ -200,15 +209,19 @@ private:
 	vector<OpenFileInfo> ListFiles(git_repository *repo, const GitPath &git_path, git_object *commit_obj);
 
 	// LFS support methods
-	bool IsLFSPointer(const string &content);
-	LFSInfo ParseLFSPointer(const string &pointer_content);
 	LFSConfig ReadLFSConfig(git_repository *repo);
-	string BuildLFSObjectPath(git_repository *repo, const string &oid);
 	LFSBatchResponse CallLFSBatchAPI(const LFSConfig &config, const LFSInfo &lfs_info);
 
 	// Cache for opened repositories
 	std::unordered_map<string, git_repository *> repo_cache_;
 };
+
+// Replaces `content` with the bytes the git-lfs pointer it holds stands for,
+// read from the local LFS object store (.git/lfs/objects). Returns false and
+// leaves `content` untouched when it is not a pointer. Throws when it IS a
+// pointer whose object was never pulled: there is no LFS Batch API client here,
+// and answering with the pointer text would feed a query data that looks real.
+bool SubstituteLFSPointerContent(git_repository *repo, const string &path, string &content);
 
 void RegisterGitFileSystem(ExtensionLoader &loader);
 

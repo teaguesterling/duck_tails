@@ -9,6 +9,7 @@
 #include <vector>
 #include <unordered_map>
 #include <fstream>
+#include <sstream>
 
 namespace duckdb {
 
@@ -160,9 +161,28 @@ static size_t FindGlobSuffixStart(const string &revision_spec) {
 // keep the longest prefix that actually resolves and treat the remainder as a
 // path. When nothing resolves, the ref is left exactly as written so the error
 // names the ref the user asked for instead of its first component.
+static bool IsPseudoRef(const string &revision, RefKind &out_kind);
+
 static void SplitRevisionFromPath(const string &repository_path, string &revision, string &path_suffix) {
-	if (revision.find('/') == string::npos) {
+	size_t first_slash = revision.find('/');
+	if (first_slash == string::npos) {
 		return; // no ambiguity to resolve
+	}
+
+	// WORKDIR and STAGED are duck_tails pseudo-refs, not git refs, so
+	// git_revparse_single can never resolve them and the probing below would
+	// keep the whole "STAGED/src" as the revision. The split is unambiguous
+	// here -- no git ref is named WORKDIR/... or STAGED/... -- so take it
+	// lexically. Without this, "git://repo@STAGED/src/*.csv" failed with
+	// "revspec 'STAGED/src' not found" while "git://repo@STAGED/*.csv" worked,
+	// which made only top-level globs usable over the index or the worktree.
+	{
+		RefKind pseudo_kind;
+		if (IsPseudoRef(revision.substr(0, first_slash), pseudo_kind)) {
+			path_suffix = revision.substr(first_slash) + path_suffix;
+			revision = revision.substr(0, first_slash);
+			return;
+		}
 	}
 
 	// Note: the probing below leaves libgit2's thread-local error slot set when a
@@ -551,6 +571,14 @@ unique_ptr<FileHandle> GitFileSystem::OpenFile(const string &path, FileOpenFlags
 	}
 }
 
+// Defined with the tree-globbing helpers further down. The index branch of Glob
+// has to select paths exactly the way ListFiles selects them in a commit tree:
+// the caller writes one pattern and only the ref after '@' decides which branch
+// answers it, so any difference between the two is a difference the caller
+// cannot see.
+static bool PatternHasGlob(const string &pattern);
+static bool GlobPathMatches(const vector<string> &parts, size_t pi, const vector<string> &pattern_parts, size_t qi);
+
 vector<OpenFileInfo> GitFileSystem::Glob(const string &pattern, FileOpener *opener) {
 	try {
 		auto git_path = GitPath::Parse(pattern);
@@ -579,7 +607,27 @@ vector<OpenFileInfo> GitFileSystem::Glob(const string &pattern, FileOpener *open
 					// Return empty on error
 				}
 			} else {
-				// INDEX: enumerate index entries matching pattern
+				// INDEX: select the index entries the pattern names.
+				//
+				// This used to be a StringUtil::StartsWith against the raw
+				// pattern text, which answered two different questions wrongly
+				// and silently. A pattern carrying a wildcard is never a literal
+				// prefix of a path, so `git://repo@STAGED/**/*.csv` matched
+				// nothing and the query returned zero rows with no error --
+				// while the same pattern at `@HEAD` walks the tree and works. In
+				// the other direction a pattern that IS a prefix over-matched:
+				// `git://repo/src/uti@STAGED` reported src/util.py, a path the
+				// caller never asked for and cannot have meant.
+				//
+				// Use the same matcher ListFiles applies to a commit tree, so
+				// one pattern means one thing whichever ref answers it.
+				if (git_path.file_path.empty()) {
+					// A repository URI with no path names no file, as in ListFiles.
+					return results;
+				}
+				const bool has_glob = PatternHasGlob(git_path.file_path);
+				const vector<string> pattern_parts =
+				    has_glob ? StringUtil::Split(git_path.file_path, '/') : vector<string>();
 				try {
 					git_repository *repo_ptr = nullptr;
 					int error = git_repository_open_ext(&repo_ptr, git_path.repository_path.c_str(),
@@ -596,14 +644,22 @@ vector<OpenFileInfo> GitFileSystem::Glob(const string &pattern, FileOpener *open
 							size_t entry_count = git_index_entrycount(index);
 							for (size_t i = 0; i < entry_count; i++) {
 								const git_index_entry *entry = git_index_get_byindex(index, i);
-								if (entry && entry->path) {
-									string entry_path(entry->path);
-									// Simple prefix match for now
-									if (git_path.file_path.empty() ||
-									    StringUtil::StartsWith(entry_path, git_path.file_path)) {
-										results.emplace_back(OpenFileInfo {"git://" + git_path.repository_path + "/" +
-										                                   entry_path + "@STAGED"});
-									}
+								if (!entry || !entry->path) {
+									continue;
+								}
+								// A submodule is recorded in the index as a commit
+								// entry. It is not a readable file, and ListFiles
+								// skips the same thing in a tree.
+								if (entry->mode == GIT_FILEMODE_COMMIT) {
+									continue;
+								}
+								string entry_path(entry->path);
+								bool matched =
+								    has_glob ? GlobPathMatches(StringUtil::Split(entry_path, '/'), 0, pattern_parts, 0)
+								             : entry_path == git_path.file_path;
+								if (matched) {
+									results.emplace_back(OpenFileInfo {"git://" + git_path.repository_path + "/" +
+									                                   entry_path + "@STAGED"});
 								}
 							}
 							git_index_free(index);
@@ -1480,6 +1536,32 @@ string GitLFSFileHandle::BuildLFSObjectPath(const string &oid) {
 	return ConfineUnderDirectory(objects_root, lfs_path, "LFS object path");
 }
 
+// The single place that says "this LFS object is not here". Both readers -- the
+// git:// file handle and git_read() -- have to fail in the same words, or one
+// missing object reads as two unrelated problems.
+void ThrowLFSObjectNotInLocalCache(const string &path, const LFSInfo &lfs_info, const string &local_path) {
+	throw IOException("Git LFS object for '%s' is not in the local LFS cache, and fetching it from the LFS "
+	                  "server is not implemented yet. Run 'git lfs pull' in the repository to download it. "
+	                  "(object sha256:%s, %s bytes, expected at %s)",
+	                  path, lfs_info.oid, std::to_string(lfs_info.size), local_path);
+}
+
+bool SubstituteLFSPointerContent(git_repository *repo, const string &path, string &content) {
+	if (!GitFileSystem::IsLFSPointer(content)) {
+		return false;
+	}
+	auto lfs_info = GitFileSystem::ParseLFSPointer(content);
+	string local_path = GitFileSystem::BuildLFSObjectPath(repo, lfs_info.oid);
+	std::ifstream object_file(local_path, std::ios::binary);
+	if (!object_file.good()) {
+		ThrowLFSObjectNotInLocalCache(path, lfs_info, local_path);
+	}
+	std::ostringstream buffer;
+	buffer << object_file.rdbuf();
+	content = buffer.str();
+	return true;
+}
+
 string GitLFSFileHandle::ResolveLFSDownloadURL() {
 	// TODO: Implement the LFS Batch API so objects can be fetched on demand.
 	//
@@ -1488,10 +1570,8 @@ string GitLFSFileHandle::ResolveLFSDownloadURL() {
 	// empty file) would feed a query data that looks real and is not. The
 	// message says which object is missing and how to get it.
 	string local_path = BuildLFSObjectPath(lfs_info_.oid);
-	throw IOException("Git LFS object for '%s' is not in the local LFS cache, and fetching it from the LFS "
-	                  "server is not implemented yet. Run 'git lfs pull' in the repository to download it. "
-	                  "(object sha256:%s, %s bytes, expected at %s)",
-	                  path, lfs_info_.oid, std::to_string(lfs_info_.size), local_path);
+	ThrowLFSObjectNotInLocalCache(path, lfs_info_, local_path);
+	return string(); // unreachable
 }
 
 LFSConfig GitLFSFileHandle::ReadLFSConfig() {

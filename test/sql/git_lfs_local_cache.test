@@ -1,0 +1,93 @@
+# name: test/sql/git_lfs_local_cache.test
+# description: Reading Git LFS files from the local object store, and failing loudly when the object was never pulled
+# group: [sql]
+
+require duck_tails
+
+require notwindows
+
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
+
+# Fixture: test/tmp/lfs-cache-repo
+#   present.dat  pointer whose object IS in .git/lfs/objects
+#   missing.dat  pointer whose object is NOT
+
+# An LFS-tracked file whose object is in the local store reads as the object,
+# not as the pointer text.
+query I
+SELECT content FROM read_text('git://test/tmp/lfs-cache-repo/present.dat@HEAD');
+----
+lfs object served from the local cache
+
+query I
+SELECT content NOT LIKE '%git-lfs.github.com%' FROM read_text('git://test/tmp/lfs-cache-repo/present.dat@HEAD');
+----
+true
+
+# An object that was never pulled cannot be produced: there is no LFS Batch API
+# client here. Returning the pointer text (or an empty file) would feed a query
+# data that looks real, so this is an error -- and the error has to say which
+# object is missing and how to get it.
+statement error
+SELECT content FROM read_text('git://test/tmp/lfs-cache-repo/missing.dat@HEAD');
+----
+git lfs pull
+
+statement error
+SELECT content FROM read_text('git://test/tmp/lfs-cache-repo/missing.dat@HEAD');
+----
+not in the local LFS cache
+
+# git_read reports the same thing rather than surfacing the pointer as content.
+statement error
+SELECT text FROM git_read('git://test/tmp/lfs-cache-repo/missing.dat@HEAD');
+----
+git lfs pull
+
+# git_read and read_text must agree about the file's content and its size. The
+# pointer is 127 bytes; the object it names is 38. git_read used to report the
+# pointer -- is_text=true, size_bytes=127 -- which is a perfectly plausible
+# small text file and in no way the file the caller asked for.
+query III
+SELECT is_text, size_bytes, text FROM git_read('git://test/tmp/lfs-cache-repo/present.dat@HEAD');
+----
+true	38	lfs object served from the local cache
+
+query I
+SELECT COUNT(*) FROM git_read('git://test/tmp/lfs-cache-repo/present.dat@HEAD') r,
+                    read_text('git://test/tmp/lfs-cache-repo/present.dat@HEAD') t
+WHERE r.text = t.content;
+----
+1
+
+# The staging area reads the same way.
+query II
+SELECT is_text, size_bytes FROM git_read('git://test/tmp/lfs-cache-repo/present.dat@STAGED');
+----
+true	38
+
+# Now that git_read resolves pointers, it is on the same path as the filesystem
+# reader and must reject the same malformed OIDs. A pointer whose oid is a
+# traversal string never reaches the object store.
+statement error
+SELECT text FROM git_read('git://test/tmp/lfs_oid_traversal_repo/leak.dat@HEAD');
+----
+expected exactly 64 lowercase hex characters
+
+# ...while the pointer next to it, whose oid is well-formed, still resolves to
+# its own object. read_text's first column is `filename`, not `content`, so a
+# one-name table alias here would have renamed the URI and asserted that the
+# URI does not contain the canary -- true no matter what the file holds. Name
+# the column instead, and pin the content rather than only its absence, so the
+# assertion fails if the read stops working at all.
+query II
+SELECT content, content NOT LIKE '%SECRET-CANARY%'
+FROM read_text('git://test/tmp/lfs_oid_traversal_repo/valid.dat@HEAD');
+----
+valid-lfs-object-content	true
+
+query I
+SELECT text FROM git_read('git://test/tmp/lfs_oid_traversal_repo/valid.dat@HEAD');
+----
+valid-lfs-object-content
