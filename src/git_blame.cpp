@@ -381,6 +381,10 @@ static void ApplyBlameNamedParams(const TableFunctionBindInput &input, GitBlameB
                                   string &override_repo_path, string &override_revision, const char *func_name) {
 	for (const auto &kv : input.named_parameters) {
 		if (kv.first == "repo_path") {
+			// git_blame reads repo_path itself rather than through
+			// ParseUnifiedGitParams, so a NULL one became the literal string "NULL"
+			// and was spliced into the URI as a repository name (#8).
+			RejectNullRepoPathParameter(kv.second);
 			override_repo_path = kv.second.GetValue<string>();
 		} else if (kv.first == "revision") {
 			override_revision = kv.second.GetValue<string>();

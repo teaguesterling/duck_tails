@@ -477,6 +477,10 @@ static unique_ptr<FunctionData> GitReadBind(ClientContext &context, TableFunctio
 		throw BinderException("git_read requires at least one parameter: the file path or git:// URI");
 	}
 
+	// git_read reaches ParseUnifiedGitParams only on the plain-filesystem-path
+	// branch below, so a NULL first argument alongside an explicit repo_path
+	// skipped the refusal entirely and resolved the literal string "NULL" (#8).
+	RejectNullRepoPathArgument(input.inputs[0]);
 	string first_param = input.inputs[0].GetValue<string>();
 	string uri;
 	string repo_path = ".";
@@ -487,6 +491,10 @@ static unique_ptr<FunctionData> GitReadBind(ClientContext &context, TableFunctio
 	string explicit_repo_path;
 	for (const auto &kv : input.named_parameters) {
 		if (kv.first == "repo_path") {
+			// git_read reads repo_path itself rather than through
+			// ParseUnifiedGitParams, so a NULL one became the literal string "NULL"
+			// and was spliced into the URI as a repository name (#8).
+			RejectNullRepoPathParameter(kv.second);
 			explicit_repo_path = kv.second.GetValue<string>();
 		}
 	}
