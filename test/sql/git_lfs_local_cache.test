@@ -75,7 +75,19 @@ SELECT text FROM git_read('git://test/tmp/lfs_oid_traversal_repo/leak.dat@HEAD')
 ----
 expected exactly 64 lowercase hex characters
 
-query I
-SELECT text NOT LIKE '%SECRET-CANARY%' FROM read_text('git://test/tmp/lfs_oid_traversal_repo/valid.dat@HEAD') t(text);
+# ...while the pointer next to it, whose oid is well-formed, still resolves to
+# its own object. read_text's first column is `filename`, not `content`, so a
+# one-name table alias here would have renamed the URI and asserted that the
+# URI does not contain the canary -- true no matter what the file holds. Name
+# the column instead, and pin the content rather than only its absence, so the
+# assertion fails if the read stops working at all.
+query II
+SELECT content, content NOT LIKE '%SECRET-CANARY%'
+FROM read_text('git://test/tmp/lfs_oid_traversal_repo/valid.dat@HEAD');
 ----
-true
+valid-lfs-object-content	true
+
+query I
+SELECT text FROM git_read('git://test/tmp/lfs_oid_traversal_repo/valid.dat@HEAD');
+----
+valid-lfs-object-content
