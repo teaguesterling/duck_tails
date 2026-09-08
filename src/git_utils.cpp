@@ -147,7 +147,8 @@ void ClassifyWorkdirFileText(const string &abs_path, bool &is_text, string &enco
 			return;
 		}
 		if (!has_nul && static_cast<size_t>(offset) < BINARY_SCAN_BYTES) {
-			const size_t scan = MinValue<size_t>(static_cast<size_t>(want), BINARY_SCAN_BYTES - static_cast<size_t>(offset));
+			const size_t scan =
+			    MinValue<size_t>(static_cast<size_t>(want), BINARY_SCAN_BYTES - static_cast<size_t>(offset));
 			has_nul = memchr(buffer.get(), 0, scan) != nullptr;
 		}
 		if (has_nul) {

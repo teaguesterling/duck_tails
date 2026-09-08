@@ -532,9 +532,8 @@ static void ProcessIndexTree(git_repository *repo, const string &repo_path, cons
 		git_blob *blob = nullptr;
 		if (git_blob_lookup(&blob, repo, &entry->id) == 0 && blob) {
 			row.size_bytes = static_cast<int64_t>(git_blob_rawsize(blob));
-			ClassifyBlobText(static_cast<const char *>(git_blob_rawcontent(blob)),
-			                 static_cast<size_t>(row.size_bytes), git_blob_is_binary(blob) != 0, row.is_text,
-			                 row.encoding);
+			ClassifyBlobText(static_cast<const char *>(git_blob_rawcontent(blob)), static_cast<size_t>(row.size_bytes),
+			                 git_blob_is_binary(blob) != 0, row.is_text, row.encoding);
 			git_blob_free(blob);
 		}
 

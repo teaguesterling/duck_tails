@@ -161,9 +161,19 @@ static bool IsDiffHeaderLine(const string &line) {
 	if (line == "---" || line == "+++") {
 		return true;
 	}
-	static const char *const prefixes[] = {"--- ", "+++ ", "diff ", "index ",   "old mode ",
-	                                       "new mode ", "new file mode ", "deleted file mode ", "similarity index ",
-	                                       "rename ",  "copy ",           "Binary files ",      "\\"};
+	static const char *const prefixes[] = {"--- ",
+	                                       "+++ ",
+	                                       "diff ",
+	                                       "index ",
+	                                       "old mode ",
+	                                       "new mode ",
+	                                       "new file mode ",
+	                                       "deleted file mode ",
+	                                       "similarity index ",
+	                                       "rename ",
+	                                       "copy ",
+	                                       "Binary files ",
+	                                       "\\"};
 	for (const char *prefix : prefixes) {
 		const size_t len = strlen(prefix);
 		if (line.size() >= len && line.compare(0, len, prefix) == 0) {
@@ -702,10 +712,9 @@ void RegisterTextDiffType(ExtensionLoader &loader) {
 	// Register text_diff_stats: over a diff the caller already has, and over the
 	// pair of texts to diff first.
 	ScalarFunctionSet stats_set("text_diff_stats");
+	stats_set.AddFunction(ScalarFunction({LogicalType::VARCHAR}, TextDiffStatsType(), TextDiffStatsFunction));
 	stats_set.AddFunction(
-	    ScalarFunction({LogicalType::VARCHAR}, TextDiffStatsType(), TextDiffStatsFunction));
-	stats_set.AddFunction(ScalarFunction({LogicalType::VARCHAR, LogicalType::VARCHAR}, TextDiffStatsType(),
-	                                     TextDiffStatsPairFunction));
+	    ScalarFunction({LogicalType::VARCHAR, LogicalType::VARCHAR}, TextDiffStatsType(), TextDiffStatsPairFunction));
 	loader.RegisterFunction(stats_set);
 
 	// Register text_diff_lines table function
