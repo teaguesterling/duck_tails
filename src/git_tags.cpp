@@ -57,7 +57,12 @@ unique_ptr<LocalTableFunctionState> GitTagsLocalInit(ExecutionContext &context, 
 unique_ptr<FunctionData> GitTagsBind(ClientContext &context, TableFunctionBindInput &input,
                                      vector<LogicalType> &return_types, vector<CompatName> &names) {
 	// Use unified parameter parsing to support both git:// URIs and filesystem paths
-	auto params = ParseUnifiedGitParams(input, 1); // ref parameter at index 1 (optional)
+	// No ref parameter: only git_tags() and git_tags(repo) are registered, and a
+	// ref would have nothing to do here anyway -- the tag list is the repository's.
+	// The index-1 read this used to do was unreachable, and the comment describing
+	// it described a parameter the function does not accept (#52). 999 is the same
+	// "no such index" spelling git_blame uses.
+	auto params = ParseUnifiedGitParams(input, /*ref_param_index=*/999);
 
 	return_types = {
 	    LogicalType::VARCHAR,   // repo_path

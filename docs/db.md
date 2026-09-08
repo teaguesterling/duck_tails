@@ -195,21 +195,28 @@ graph LR
 ### Common Join Patterns
 
 ```sql
+-- A table function's arguments must be constant at bind time, so a value taken
+-- from another row goes to the `_each` variant, which reads its arguments from
+-- the LATERAL input at run time. The plain functions take literals.
+
 -- Files changed in a commit
-SELECT t.path, t.size, l.commit_message
-FROM git_log('.') l
-JOIN git_tree('.', l.commit_hash) t ON TRUE
+SELECT t.file_path, t.size_bytes, l.message
+FROM git_log('.') l,
+     LATERAL git_tree_each('.', l.commit_hash) t
 WHERE l.commit_hash = 'abc123';
 
 -- Branch history
 SELECT b.branch_name, l.*
-FROM git_branches('.') b
-JOIN git_log('.', b.branch_name) l ON TRUE;
+FROM git_branches('.') b,
+     LATERAL git_log_each('.', b.branch_name) l;
+
+-- One branch, by name: git_log takes a ref as its second argument
+SELECT * FROM git_log('.', 'develop');
 
 -- Tag releases with file counts
-SELECT t.tag_name, COUNT(tr.path) as file_count
-FROM git_tags('.') t
-JOIN LATERAL git_tree('.', t.commit_hash) tr ON TRUE
+SELECT t.tag_name, COUNT(tr.file_path) as file_count
+FROM git_tags('.') t,
+     LATERAL git_tree_each('.', t.commit_hash) tr
 GROUP BY t.tag_name;
 
 -- Merge commits (multiple parents)

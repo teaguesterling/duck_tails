@@ -26,7 +26,10 @@ GitLogFunctionData::GitLogFunctionData(const string &ref) : repo_path(""), resol
 unique_ptr<FunctionData> GitLogBind(ClientContext &context, TableFunctionBindInput &input,
                                     vector<LogicalType> &return_types, vector<CompatName> &names) {
 	// Use unified parameter parsing to support both git:// URIs and filesystem paths
-	auto params = ParseUnifiedGitParams(input, 1); // ref parameter at index 1 (optional)
+	// Optional ref at argument index 1: git_log(repo_path_or_uri, ref). Reachable
+	// since the two-argument overload was registered (#52); before that this read
+	// could never fire.
+	auto params = ParseUnifiedGitParams(input, 1);
 
 	// Define return schema with repo_path as first column
 	return_types = {
@@ -462,6 +465,22 @@ void RegisterGitLogFunction(ExtensionLoader &loader) {
 	git_log_func.init_local = GitLogLocalInit;
 	git_log_func.named_parameters["repo_path"] = LogicalType::VARCHAR;
 	loader.RegisterFunction(git_log_func);
+
+	// Two-argument version: git_log(repo_path_or_uri, ref).
+	//
+	// GitLogBind has always read a ref from argument index 1 -- resolving it,
+	// refusing it when the git:// URI already carries one, and walking history from
+	// it -- but no overload taking a second positional argument was ever
+	// registered, so that branch was unreachable and the comment above it described
+	// a parameter the function did not accept. docs/db.md published
+	// git_log('.', b.branch_name), which raised a Binder Error as written (#52).
+	// Registering the overload makes the ref a real argument, rather than deleting
+	// a working implementation of one.
+	TableFunction git_log_func_ref("git_log", {LogicalType::VARCHAR, LogicalType::VARCHAR}, GitLogFunction, GitLogBind,
+	                               GitLogInitGlobal);
+	git_log_func_ref.init_local = GitLogLocalInit;
+	git_log_func_ref.named_parameters["repo_path"] = LogicalType::VARCHAR;
+	loader.RegisterFunction(git_log_func_ref);
 
 	// Zero-argument version (defaults to current directory)
 	TableFunction git_log_func_zero("git_log", {}, GitLogFunction, GitLogBind, GitLogInitGlobal);
