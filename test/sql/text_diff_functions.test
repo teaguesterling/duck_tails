@@ -106,11 +106,13 @@ CONTEXT	keep	10
 REMOVED	gone	11
 ADDED	new	11
 
-# text_diff_lines and text_diff_stats must agree about the same diff.
+# text_diff_lines and text_diff_stats must agree about the same diff. (A table
+# function's arguments have to be constant at bind time, so the diff is written
+# out here rather than carried in from a correlated column.)
 query I
-SELECT (SELECT COUNT(*) FROM text_diff_lines(d) WHERE line_type = 'ADDED')
-     = (SELECT (text_diff_stats(d)).lines_added)
-FROM (SELECT diff_text('a' || chr(10) || 'b', 'a' || chr(10) || 'B' || chr(10) || 'c') AS d);
+SELECT (SELECT COUNT(*) FROM text_diff_lines(' a' || chr(10) || '-b' || chr(10) || '+B' || chr(10) || '+c')
+        WHERE line_type = 'ADDED')
+     = (text_diff_stats(' a' || chr(10) || '-b' || chr(10) || '+B' || chr(10) || '+c')).lines_added;
 ----
 true
 

@@ -24,29 +24,28 @@ PRAGMA threads=1;
 # The one line that mattered -- libgit2's own diagnosis -- sat under four rounds
 # of backslashes, unreadable to users and agents alike.
 
-# read_git_diff reports a failure in its diff_text column rather than raising,
-# which makes the message directly assertable as data.
-query I
-SELECT diff_text NOT LIKE '%exception_type%'
-FROM read_git_diff('git://test/tmp/main-repo/README.md@nosuchref',
-                   'git://test/tmp/main-repo/README.md@HEAD');
+# read_git_diff used to report a failure in its diff_text column rather than
+# raising, and these three assertions read the message out of that column. It
+# raises now (#55.2), so the same three questions are asked of the error itself.
+# <!REGEX> asserts the message nowhere carries a re-encoded exception document.
+statement error
+SELECT * FROM read_git_diff('git://test/tmp/main-repo/README.md@nosuchref',
+                            'git://test/tmp/main-repo/README.md@HEAD');
 ----
-true
+<!REGEX>:(?s).*exception_type.*
 
-query I
-SELECT diff_text NOT LIKE '%\\%'
-FROM read_git_diff('git://test/tmp/main-repo/README.md@nosuchref',
-                   'git://test/tmp/main-repo/README.md@HEAD');
+statement error
+SELECT * FROM read_git_diff('git://test/tmp/main-repo/README.md@nosuchref',
+                            'git://test/tmp/main-repo/README.md@HEAD');
 ----
-true
+<!REGEX>:(?s).*\\.*
 
 # The innermost cause -- the only part a reader needs -- must survive to the top.
-query I
-SELECT diff_text LIKE '%revspec ''nosuchref'' not found%'
-FROM read_git_diff('git://test/tmp/main-repo/README.md@nosuchref',
-                   'git://test/tmp/main-repo/README.md@HEAD');
+statement error
+SELECT * FROM read_git_diff('git://test/tmp/main-repo/README.md@nosuchref',
+                            'git://test/tmp/main-repo/README.md@HEAD');
 ----
-true
+revspec 'nosuchref' not found
 
 # The same, for errors that are raised rather than returned. <!REGEX> asserts
 # the message nowhere carries a re-encoded exception document.

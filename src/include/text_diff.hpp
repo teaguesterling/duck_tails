@@ -59,6 +59,16 @@ public:
 	// Create diff from two strings
 	static TextDiff CreateDiff(const string &old_text, const string &new_text);
 
+	// Read a diff back from its textual form: either ToString()'s output (' ', '+',
+	// '-' and '~' prefixes) or a unified diff. Headers ("--- a/x", "+++ b/x",
+	// "diff --git ...", "index ...", "\ No newline at end of file") are headers, not
+	// content -- counting "+++ b/x" as an added line is exactly the kind of
+	// plausible-but-wrong number this parser exists to avoid. A "@@ -a,b +c,d @@"
+	// hunk header sets the line numbers it declares; without one the numbering
+	// starts at 1. A line carrying no recognised prefix is outside any hunk and is
+	// skipped.
+	static TextDiff Parse(const string &diff_text);
+
 	// Accessors
 	const vector<DiffLine> &GetLines() const {
 		return diff_lines_;

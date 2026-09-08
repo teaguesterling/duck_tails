@@ -72,8 +72,8 @@ Implements text diffing without external dependencies.
 
 **Functions:**
 - `text_diff()` / `diff_text()` - Compute unified diff
-- `text_diff_lines()` - Parse diff into lines
-- `text_diff_stats()` - Compute diff statistics
+- `text_diff_lines()` - Parse a diff string into one row per line
+- `text_diff_stats()` - Count the lines of a diff, as a STRUCT
 
 ## Data Flow
 
