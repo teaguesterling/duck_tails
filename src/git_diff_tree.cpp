@@ -447,6 +447,31 @@ static OperatorResultType GitDiffTreeEachFunction(ExecutionContext &context, Tab
 				continue;
 			}
 
+			// The refs, when the caller passed them, arrive as the second and
+			// third runtime columns. A correlated (LATERAL) call is bound as a
+			// TABLE_IN_OUT function and DuckDB leaves TableFunctionBindInput::inputs
+			// empty for those, so GitDiffTreeEachBind saw no arguments at all and
+			// the bind data kept ref="HEAD", ref2="". CollectDiffRows reads an
+			// empty ref2 as "diff against the working directory", so
+			// git_diff_tree_each(r.repo, 'v1.0', 'v2.0') silently answered a
+			// different question -- HEAD vs the dirty worktree -- instead of
+			// v1.0..v2.0.
+			auto row_column_string = [&](idx_t col) {
+				string value;
+				if (input.ColumnCount() > col && !FlatVector::IsNull(input.data[col], state.current_input_row)) {
+					auto col_data = FlatVector::GetData<string_t>(input.data[col]);
+					if (col_data) {
+						value = string(col_data[state.current_input_row].GetData(),
+						               col_data[state.current_input_row].GetSize());
+					}
+				}
+				return value;
+			};
+			string row_ref = row_column_string(1);
+			string row_ref2 = row_column_string(2);
+			const string &requested_ref = row_ref.empty() ? bind_data.ref : row_ref;
+			const string &requested_ref2 = row_ref2.empty() ? bind_data.ref2 : row_ref2;
+
 			// Resolve repo path
 			string resolved_repo_path;
 			try {
@@ -467,7 +492,7 @@ static OperatorResultType GitDiffTreeEachFunction(ExecutionContext &context, Tab
 			}
 
 			try {
-				CollectDiffRows(repo, resolved_repo_path, bind_data.ref, bind_data.ref2, bind_data.path_filter,
+				CollectDiffRows(repo, resolved_repo_path, requested_ref, requested_ref2, bind_data.path_filter,
 				                bind_data.include_untracked, state.current_rows);
 			} catch (...) {
 				git_repository_free(repo);

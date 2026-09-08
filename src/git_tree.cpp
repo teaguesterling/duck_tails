@@ -736,18 +736,41 @@ static OperatorResultType GitTreeEachFunction(ExecutionContext &context, TableFu
 				continue;
 			}
 
+			// The ref, when the caller passed one, arrives as the second runtime
+			// column -- not in bind_data.
+			//
+			// DuckDB binds a table function two different ways: with all-literal
+			// arguments it is a STANDARD_TABLE_FUNCTION and TableFunctionBindInput
+			// carries the arguments, but a correlated (LATERAL) call is bound as a
+			// TABLE_IN_OUT_FUNCTION and `inputs` is left empty -- every argument
+			// arrives in the DataChunk instead. Reading the ref only at bind time
+			// therefore worked for git_tree_each('.', 'v1.0') and silently ignored
+			// it for the documented LATERAL form, which then listed HEAD's tree for
+			// every driver row. git_blame_each already reads its ref this way.
+			string row_ref;
+			if (input.ColumnCount() > 1 && !FlatVector::IsNull(input.data[1], state.current_input_row)) {
+				auto ref_data = FlatVector::GetData<string_t>(input.data[1]);
+				if (ref_data) {
+					row_ref = string(ref_data[state.current_input_row].GetData(),
+					                 ref_data[state.current_input_row].GetSize());
+				}
+			}
+			const string &requested_ref = row_ref.empty() ? bind_data.ref : row_ref;
+
 			// Apply unified parameter processing at runtime
 			// Use GitContextManager for unified git URI processing and reference validation
 			string resolved_file_path, final_ref;
+			RefKind row_ref_kind = RefKind::COMMIT;
 
 			try {
 				// GitContextManager handles both git:// URIs and filesystem paths
 				// It also validates references and throws consistent "unable to parse OID" errors
 				// Use bind_data.ref as fallback (defaults to "HEAD" from ParseLateralGitParams)
-				auto ctx = GitContextManager::Instance().ProcessGitUri(repo_path_or_uri, bind_data.ref);
+				auto ctx = GitContextManager::Instance().ProcessGitUri(repo_path_or_uri, requested_ref);
 				resolved_repo_path = ctx.repo_path;
 				resolved_file_path = ctx.file_path;
 				final_ref = ctx.final_ref;
+				row_ref_kind = ctx.ref_kind;
 
 				// Note: ctx.repo and ctx.resolved_object are managed by GitContextManager
 				// No need to free them here - GitContextManager handles caching and cleanup
@@ -772,7 +795,24 @@ static OperatorResultType GitTreeEachFunction(ExecutionContext &context, TableFu
 			}
 
 			try {
-				ProcessSingleCommit(repo, final_ref, resolved_repo_path, resolved_file_path, state.current_rows);
+				// Dispatch on the pseudo-ref exactly as GitTreeInitGlobal does.
+				// This branch used to call ProcessSingleCommit unconditionally,
+				// and WORKDIR/STAGED are not revspecs: git_revparse_single failed,
+				// the catch below swallowed it, and git_tree_each('git://.@WORKDIR')
+				// returned zero rows with no error while git_tree() on the same
+				// URI returned the full listing.
+				switch (row_ref_kind) {
+				case RefKind::WORKDIR:
+					ProcessWorkdirTree(repo, resolved_repo_path, resolved_file_path, bind_data.include_untracked,
+					                   state.current_rows);
+					break;
+				case RefKind::INDEX:
+					ProcessIndexTree(repo, resolved_repo_path, resolved_file_path, state.current_rows);
+					break;
+				case RefKind::COMMIT:
+					ProcessSingleCommit(repo, final_ref, resolved_repo_path, resolved_file_path, state.current_rows);
+					break;
+				}
 			} catch (...) {
 				git_repository_free(repo);
 				// Skip failed processing in LATERAL context - just move to next input
