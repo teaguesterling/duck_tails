@@ -81,6 +81,16 @@ setup_fixtures() {
     echo "Generating slash-bearing ref fixture..."
     bash "$FIXTURES_DIR/../scripts/setup_slash_refs_fixture.sh" "$TEMP_DIR"
 
+    # A directory whose .git is present but unreadable to libgit2 -- a `.git`
+    # file (the form submodules and worktrees use) with contents that are not
+    # "gitdir: <path>". Discovery fails with GIT_ERROR, not GIT_ENOTFOUND, and
+    # every such failure used to be rewritten as "Searched up directory tree ...
+    # but found no .git directory" -- flatly false here, and the reason a
+    # GIT_EOWNER failure cost two investigations several hours each (#42).
+    echo "Creating malformed-gitfile-repo (non-ENOTFOUND discovery failure)..."
+    mkdir -p "$TEMP_DIR/malformed-gitfile-repo"
+    echo "this is not a gitdir pointer" > "$TEMP_DIR/malformed-gitfile-repo/.git"
+
     echo "Fixtures extracted successfully to: $TEMP_DIR"
     echo "Run '$0 validate' to verify fixture integrity"
 }
