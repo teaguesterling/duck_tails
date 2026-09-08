@@ -77,7 +77,7 @@ unique_ptr<FunctionData> GitTagsBind(ClientContext &context, TableFunctionBindIn
 		auto ctx = GitContextManager::Instance().ProcessGitUri(params.repo_path_or_uri, params.ref);
 		return make_uniq<GitTagsFunctionData>(params.repo_path_or_uri, ctx.repo_path);
 	} catch (const std::exception &e) {
-		throw BinderException("git_tags: %s", e.what());
+		throw BinderException("git_tags: %s", GitExceptionMessage(e));
 	}
 }
 

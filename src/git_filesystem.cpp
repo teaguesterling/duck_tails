@@ -537,15 +537,17 @@ unique_ptr<FileHandle> GitFileSystem::OpenFile(const string &path, FileOpenFlags
 				return make_uniq<GitFileHandle>(*this, path, content_ptr, flags);
 			}
 		} catch (const std::exception &e) {
-			throw IOException("Failed to open git file '%s': %s", path, e.what());
+			throw IOException("Failed to open git file '%s': %s", path, GitExceptionMessage(e));
 		}
-	} catch (const IOException &e) {
-		// Re-throw repository discovery errors directly without wrapping
-		string error_msg = e.what();
-		if (error_msg.find("No git repository found for path") != string::npos) {
-			throw;
-		}
-		throw IOException("Failed to parse git path '%s': %s", path, e.what());
+	} catch (const IOException &) {
+		// Every IOException GitPath::Parse raises already names the URI and the
+		// underlying cause, and the inner catch above has already named the path.
+		// Re-wrapping added a fourth "Failed to ..." layer that said nothing new
+		// and, before GitExceptionMessage, a fourth round of JSON escaping around
+		// the one message that mattered (#22).
+		throw;
+	} catch (const std::exception &e) {
+		throw IOException("Failed to parse git path '%s': %s", path, GitExceptionMessage(e));
 	}
 }
 
@@ -621,15 +623,17 @@ vector<OpenFileInfo> GitFileSystem::Glob(const string &pattern, FileOpener *open
 			return ListFiles(repo, git_path, commit_obj);
 
 		} catch (const std::exception &e) {
-			throw IOException("Failed to glob git pattern '%s': %s", pattern, e.what());
+			throw IOException("Failed to glob git pattern '%s': %s", pattern, GitExceptionMessage(e));
 		}
-	} catch (const IOException &e) {
-		// Re-throw repository discovery errors directly without wrapping
-		string error_msg = e.what();
-		if (error_msg.find("No git repository found for path") != string::npos) {
-			throw;
-		}
-		throw IOException("Failed to parse git path '%s': %s", pattern, e.what());
+	} catch (const IOException &) {
+		// Every IOException GitPath::Parse raises already names the URI and the
+		// underlying cause, and the inner catch above has already named the
+		// pattern. Re-wrapping added a fourth "Failed to ..." layer that said
+		// nothing new and, before GitExceptionMessage, a fourth round of JSON
+		// escaping around the one message that mattered (#22).
+		throw;
+	} catch (const std::exception &e) {
+		throw IOException("Failed to parse git path '%s': %s", pattern, GitExceptionMessage(e));
 	}
 }
 

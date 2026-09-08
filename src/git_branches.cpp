@@ -49,7 +49,7 @@ unique_ptr<FunctionData> GitBranchesBind(ClientContext &context, TableFunctionBi
 		final_ref = ctx.final_ref;
 		// ctx.repo and ctx.resolved_object are managed by GitContextManager
 	} catch (const std::exception &e) {
-		throw BinderException("git_branches: %s", e.what());
+		throw BinderException("git_branches: %s", GitExceptionMessage(e));
 	}
 
 	return_types = {

@@ -3,6 +3,7 @@
 #include "git_context_manager.hpp"
 #include "duckdb/common/types/value.hpp"
 #include "duckdb/common/local_file_system.hpp"
+#include "duckdb/common/error_data.hpp"
 
 #ifdef _WIN32
 #include <stdlib.h> // _fullpath
@@ -12,6 +13,10 @@
 #endif
 
 namespace duckdb {
+
+string GitExceptionMessage(const std::exception &e) {
+	return ErrorData(e).RawMessage();
+}
 
 string ApplyExplicitRepoPath(const string &uri, const string &repo_path, const string &function_name) {
 	if (repo_path.empty() || !StringUtil::StartsWith(uri, "git://")) {
@@ -140,7 +145,8 @@ UnifiedGitParams ParseUnifiedGitParams(TableFunctionBindInput &input, int ref_pa
 			params.ref_kind = ctx.ref_kind;
 			params.has_embedded_ref = !ctx.final_ref.empty() && ctx.final_ref != "HEAD";
 		} catch (const std::exception &e) {
-			throw BinderException("Failed to parse git:// URI '%s': %s", params.repo_path_or_uri, e.what());
+			throw BinderException("Failed to parse git:// URI '%s': %s", params.repo_path_or_uri,
+			                      GitExceptionMessage(e));
 		}
 	} else {
 		// Filesystem path - use repository discovery
@@ -152,7 +158,8 @@ UnifiedGitParams ParseUnifiedGitParams(TableFunctionBindInput &input, int ref_pa
 			params.ref_kind = ctx.ref_kind;
 			params.has_embedded_ref = false;
 		} catch (const std::exception &e) {
-			throw BinderException("Failed to resolve repository path '%s': %s", params.repo_path_or_uri, e.what());
+			throw BinderException("Failed to resolve repository path '%s': %s", params.repo_path_or_uri,
+			                      GitExceptionMessage(e));
 		}
 	}
 

@@ -12,6 +12,20 @@
 
 namespace duckdb {
 
+// Plain text of a caught exception, safe to embed in another exception message.
+//
+// A DuckDB exception carries its message as a JSON document -- Exception derives
+// from std::runtime_error constructed with Exception::ToJSON -- so what()
+// returns {"exception_type":"IO","exception_message":"..."}. Splicing that into
+// a new exception message JSON-encodes an already-encoded string, and when a
+// chain of layers each does so the escaping compounds: git_read -> git_open ->
+// git_parse -> git_lookup buried "the requested type does not match the type in
+// the ODB" under four rounds of backslashes, unreadable to users and agents
+// alike (#22). ErrorData parses the document back to the message it was built
+// from; anything that is not such a document -- a non-DuckDB exception -- passes
+// through unchanged.
+string GitExceptionMessage(const std::exception &e);
+
 // Unified parameters structure for git functions
 struct UnifiedGitParams {
 	string repo_path_or_uri;
