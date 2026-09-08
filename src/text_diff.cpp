@@ -106,10 +106,13 @@ bool TextDiff::operator==(const TextDiff &other) const {
 // Reading a diff back from its textual form
 //===--------------------------------------------------------------------===//
 
-// "@@ -10,3 +12,4 @@ optional heading" -- take the two start line numbers.
+// "@@ -10,3 +12,4 @@ optional heading" -- the two start line numbers and the two
+// line COUNTS. The counts say how long the hunk is, which is the only thing that
+// tells us where its body ends; see Parse for why that matters.
 // Returns false for anything that is not a hunk header, in which case the
 // counters are left alone and the line is skipped as an unrecognised header.
-static bool ParseHunkHeader(const string &line, idx_t &old_line, idx_t &new_line) {
+static bool ParseHunkHeader(const string &line, idx_t &old_line, idx_t &new_line, int64_t &old_count,
+                            int64_t &new_count) {
 	if (line.size() < 4 || line.compare(0, 2, "@@") != 0) {
 		return false;
 	}
@@ -119,7 +122,7 @@ static bool ParseHunkHeader(const string &line, idx_t &old_line, idx_t &new_line
 			pos++;
 		}
 	};
-	auto read_start = [&](char sign, idx_t &out) {
+	auto read_start = [&](char sign, idx_t &out, int64_t &count_out) {
 		skip_spaces();
 		if (pos >= line.size() || line[pos] != sign) {
 			return false;
@@ -134,46 +137,58 @@ static bool ParseHunkHeader(const string &line, idx_t &old_line, idx_t &new_line
 		if (pos == digits_start) {
 			return false;
 		}
-		// A ",count" may follow the start; it tells us nothing we need.
+		// An omitted ",count" -- "@@ -1 +1 @@" -- means one line.
+		uint64_t count = 1;
 		if (pos < line.size() && line[pos] == ',') {
 			pos++;
+			size_t count_start = pos;
+			count = 0;
 			while (pos < line.size() && line[pos] >= '0' && line[pos] <= '9') {
+				count = count * 10 + static_cast<uint64_t>(line[pos] - '0');
 				pos++;
+			}
+			if (pos == count_start) {
+				return false;
 			}
 		}
 		// git writes "@@ -1 +0,0 @@" for an emptied file: line 0 of a zero-line
 		// range. Clamp to 1 so the numbers we hand back always name a real line.
 		out = value == 0 ? 1 : static_cast<idx_t>(value);
+		count_out = static_cast<int64_t>(count);
 		return true;
 	};
 
 	idx_t parsed_old = 0, parsed_new = 0;
-	if (!read_start('-', parsed_old) || !read_start('+', parsed_new)) {
+	int64_t parsed_old_count = 0, parsed_new_count = 0;
+	if (!read_start('-', parsed_old, parsed_old_count) || !read_start('+', parsed_new, parsed_new_count)) {
 		return false;
 	}
 	old_line = parsed_old;
 	new_line = parsed_new;
+	old_count = parsed_old_count;
+	new_count = parsed_new_count;
 	return true;
 }
 
-// A line that describes the diff rather than the files it compares.
-static bool IsDiffHeaderLine(const string &line) {
+// "--- a/x" and "+++ b/x": the pair naming the two sides of a file. These are the
+// ONLY header spellings that collide with content, because a removed line whose
+// text begins "-- " renders as "--- ..." and an added line beginning "++ "
+// renders as "+++ ...". Both are ordinary in SQL and in Markdown. So this is
+// asked only where a file header can actually appear -- see Parse.
+static bool IsFileHeaderMarker(const string &line) {
 	if (line == "---" || line == "+++") {
 		return true;
 	}
-	static const char *const prefixes[] = {"--- ",
-	                                       "+++ ",
-	                                       "diff ",
-	                                       "index ",
-	                                       "old mode ",
-	                                       "new mode ",
-	                                       "new file mode ",
-	                                       "deleted file mode ",
-	                                       "similarity index ",
-	                                       "rename ",
-	                                       "copy ",
-	                                       "Binary files ",
-	                                       "\\"};
+	return line.size() >= 4 && (line.compare(0, 4, "--- ") == 0 || line.compare(0, 4, "+++ ") == 0);
+}
+
+// A line that describes the diff rather than the files it compares, and that no
+// hunk body line can be mistaken for: inside a hunk every content line carries a
+// ' ', '+' or '-' prefix, so none of these spellings can occur as content.
+static bool IsNonContentHeaderLine(const string &line) {
+	static const char *const prefixes[] = {
+	    "diff ",   "index ", "old mode ",     "new mode ", "new file mode ", "deleted file mode ", "similarity index ",
+	    "rename ", "copy ",  "Binary files ", "\\"};
 	for (const char *prefix : prefixes) {
 		const size_t len = strlen(prefix);
 		if (line.size() >= len && line.compare(0, len, prefix) == 0) {
@@ -190,7 +205,30 @@ TextDiff TextDiff::Parse(const string &diff_text) {
 	idx_t old_line = 1;
 	idx_t new_line = 1;
 
-	for (auto &raw : SplitLines(diff_text)) {
+	auto raw_lines = SplitLines(diff_text);
+
+	// Are there file headers here at all? Only a unified diff has them, and a
+	// unified diff always announces its hunks with "@@". ToString()'s output has
+	// no "@@" line -- every line of it starts with ' ', '+', '-' or '~' -- so a
+	// leading "--- a" there is a removed "-- a" and nothing else. Deciding this
+	// once, up front, is what keeps text_diff(text_diff_stats(...)) honest for
+	// content that happens to begin with "--" or "++".
+	bool has_file_headers = false;
+	for (const auto &raw : raw_lines) {
+		if (raw.size() >= 2 && raw.compare(0, 2, "@@") == 0) {
+			has_file_headers = true;
+			break;
+		}
+	}
+
+	// Inside a hunk, "--- x" is a removed line, not a header. The hunk header's
+	// counts say where the body ends, so we know when we are back out of it and a
+	// header can appear again.
+	bool in_hunk = false;
+	int64_t old_remaining = 0;
+	int64_t new_remaining = 0;
+
+	for (auto &raw : raw_lines) {
 		string line = raw;
 		// A CRLF diff leaves the '\r' on the end of every line; it belongs to the
 		// line terminator, not to the content.
@@ -198,10 +236,20 @@ TextDiff TextDiff::Parse(const string &diff_text) {
 			line.pop_back();
 		}
 
-		if (ParseHunkHeader(line, old_line, new_line)) {
+		idx_t hunk_old = 1, hunk_new = 1;
+		int64_t hunk_old_count = 0, hunk_new_count = 0;
+		if (ParseHunkHeader(line, hunk_old, hunk_new, hunk_old_count, hunk_new_count)) {
+			old_line = hunk_old;
+			new_line = hunk_new;
+			old_remaining = hunk_old_count;
+			new_remaining = hunk_new_count;
+			in_hunk = old_remaining > 0 || new_remaining > 0;
 			continue;
 		}
-		if (IsDiffHeaderLine(line)) {
+		if (IsNonContentHeaderLine(line)) {
+			continue;
+		}
+		if (has_file_headers && !in_hunk && IsFileHeaderMarker(line)) {
 			continue;
 		}
 		if (line.empty()) {
@@ -209,6 +257,11 @@ TextDiff TextDiff::Parse(const string &diff_text) {
 			lines.emplace_back(LineType::CONTEXT, string(), old_line, new_line);
 			old_line++;
 			new_line++;
+			old_remaining--;
+			new_remaining--;
+			if (in_hunk && old_remaining <= 0 && new_remaining <= 0) {
+				in_hunk = false;
+			}
 			continue;
 		}
 
@@ -218,24 +271,33 @@ TextDiff TextDiff::Parse(const string &diff_text) {
 			lines.emplace_back(LineType::CONTEXT, content, old_line, new_line);
 			old_line++;
 			new_line++;
+			old_remaining--;
+			new_remaining--;
 			break;
 		case '+':
 			lines.emplace_back(LineType::ADDED, content, 0, new_line);
 			new_line++;
+			new_remaining--;
 			break;
 		case '-':
 			lines.emplace_back(LineType::REMOVED, content, old_line, 0);
 			old_line++;
+			old_remaining--;
 			break;
 		case '~':
 			// ToString()'s spelling for MODIFIED; a unified diff never produces it.
 			lines.emplace_back(LineType::MODIFIED, content, old_line, new_line);
 			old_line++;
 			new_line++;
+			old_remaining--;
+			new_remaining--;
 			break;
 		default:
 			// Outside any hunk. Skipped rather than guessed at.
 			break;
+		}
+		if (in_hunk && old_remaining <= 0 && new_remaining <= 0) {
+			in_hunk = false;
 		}
 	}
 

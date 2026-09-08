@@ -129,6 +129,12 @@ Diff headers (`--- a/x`, `+++ b/x`, `diff --git …`, `index …`,
 rows. A `@@ -a,b +c,d @@` hunk header sets the line numbers that follow it;
 without one, numbering starts at 1.
 
+`--- x` and `+++ x` count as headers only where a header can appear — in a
+unified diff, outside a hunk body. Inside a hunk they are content, because a
+removed line reading `-- x` and an added line reading `++ x` render exactly that
+way; and `text_diff()` output has no headers at all, so they are content there
+too.
+
 Like every table function, the argument has to be constant at bind time — a
 correlated column will not bind.
 

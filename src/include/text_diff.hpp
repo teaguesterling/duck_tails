@@ -67,6 +67,14 @@ public:
 	// hunk header sets the line numbers it declares; without one the numbering
 	// starts at 1. A line carrying no recognised prefix is outside any hunk and is
 	// skipped.
+	//
+	// "--- x" and "+++ x" are the two spellings that collide with content: a
+	// removed line reading "-- x" and an added one reading "++ x" render exactly
+	// like them, and both are everyday text in SQL and Markdown. So they count as
+	// headers only where a header can be -- in a unified diff (one that announces
+	// hunks with "@@"), and outside a hunk body, whose extent the hunk header's
+	// counts give. In ToString()'s output, which has no headers at all, they are
+	// always content.
 	static TextDiff Parse(const string &diff_text);
 
 	// Accessors

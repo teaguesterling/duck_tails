@@ -173,3 +173,86 @@ FROM read_git_diff('git://test/tmp/path-scope-repo/src/one.txt@HEAD',
                    'test/tmp/path-scope-repo/src/one.txt');
 ----
 true
+
+# ==============================================================
+# #54 -- "--- x" is a header only where a header can be
+# ==============================================================
+
+# A removed line whose content begins "-- " renders as "--- ...", and an added
+# one beginning "++ " renders as "+++ ...". Reading those as the file header
+# dropped a changed line from the count and left the numbering of everything
+# after it short by one -- a plausible number with a change missing from it,
+# which is the defect this function was fixed for.
+#
+# text_diff() output carries no headers at all (every line of it starts with
+# ' ', '+', '-' or '~'), so here they are content, full stop.
+query IIII
+SELECT s.lines_added, s.lines_removed, s.lines_modified, s.lines_context
+FROM (SELECT text_diff_stats(text_diff('-- a' || chr(10) || 'x',
+                                       '-- b' || chr(10) || 'x')) AS s);
+----
+1	1	0	1
+
+query IIII
+SELECT s.lines_added, s.lines_removed, s.lines_modified, s.lines_context
+FROM (SELECT text_diff_stats(text_diff('++ a' || chr(10) || 'x',
+                                       '++ b' || chr(10) || 'x')) AS s);
+----
+1	1	0	1
+
+# The same shape as `git diff` writes it: a SQL comment changed inside a hunk.
+# The file header above the hunk is still a header.
+query III
+SELECT line_type, content, line_number
+FROM text_diff_lines('diff --git a/q.sql b/q.sql' || chr(10) ||
+                     'index a370000..a440000 100644' || chr(10) ||
+                     '--- a/q.sql' || chr(10) ||
+                     '+++ b/q.sql' || chr(10) ||
+                     '@@ -1,2 +1,2 @@' || chr(10) ||
+                     '--- sql comment' || chr(10) ||
+                     '+-- SQL COMMENT' || chr(10) ||
+                     ' select 1;');
+----
+REMOVED	-- sql comment	1
+ADDED	-- SQL COMMENT	1
+CONTEXT	select 1;	2
+
+# A rename, a binary file and "\ No newline at end of file" contribute no
+# content lines, and the one real hunk in the same diff is counted normally.
+query IIII
+SELECT s.lines_added, s.lines_removed, s.lines_modified, s.lines_context
+FROM (SELECT text_diff_stats(
+    'diff --git a/old.txt b/new.txt' || chr(10) ||
+    'similarity index 100%' || chr(10) ||
+    'rename from old.txt' || chr(10) ||
+    'rename to new.txt' || chr(10) ||
+    'diff --git a/bin.dat b/bin.dat' || chr(10) ||
+    'index f7c6699..97c4e94 100644' || chr(10) ||
+    'Binary files a/bin.dat and b/bin.dat differ' || chr(10) ||
+    'diff --git a/nonl.txt b/nonl.txt' || chr(10) ||
+    '--- a/nonl.txt' || chr(10) ||
+    '+++ b/nonl.txt' || chr(10) ||
+    '@@ -1 +1 @@' || chr(10) ||
+    '-before' || chr(10) ||
+    '\ No newline at end of file' || chr(10) ||
+    '+after' || chr(10) ||
+    '\ No newline at end of file') AS s);
+----
+1	1	0	0
+
+# Several hunks in one file: each header restarts the numbering it declares, and
+# the counts it declares say where its body ends.
+query III
+SELECT line_type, content, line_number
+FROM text_diff_lines('--- a/multi.txt' || chr(10) || '+++ b/multi.txt' || chr(10) ||
+                     '@@ -1,2 +1,2 @@' || chr(10) || '-a' || chr(10) || '+A' || chr(10) ||
+                     ' b' || chr(10) ||
+                     '@@ -17,2 +17,2 @@ p' || chr(10) || ' s' || chr(10) ||
+                     '-t' || chr(10) || '+T');
+----
+REMOVED	a	1
+ADDED	A	1
+CONTEXT	b	2
+CONTEXT	s	17
+REMOVED	t	18
+ADDED	T	18
