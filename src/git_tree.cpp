@@ -587,7 +587,7 @@ unique_ptr<FunctionData> GitTreeBind(ClientContext &context, TableFunctionBindIn
 		return std::move(result);
 
 	} catch (const std::exception &e) {
-		throw BinderException("git_tree: %s", e.what());
+		throw BinderException("git_tree: %s", GitExceptionMessage(e));
 	}
 }
 

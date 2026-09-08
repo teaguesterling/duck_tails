@@ -1,4 +1,5 @@
 #include "git_context_manager.hpp"
+#include "git_utils.hpp"
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
 
@@ -52,7 +53,7 @@ GitContextManager::GitContext GitContextManager::ProcessGitUri(const string &uri
 			git_path = GitPath::Parse(constructed_uri);
 		}
 	} catch (const std::exception &e) {
-		throw IOException("GitContextManager: Failed to parse URI '%s': %s", uri_or_path, e.what());
+		throw IOException("GitContextManager: Failed to parse URI '%s': %s", uri_or_path, GitExceptionMessage(e));
 	}
 
 	// Phase 2: Reference Resolution

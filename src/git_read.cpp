@@ -465,7 +465,7 @@ static void ProcessGitURI(const string &uri, const GitReadBindData &bind_data, G
 		git_repository_free(repo);
 
 	} catch (const std::exception &e) {
-		throw BinderException("git_read: %s", e.what());
+		throw BinderException("git_read: %s", GitExceptionMessage(e));
 	}
 }
 

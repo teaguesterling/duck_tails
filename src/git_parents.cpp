@@ -73,7 +73,7 @@ unique_ptr<FunctionData> GitParentsBind(ClientContext &context, TableFunctionBin
 		final_ref = ctx.final_ref;
 		// file_path not needed for git_parents
 	} catch (const std::exception &e) {
-		throw BinderException("git_parents: %s", e.what());
+		throw BinderException("git_parents: %s", GitExceptionMessage(e));
 	}
 
 	// Use helper to define schema with repo_path as first column
