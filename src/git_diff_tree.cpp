@@ -280,6 +280,7 @@ static unique_ptr<FunctionData> GitDiffTreeBind(ClientContext &context, TableFun
 	string ref = "HEAD";
 	string ref2;
 	string path_filter;
+	string argument_path;
 	bool include_untracked = false;
 
 	// Parse positional parameters
@@ -293,6 +294,11 @@ static unique_ptr<FunctionData> GitDiffTreeBind(ClientContext &context, TableFun
 		try {
 			auto git_path = GitPath::Parse("git://" + first_param + "@HEAD");
 			repo_path = git_path.repository_path;
+			// The path INSIDE the repository, when the argument named one. It was
+			// parsed out here and then dropped, so git_diff_tree('repo/src', ...)
+			// answered for the whole repository regardless of the scope asked for
+			// (#55).
+			argument_path = git_path.file_path;
 		} catch (const std::exception &e) {
 			throw BinderException("git_diff_tree: failed to resolve repository path '%s': %s", first_param,
 			                      GitExceptionMessage(e));
@@ -324,6 +330,8 @@ static unique_ptr<FunctionData> GitDiffTreeBind(ClientContext &context, TableFun
 			include_untracked = kv.second.GetValue<bool>();
 		}
 	}
+
+	path_filter = CombineArgumentAndNamedPath("git_diff_tree", argument_path, path_filter);
 
 	return make_uniq<GitDiffTreeFunctionData>(repo_path, ref, ref2, path_filter, include_untracked);
 }
@@ -477,15 +485,20 @@ static OperatorResultType GitDiffTreeEachFunction(ExecutionContext &context, Tab
 			const string &requested_ref = row_ref.empty() ? bind_data.ref : row_ref;
 			const string &requested_ref2 = row_ref2.empty() ? bind_data.ref2 : row_ref2;
 
-			// Resolve repo path
+			// Resolve repo path, and the path inside it the row asked for. The
+			// LATERAL surface dropped that path exactly as the static one did (#55).
 			string resolved_repo_path;
+			string row_path;
 			try {
 				auto git_path = GitPath::Parse("git://" + repo_path_or_uri + "@HEAD");
 				resolved_repo_path = git_path.repository_path;
+				row_path = git_path.file_path;
 			} catch (...) {
 				state.current_input_row++;
 				continue;
 			}
+			const string row_path_filter =
+			    CombineArgumentAndNamedPath("git_diff_tree", row_path, bind_data.path_filter);
 
 			state.current_rows.clear();
 
@@ -497,7 +510,7 @@ static OperatorResultType GitDiffTreeEachFunction(ExecutionContext &context, Tab
 			}
 
 			try {
-				CollectDiffRows(repo, resolved_repo_path, requested_ref, requested_ref2, bind_data.path_filter,
+				CollectDiffRows(repo, resolved_repo_path, requested_ref, requested_ref2, row_path_filter,
 				                bind_data.include_untracked, state.current_rows);
 			} catch (...) {
 				git_repository_free(repo);

@@ -181,8 +181,14 @@ static inline void EmitFileRow(vector<GitTreeRow> &out, const string &repo_path,
 	git_blob *blob = nullptr;
 	if (blob_oid && git_blob_lookup(&blob, repo, blob_oid) == 0 && blob) {
 		size_bytes = static_cast<int64_t>(git_blob_rawsize(blob));
-		is_text = !git_blob_is_binary(blob);
-		encoding = is_text ? "utf8" : "binary";
+		// libgit2's verdict AND UTF-8 validity, which is what git_read and
+		// git_blame ask of the same bytes. On libgit2's heuristic alone (a NUL in
+		// the first 8000 bytes), a Latin-1 file -- 8-bit text, no NUL, not valid
+		// UTF-8 -- was is_text=true here and is_text=false there for the very same
+		// blob, so a caller filtering on is_text got a different file set from
+		// each function (#55).
+		ClassifyBlobText(static_cast<const char *>(git_blob_rawcontent(blob)), static_cast<size_t>(size_bytes),
+		                 git_blob_is_binary(blob) != 0, is_text, encoding);
 		git_blob_free(blob);
 	}
 	GitTreeRow row;
@@ -424,10 +430,12 @@ static void ProcessWorkdirTree(git_repository *repo, const string &repo_path, co
 
 				string file_path(entry->index_to_workdir->new_file.path);
 
-				// Path filter
+				// Path filter, by path COMPONENT. StringUtil::StartsWith called
+				// "src_backup/untracked.txt" a file under "src", so asking for one
+				// directory silently returned its prefix-sharing siblings too (#55).
 				if (!requested_path.empty()) {
 					string norm = NormalizeRepoPathSpec(requested_path);
-					if (!norm.empty() && !StringUtil::StartsWith(file_path, norm)) {
+					if (!norm.empty() && !PathIsUnder(file_path, norm)) {
 						continue;
 					}
 				}
@@ -446,26 +454,13 @@ static void ProcessWorkdirTree(git_repository *repo, const string &repo_path, co
 					auto handle = local_fs.OpenFile(abs_path, FileOpenFlags::FILE_FLAGS_READ);
 					if (handle) {
 						row.size_bytes = local_fs.GetFileSize(*handle);
-
-						// Detect binary by sampling file for NUL bytes (same heuristic as libgit2)
-						if (row.size_bytes > 0) {
-							FILE *f = fopen(abs_path.c_str(), "rb");
-							if (f) {
-								char buf[8000];
-								size_t to_read = std::min(static_cast<size_t>(row.size_bytes), sizeof(buf));
-								size_t nread = fread(buf, 1, to_read, f);
-								fclose(f);
-								bool has_nul = (memchr(buf, 0, nread) != nullptr);
-								row.is_text = !has_nul;
-								row.encoding = has_nul ? "binary" : "utf8";
-							} else {
-								row.is_text = false;
-								row.encoding = "unknown";
-							}
-						} else {
-							row.is_text = true;
-							row.encoding = "utf8";
-						}
+						// The same question git_read answers for a workdir file:
+						// libgit2's NUL heuristic over the first 8000 bytes, and
+						// valid UTF-8 over the whole file. Sampling for NUL alone
+						// called a Latin-1 file utf8 text while git_read called the
+						// same bytes binary (#55). Streamed, so a large untracked
+						// file in a listing is never held in memory.
+						ClassifyWorkdirFileText(abs_path, row.is_text, row.encoding);
 					} else {
 						row.is_text = false;
 						row.encoding = "unknown";
@@ -537,8 +532,9 @@ static void ProcessIndexTree(git_repository *repo, const string &repo_path, cons
 		git_blob *blob = nullptr;
 		if (git_blob_lookup(&blob, repo, &entry->id) == 0 && blob) {
 			row.size_bytes = static_cast<int64_t>(git_blob_rawsize(blob));
-			row.is_text = !git_blob_is_binary(blob);
-			row.encoding = row.is_text ? "utf8" : "binary";
+			ClassifyBlobText(static_cast<const char *>(git_blob_rawcontent(blob)),
+			                 static_cast<size_t>(row.size_bytes), git_blob_is_binary(blob) != 0, row.is_text,
+			                 row.encoding);
 			git_blob_free(blob);
 		}
 

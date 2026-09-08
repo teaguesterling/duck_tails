@@ -18,6 +18,152 @@ string GitExceptionMessage(const std::exception &e) {
 	return ErrorData(e).RawMessage();
 }
 
+string CombineArgumentAndNamedPath(const string &function_name, const string &argument_path, const string &named_path) {
+	const string from_argument = NormalizeRepoPathSpec(argument_path);
+	const string from_parameter = NormalizeRepoPathSpec(named_path);
+	if (!from_argument.empty() && !from_parameter.empty() && from_argument != from_parameter) {
+		throw BinderException("%s: a path was given both in the argument ('%s') and in the path parameter ('%s'). "
+		                      "Pass only one -- there is no answer that is both.",
+		                      function_name, from_argument, from_parameter);
+	}
+	return from_argument.empty() ? from_parameter : from_argument;
+}
+
+bool PathIsUnder(const string &path, const string &prefix) {
+	if (prefix.empty()) {
+		return true;
+	}
+	if (path == prefix) {
+		return true;
+	}
+	// The '/' is the point: "src_backup/x" shares the characters of "src" but not
+	// its components, and is not under it.
+	return path.size() > prefix.size() && path.compare(0, prefix.size(), prefix) == 0 && path[prefix.size()] == '/';
+}
+
+//===--------------------------------------------------------------------===//
+// Text classification
+//===--------------------------------------------------------------------===//
+
+namespace {
+
+// Byte-at-a-time UTF-8 validation that can be fed in pieces, so a file too large
+// to hold can still be classified. Deliberately as lax as the in-memory form it
+// replaces (it does not reject overlong encodings or surrogates): the two must
+// agree, and tightening one alone would put is_text back to meaning two things.
+struct Utf8Validator {
+	int pending = 0; // continuation bytes still expected
+	bool ok = true;
+
+	void Feed(const char *data, size_t length) {
+		const unsigned char *bytes = reinterpret_cast<const unsigned char *>(data);
+		for (size_t i = 0; i < length; i++) {
+			if (!ok) {
+				return;
+			}
+			const unsigned char byte = bytes[i];
+			if (pending > 0) {
+				if ((byte & 0xC0) != 0x80) {
+					ok = false;
+					return;
+				}
+				pending--;
+				continue;
+			}
+			if (byte <= 0x7F) {
+				continue;
+			}
+			if ((byte & 0xE0) == 0xC0) {
+				pending = 1;
+			} else if ((byte & 0xF0) == 0xE0) {
+				pending = 2;
+			} else if ((byte & 0xF8) == 0xF0) {
+				pending = 3;
+			} else {
+				ok = false; // Invalid start byte
+				return;
+			}
+		}
+	}
+
+	bool Valid() const {
+		// A sequence left unfinished at the end is truncated, not valid.
+		return ok && pending == 0;
+	}
+};
+
+} // namespace
+
+bool IsValidUTF8(const char *data, size_t length) {
+	Utf8Validator validator;
+	validator.Feed(data, length);
+	return validator.Valid();
+}
+
+void ClassifyBlobText(const char *data, size_t length, bool git_binary_hint, bool &is_text, string &encoding) {
+	is_text = !git_binary_hint && (length == 0 || IsValidUTF8(data, length));
+	encoding = is_text ? "utf8" : "binary";
+}
+
+void ClassifyWorkdirFileText(const string &abs_path, bool &is_text, string &encoding) {
+	// libgit2's heuristic: a NUL byte in the first 8000 makes the file binary.
+	static constexpr size_t BINARY_SCAN_BYTES = 8000;
+	static constexpr size_t CHUNK_BYTES = 64 * 1024;
+
+	LocalFileSystem fs;
+	unique_ptr<FileHandle> handle;
+	try {
+		handle = fs.OpenFile(abs_path, FileOpenFlags::FILE_FLAGS_READ);
+	} catch (const std::exception &) {
+		handle = nullptr;
+	}
+	if (!handle) {
+		is_text = false;
+		encoding = "unknown";
+		return;
+	}
+
+	const int64_t file_size = fs.GetFileSize(*handle);
+	if (file_size == 0) {
+		// An empty file is empty text, which is what git_read says of an empty blob.
+		is_text = true;
+		encoding = "utf8";
+		return;
+	}
+
+	Utf8Validator validator;
+	auto buffer = make_unsafe_uniq_array<char>(CHUNK_BYTES);
+	int64_t offset = 0;
+	bool has_nul = false;
+
+	while (offset < file_size) {
+		const int64_t want = MinValue<int64_t>(static_cast<int64_t>(CHUNK_BYTES), file_size - offset);
+		try {
+			// Positional Read: loops and raises rather than returning short.
+			fs.Read(*handle, buffer.get(), want, static_cast<idx_t>(offset));
+		} catch (const std::exception &) {
+			is_text = false;
+			encoding = "unknown";
+			return;
+		}
+		if (!has_nul && static_cast<size_t>(offset) < BINARY_SCAN_BYTES) {
+			const size_t scan = MinValue<size_t>(static_cast<size_t>(want), BINARY_SCAN_BYTES - static_cast<size_t>(offset));
+			has_nul = memchr(buffer.get(), 0, scan) != nullptr;
+		}
+		if (has_nul) {
+			break;
+		}
+		validator.Feed(buffer.get(), static_cast<size_t>(want));
+		if (!validator.ok) {
+			break;
+		}
+		offset += want;
+	}
+
+	is_text = !has_nul && validator.Valid();
+	encoding = is_text ? "utf8" : "binary";
+}
+
 string ApplyExplicitRepoPath(const string &uri, const string &repo_path, const string &function_name) {
 	if (repo_path.empty() || !StringUtil::StartsWith(uri, "git://")) {
 		return uri;
