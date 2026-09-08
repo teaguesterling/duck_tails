@@ -81,6 +81,19 @@ setup_fixtures() {
     echo "Generating slash-bearing ref fixture..."
     bash "$FIXTURES_DIR/../scripts/setup_slash_refs_fixture.sh" "$TEMP_DIR"
 
+    # A second spelling of main-repo whose textual form differs from the one
+    # libgit2 resolves it to. GitPath::Parse derived the in-repository path by
+    # stripping libgit2's repository root off the input as text, so an input that
+    # did not match textually was reinterpreted as a path filter INSIDE the
+    # repository, matched nothing, and returned zero rows with no error (#38).
+    # A symlink is the portable way to build that mismatch on Unix; on Windows,
+    # drive-letter case, 8.3 short names, junctions and subst drives produce it
+    # just as readily, but this line is not portable there, so the tests that use
+    # this fixture are marked `require notwindows`.
+    echo "Linking symlinked-repo -> main-repo (differing path spelling)..."
+    ln -sfn "$TEMP_DIR/main-repo" "$TEMP_DIR/symlinked-repo" 2>/dev/null \
+        || echo "  warning: could not create symlink; the #38 regression tests will fail here"
+
     # A directory whose .git is present but unreadable to libgit2 -- a `.git`
     # file (the form submodules and worktrees use) with contents that are not
     # "gitdir: <path>". Discovery fails with GIT_ERROR, not GIT_ENOTFOUND, and

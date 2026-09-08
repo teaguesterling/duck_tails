@@ -22,6 +22,120 @@ static bool PathExists(const string &path);
 static string GetDirectoryFromPath(const string &path);
 static string GetParentDirectory(const string &path);
 static string NormalizePath(const string &path);
+static bool IsDirectory(const string &path);
+
+//===--------------------------------------------------------------------===//
+// Locating an input inside its repository
+//===--------------------------------------------------------------------===//
+
+// git_repository_discover for `path`, returning the .git directory it found.
+// Used as an identity for "which repository is this directory in".
+//
+// Note: a failed call leaves libgit2's thread-local error slot set. Callers here
+// read that slot only straight after a call they saw fail, so a stale entry is
+// never reported.
+static bool DiscoverGitDir(const string &path, string &out_git_dir) {
+	git_buf buf = {0};
+	if (git_repository_discover(&buf, path.c_str(), 0, nullptr) != 0) {
+		git_buf_dispose(&buf);
+		return false;
+	}
+	out_git_dir = buf.ptr ? string(buf.ptr) : string();
+	git_buf_dispose(&buf);
+	return true;
+}
+
+// Splits `path` off the last component, in place.
+static string SplitLastComponent(const string &path) {
+	size_t slash = path.find_last_of('/');
+	return (slash == string::npos) ? path : path.substr(slash + 1);
+}
+
+// Give the location of `input` inside its repository, without ever comparing the
+// caller's spelling of a path against libgit2's.
+//
+// The two need not agree textually. libgit2 resolves symlinks, and on Windows
+// also drive-letter case, 8.3 short names, directory junctions, `subst` and
+// mapped network drives, and `\\?\` extended-length prefixes. GitPath::Parse
+// derived the in-repository path by stripping libgit2's repository root off the
+// front of the input as text, and when that prefix did not match it fell back to
+// treating the WHOLE input as a path filter inside the repository. Such a filter
+// matches nothing, so the query returned zero rows and no error -- and an empty
+// result is data, indistinguishable from an empty file or a repository with no
+// history (#38).
+//
+// Walking up from the input with git_repository_discover and watching for the
+// discovered .git directory to change locates the repository root in the
+// caller's own spelling, so the remainder can be taken from the input itself and
+// no text from libgit2 enters the comparison.
+//
+// `input` must be lexically absolute, and `expected_git_dir` the .git directory
+// of the repository the caller already resolved it to. Returns false when
+// `input` is not inside a repository at all, or lands in a DIFFERENT one than
+// the caller resolved -- the two can disagree, because ".." is resolved
+// lexically here but by the kernel during discovery, and across a symlink those
+// give different directories. Placing the input in a repository other than the
+// one about to be opened would produce exactly the silent empty result this
+// function exists to prevent, so the caller must report it instead.
+static bool RepoRelativePath(const string &input, const string &expected_git_dir, string &out_relative) {
+	// Split into the deepest existing directory and a remainder. The remainder
+	// may name something that exists only in history, which cannot be probed on
+	// disk and does not need to be.
+	string dir = input;
+	string remainder;
+	while (!dir.empty() && dir != "/" && !IsDirectory(dir)) {
+		string leaf = SplitLastComponent(dir);
+		if (!leaf.empty() && leaf != ".") {
+			remainder = remainder.empty() ? leaf : leaf + "/" + remainder;
+		}
+		string parent = GetParentDirectory(dir);
+		if (parent.empty() || parent == dir) {
+			return false;
+		}
+		dir = parent;
+	}
+
+	string anchor;
+	if (!DiscoverGitDir(dir, anchor) || anchor != expected_git_dir) {
+		return false;
+	}
+
+	vector<string> components;
+	string current = dir;
+	while (true) {
+		string parent = GetParentDirectory(current);
+		if (parent.empty() || parent == current) {
+			break;
+		}
+		string parent_anchor;
+		if (!DiscoverGitDir(parent, parent_anchor) || parent_anchor != anchor) {
+			// The parent belongs to a different repository, or none: `current` is
+			// the repository root, spelled the way the caller spelled it.
+			break;
+		}
+		string leaf = SplitLastComponent(current);
+		if (!leaf.empty() && leaf != ".") {
+			components.push_back(leaf);
+		}
+		current = parent;
+	}
+
+	out_relative.clear();
+	for (size_t i = components.size(); i > 0; i--) {
+		if (!out_relative.empty()) {
+			out_relative += "/";
+		}
+		out_relative += components[i - 1];
+	}
+	if (!remainder.empty()) {
+		if (!out_relative.empty()) {
+			out_relative += "/";
+		}
+		out_relative += remainder;
+	}
+	return true;
+}
+
 //===--------------------------------------------------------------------===//
 // Revision / path-suffix splitting
 //===--------------------------------------------------------------------===//
@@ -193,8 +307,28 @@ GitPath GitPath::Parse(const string &git_url) {
 					    normalized_url.substr(0, repo_prefix.length()) == repo_prefix) {
 						result.file_path = normalized_url.substr(repo_prefix.length()) + path_suffix;
 					} else {
-						// Use original relative path if normalized doesn't match
-						result.file_path = url + path_suffix;
+						// The input's spelling is not a textual prefix of libgit2's
+						// resolved repository root. Falling back to `url` here made the
+						// whole input a path filter inside the repository, which matched
+						// nothing: zero rows, no error, and no way for the caller to tell
+						// that from an empty file or an empty history (#38). Ask the
+						// repository where the input actually sits instead, and refuse to
+						// answer at all when even that cannot place it.
+						string relative;
+						string expected_git_dir;
+						if (!DiscoverGitDir(result.repository_path, expected_git_dir) ||
+						    !RepoRelativePath(normalized_url, expected_git_dir, relative)) {
+							throw IOException("Path '%s' was resolved to repository '%s', but its location inside that "
+							                  "repository could not be determined. Refusing to answer with an empty "
+							                  "result, which would be indistinguishable from a genuine one.",
+							                  git_url, result.repository_path);
+						}
+						if (relative.empty()) {
+							// The input names the repository root itself.
+							result.file_path = path_suffix.empty() ? "" : path_suffix.substr(1);
+						} else {
+							result.file_path = relative + path_suffix;
+						}
 					}
 				}
 			}
