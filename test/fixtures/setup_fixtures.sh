@@ -94,6 +94,15 @@ setup_fixtures() {
     echo "Generating LFS local-cache fixture..."
     bash "$FIXTURES_DIR/../scripts/setup_lfs_missing_object_fixture.sh" "$TEMP_DIR"
 
+    # A repository with a "src" directory and a "src_backup" sibling, each
+    # carrying tracked, modified and untracked files. Asking for "src" has three
+    # distinguishable answers here -- the whole repository, src + src_backup, or
+    # src alone -- so a dropped path filter and an over-matching one cannot both
+    # look right (#55). It also carries a Latin-1 file, on which git_read and
+    # git_tree disagreed about is_text.
+    echo "Generating path-scope fixture..."
+    bash "$FIXTURES_DIR/../scripts/setup_path_scope_fixture.sh" "$TEMP_DIR"
+
     # A second spelling of main-repo whose textual form differs from the one
     # libgit2 resolves it to. GitPath::Parse derived the in-repository path by
     # stripping libgit2's repository root off the input as text, so an input that

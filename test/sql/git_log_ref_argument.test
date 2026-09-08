@@ -1,0 +1,77 @@
+# name: test/sql/git_log_ref_argument.test
+# description: git_log(repo, ref) -- the second positional argument the bind code and the docs both describe (#52)
+# group: [sql]
+
+require duck_tails
+
+require notwindows
+
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
+
+# Fixture: test/tmp/path-scope-repo, built by
+# test/scripts/setup_path_scope_fixture.sh.
+#   main    : 2 commits
+#   develop : those 2 plus "develop: a commit that is not on main"
+
+# The example published at docs/db.md raised a Binder Error as written: only
+# git_log(VARCHAR) and git_log(VARCHAR, repo_path := VARCHAR) were registered, so
+# a positional ref could not bind at all.
+query I
+SELECT COUNT(*) FROM git_log('test/tmp/path-scope-repo', 'develop');
+----
+3
+
+query I
+SELECT COUNT(*) FROM git_log('test/tmp/path-scope-repo', 'main');
+----
+2
+
+# The ref has to reach the walk, not just bind: the develop-only commit appears
+# under develop and nowhere else.
+query I
+SELECT COUNT(*) FROM git_log('test/tmp/path-scope-repo', 'develop')
+WHERE message LIKE 'develop:%';
+----
+1
+
+query I
+SELECT COUNT(*) FROM git_log('test/tmp/path-scope-repo', 'main')
+WHERE message LIKE 'develop:%';
+----
+0
+
+# One argument still means HEAD.
+query I
+SELECT (SELECT COUNT(*) FROM git_log('test/tmp/path-scope-repo'))
+     = (SELECT COUNT(*) FROM git_log('test/tmp/path-scope-repo', 'main'));
+----
+true
+
+# A NULL ref is the same as not passing one, not the literal string "NULL".
+query I
+SELECT COUNT(*) FROM git_log('test/tmp/path-scope-repo', NULL);
+----
+2
+
+# An unknown ref fails loudly rather than answering from HEAD.
+statement error
+SELECT * FROM git_log('test/tmp/path-scope-repo', 'no-such-branch');
+----
+no-such-branch
+
+# A correlated ref is git_log_each's job: a plain table function's arguments have
+# to be constant at bind time, so the per-branch join the docs published could
+# never have bound against git_log no matter which overloads exist. This is the
+# shape docs/db.md now shows.
+query I
+SELECT COUNT(*) > 0 FROM git_branches('test/tmp/path-scope-repo') b,
+     LATERAL git_log_each('test/tmp/path-scope-repo', b.branch_name) l;
+----
+true
+
+# A ref both in the URI and in the argument is two answers to one question.
+statement error
+SELECT * FROM git_log('git://test/tmp/path-scope-repo@main', 'develop');
+----
+Conflicting ref
