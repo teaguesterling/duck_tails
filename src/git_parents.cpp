@@ -194,14 +194,23 @@ static bool ProcessParentsForCommit(const string &repo_path, const string &commi
 		return false;
 	}
 
-	if (git_object_type(obj) != GIT_OBJECT_COMMIT) {
+	// An annotated tag resolves to a tag object, not to the commit it points at,
+	// and this used to fail the type check above and skip the row -- so
+	// git_parents_each('git://repo@v2.0.0') returned zero rows for a tag that
+	// names a real commit, with no error and nothing to distinguish it from a
+	// root commit with no parents (#21). Peeling is a no-op for an object that is
+	// already a commit; every other resolution path in the extension already does
+	// it, and this was the last one that did not.
+	git_object *commit_obj = nullptr;
+	if (git_object_peel(&commit_obj, obj, GIT_OBJECT_COMMIT) != 0) {
 		git_object_free(obj);
 		git_repository_free(repo);
-		// Skip this row - ref is not a commit
+		// Skip this row - the ref does not lead to a commit (a bare tree or blob)
 		return false;
 	}
+	git_object_free(obj);
 
-	git_commit *commit = reinterpret_cast<git_commit *>(obj);
+	git_commit *commit = reinterpret_cast<git_commit *>(commit_obj);
 	string commit_hash = oid_to_hex(git_commit_id(commit));
 
 	unsigned int parent_count = git_commit_parentcount(commit);
