@@ -52,6 +52,41 @@ static bool IsRepoRootSpelling(const string &path) {
 	return path.empty() || path == "." || path == "./";
 }
 
+// Value::GetValue<string>() renders a NULL as the four characters "NULL"
+// (Value::ToString returns that literal), and the result then resolves as a path
+// INSIDE whatever repository the working directory happens to sit in.
+// git_log(NULL) consequently filtered the history down to commits touching a
+// file named "NULL" and answered with zero rows -- a legitimate-looking empty
+// history -- while git_branches(NULL), which never reads the file path, answered
+// from the current directory as if nothing were wrong. The disagreement between
+// the two made a NULL that arrived by accident very hard to trace back (#8).
+//
+// Shared so that every surface refuses in the same words. Not every one of them
+// reaches ParseUnifiedGitParams: git_status and git_diff_tree read
+// input.inputs[0] directly, and git_read and git_blame read their own repo_path
+// named parameter, so each of those has to reject a NULL itself or it keeps
+// answering from the current directory.
+void RejectNullRepoPathArgument(const Value &value) {
+	if (!value.IsNull()) {
+		return;
+	}
+	throw BinderException("Repository path must not be NULL. Pass a repository path, a git:// URI, or no "
+	                      "argument at all to use the current directory.");
+}
+
+// Named parameters only appear in bind when they were written out, so a NULL one
+// was passed deliberately (or by a caller that meant to pass a path). Dropping it
+// silently fell back to the current directory and produced a well-formed answer
+// from the wrong repository -- the same class of invisible failure as the
+// positional NULL above (#8).
+void RejectNullRepoPathParameter(const Value &value) {
+	if (!value.IsNull()) {
+		return;
+	}
+	throw BinderException("repo_path must not be NULL. Pass a repository path, or omit the parameter to "
+	                      "use the current directory.");
+}
+
 // Parse parameters using new unified signature: func(repo_path_or_uri, [optional_ref], [other_params...])
 UnifiedGitParams ParseUnifiedGitParams(TableFunctionBindInput &input, int ref_param_index) {
 	UnifiedGitParams params;
@@ -59,6 +94,7 @@ UnifiedGitParams ParseUnifiedGitParams(TableFunctionBindInput &input, int ref_pa
 	// First parameter is always repo_path_or_uri
 	if (!input.inputs.empty()) {
 		auto &first_arg = input.inputs[0];
+		RejectNullRepoPathArgument(first_arg);
 		if (first_arg.type().id() == LogicalTypeId::VARCHAR) {
 			params.repo_path_or_uri = first_arg.GetValue<string>();
 		}
@@ -73,9 +109,11 @@ UnifiedGitParams ParseUnifiedGitParams(TableFunctionBindInput &input, int ref_pa
 	// argument alongside it: as a path INSIDE the named repository.
 	string explicit_repo_path;
 	for (const auto &kv : input.named_parameters) {
-		if (kv.first == "repo_path" && !kv.second.IsNull()) {
-			explicit_repo_path = kv.second.GetValue<string>();
+		if (kv.first != "repo_path") {
+			continue;
 		}
+		RejectNullRepoPathParameter(kv.second);
+		explicit_repo_path = kv.second.GetValue<string>();
 	}
 	while (!explicit_repo_path.empty() && explicit_repo_path.back() == '/') {
 		explicit_repo_path.pop_back();

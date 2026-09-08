@@ -1,0 +1,130 @@
+# name: test/sql/git_null_repo_path.test
+# description: a NULL repository path must raise, not answer (issue #8)
+# group: [sql]
+
+require duck_tails
+
+require notwindows
+
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/repository';
+
+statement ok
+PRAGMA threads=1;
+
+# Value::GetValue<string>() renders a NULL as the four characters "NULL", and
+# that resolved as a path INSIDE whatever repository the working directory sat
+# in. git_log(NULL) therefore filtered the history down to commits touching a
+# file named "NULL" and returned zero rows -- an empty commit list is data, not
+# an error, and nothing distinguished it from a repository with no history.
+# git_branches(NULL) never reads the file path, so it answered from the current
+# directory as though nothing were wrong; the disagreement between the two is
+# what made an accidental NULL so hard to trace.
+
+statement error
+SELECT * FROM git_log(NULL);
+----
+must not be NULL
+
+statement error
+SELECT * FROM git_branches(NULL);
+----
+must not be NULL
+
+statement error
+SELECT * FROM git_tree(NULL);
+----
+must not be NULL
+
+statement error
+SELECT * FROM git_tags(NULL);
+----
+must not be NULL
+
+statement error
+SELECT * FROM git_parents(NULL);
+----
+must not be NULL
+
+statement error
+SELECT * FROM git_read(NULL);
+----
+must not be NULL
+
+# git_status and git_diff_tree never reach ParseUnifiedGitParams -- they read
+# input.inputs[0] themselves -- so the refusal has to be repeated there or they
+# keep answering. git_status(NULL) returned the working directory's status,
+# identical to git_status() and with nothing to show the argument had been
+# reinterpreted; git_diff_tree(NULL) diffed the current directory the same way.
+statement error
+SELECT * FROM git_status(NULL);
+----
+must not be NULL
+
+statement error
+SELECT * FROM git_diff_tree(NULL);
+----
+must not be NULL
+
+# ...and the zero-argument forms still mean "the current directory".
+query I
+SELECT COUNT(*) >= 0 FROM git_status();
+----
+true
+
+query I
+SELECT COUNT(*) >= 0 FROM git_diff_tree();
+----
+true
+
+# An explicitly-written NULL named parameter is just as deliberate, and dropping
+# it silently answered from the current directory instead of the named
+# repository.
+statement error
+SELECT * FROM git_log(repo_path := NULL);
+----
+must not be NULL
+
+# git_read and git_blame read the repo_path named parameter themselves rather
+# than through ParseUnifiedGitParams, so a NULL one reached them as the literal
+# string "NULL" and was spliced into the URI as a repository name.
+statement error
+SELECT * FROM git_read('README.md', repo_path := NULL);
+----
+must not be NULL
+
+statement error
+SELECT * FROM git_blame('README.md', repo_path := NULL);
+----
+must not be NULL
+
+# A NULL first argument alongside an explicit repo_path took git_read's other
+# branch and skipped the refusal entirely.
+statement error
+SELECT * FROM git_read(NULL, repo_path := 'test/tmp/main-repo');
+----
+must not be NULL
+
+# The named parameter still works when it is actually given.
+query I
+SELECT COUNT(*) > 0 FROM git_log(repo_path := 'test/tmp/main-repo');
+----
+true
+
+# The mechanism, pinned directly: the literal string is what a NULL used to
+# become, and it still resolves to a path filter that matches nothing.
+query I
+SELECT COUNT(*) FROM git_log('NULL');
+----
+0
+
+# Omitting the argument entirely still means "the current directory".
+query I
+SELECT COUNT(*) > 0 FROM git_log();
+----
+true
+
+query I
+SELECT COUNT(*) > 0 FROM git_branches();
+----
+true
