@@ -1,0 +1,258 @@
+# name: test/sql/text_diff_functions.test
+# description: text_diff_stats/text_diff_lines must answer from their argument (#54), and read_git_diff must raise rather than return its error as a row (#55.2)
+# group: [sql]
+
+require duck_tails
+
+require notwindows
+
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
+
+# ==============================================================
+# #54 -- text_diff_stats must read its argument
+# ==============================================================
+
+# diff_text('a\nb\nc', 'a\nB\nc') is " a\n-b\n+B\n c\n":
+# one line added, one removed, two unchanged.
+query IIII
+SELECT s.lines_added, s.lines_removed, s.lines_modified, s.lines_context
+FROM (SELECT text_diff_stats(diff_text('a' || chr(10) || 'b' || chr(10) || 'c',
+                                       'a' || chr(10) || 'B' || chr(10) || 'c')) AS s);
+----
+1	1	0	2
+
+# The empty diff is all zeroes -- not the same answer as a nine-line one.
+query IIII
+SELECT s.lines_added, s.lines_removed, s.lines_modified, s.lines_context
+FROM (SELECT text_diff_stats('') AS s);
+----
+0	0	0	0
+
+# Different inputs must not produce identical output. This is the whole of #54:
+# an empty string and a nine-line diff used to be byte-identical.
+query I
+SELECT text_diff_stats('') = text_diff_stats('+1' || chr(10) || '+2' || chr(10) || '+3');
+----
+false
+
+# Counts scale with the input.
+query II
+SELECT s.lines_added, s.lines_removed
+FROM (SELECT text_diff_stats('+1' || chr(10) || '+2' || chr(10) || '+3' || chr(10) ||
+                             '+4' || chr(10) || '+5' || chr(10) || '-6' || chr(10) ||
+                             '-7' || chr(10) || '-8') AS s);
+----
+5	3
+
+# Unified-diff headers are headers, not content: "--- a/x" is not a removed line
+# and "+++ b/x" is not an added one.
+query III
+SELECT s.lines_added, s.lines_removed, s.lines_context
+FROM (SELECT text_diff_stats('--- a/x' || chr(10) || '+++ b/x' || chr(10) ||
+                             '@@ -1,2 +1,3 @@' || chr(10) || ' keep' || chr(10) ||
+                             '-gone' || chr(10) || '+new1' || chr(10) || '+new2') AS s);
+----
+2	1	1
+
+# The two-argument form the docs use: diff the pair, then count.
+query II
+SELECT s.lines_added, s.lines_removed
+FROM (SELECT text_diff_stats('line1' || chr(10) || 'line2' || chr(10) || 'line3',
+                             'line1' || chr(10) || 'modified' || chr(10) || 'line3' || chr(10) || 'line4') AS s);
+----
+2	1
+
+query I
+SELECT text_diff_stats(NULL) IS NULL;
+----
+true
+
+# ==============================================================
+# #54 -- text_diff_lines must read its argument
+# ==============================================================
+
+# Three fixed demo rows (CONTEXT/Hello/1, REMOVED/World/2, ADDED/DuckDB/3) came
+# back for every input, including this one.
+query III
+SELECT line_type, content, line_number
+FROM text_diff_lines(diff_text('a' || chr(10) || 'b' || chr(10) || 'c',
+                               'a' || chr(10) || 'B' || chr(10) || 'c'));
+----
+CONTEXT	a	1
+REMOVED	b	2
+ADDED	B	2
+CONTEXT	c	3
+
+# Row count follows the input rather than being fixed at 3.
+query I
+SELECT COUNT(*) FROM text_diff_lines('');
+----
+0
+
+query I
+SELECT COUNT(*) FROM text_diff_lines('+1' || chr(10) || '+2' || chr(10) || '+3' || chr(10) || '+4');
+----
+4
+
+# Hunk headers set the line numbers they declare.
+query III
+SELECT line_type, content, line_number
+FROM text_diff_lines('--- a/x' || chr(10) || '+++ b/x' || chr(10) ||
+                     '@@ -10,2 +10,2 @@' || chr(10) || ' keep' || chr(10) ||
+                     '-gone' || chr(10) || '+new');
+----
+CONTEXT	keep	10
+REMOVED	gone	11
+ADDED	new	11
+
+# text_diff_lines and text_diff_stats must agree about the same diff. (A table
+# function's arguments have to be constant at bind time, so the diff is written
+# out here rather than carried in from a correlated column.)
+query I
+SELECT (SELECT COUNT(*) FROM text_diff_lines(' a' || chr(10) || '-b' || chr(10) || '+B' || chr(10) || '+c')
+        WHERE line_type = 'ADDED')
+     = (text_diff_stats(' a' || chr(10) || '-b' || chr(10) || '+B' || chr(10) || '+c')).lines_added;
+----
+true
+
+# ==============================================================
+# #55.2 -- read_git_diff must not return its error as a data row
+# ==============================================================
+
+# A file that does not exist is an error, not a one-row result set whose
+# diff_text happens to start with "Error:".
+statement error
+SELECT * FROM read_git_diff('test/tmp/path-scope-repo/no-such-file.txt');
+----
+read_git_diff
+
+statement error
+SELECT * FROM read_git_diff('test/tmp/path-scope-repo/no-such-file.txt', 'test/tmp/path-scope-repo/src/one.txt');
+----
+read_git_diff
+
+# Nothing that reaches a caller may describe a failure as data.
+query I
+SELECT COUNT(*) FROM (
+    SELECT diff_text FROM read_git_diff('test/tmp/path-scope-repo/src/one.txt')
+) WHERE diff_text LIKE 'Error:%';
+----
+0
+
+# The single-argument form compares the file against its HEAD version, so it can
+# actually succeed: src/one.txt is committed as "src one changed" and modified in
+# the working directory.
+query I
+SELECT COUNT(*) FROM read_git_diff('test/tmp/path-scope-repo/src/one.txt');
+----
+1
+
+query I
+SELECT diff_text LIKE '%+src one modified in workdir%'
+FROM read_git_diff('test/tmp/path-scope-repo/src/one.txt');
+----
+true
+
+query I
+SELECT diff_text LIKE '%-src one changed%'
+FROM read_git_diff('test/tmp/path-scope-repo/src/one.txt');
+----
+true
+
+# path1 names the side it was compared against.
+query I
+SELECT path1 LIKE 'git://%@HEAD' FROM read_git_diff('test/tmp/path-scope-repo/src/one.txt');
+----
+true
+
+# The two-argument form is unchanged: old first, new second.
+query I
+SELECT diff_text LIKE '%+src one modified in workdir%'
+FROM read_git_diff('git://test/tmp/path-scope-repo/src/one.txt@HEAD',
+                   'test/tmp/path-scope-repo/src/one.txt');
+----
+true
+
+# ==============================================================
+# #54 -- "--- x" is a header only where a header can be
+# ==============================================================
+
+# A removed line whose content begins "-- " renders as "--- ...", and an added
+# one beginning "++ " renders as "+++ ...". Reading those as the file header
+# dropped a changed line from the count and left the numbering of everything
+# after it short by one -- a plausible number with a change missing from it,
+# which is the defect this function was fixed for.
+#
+# text_diff() output carries no headers at all (every line of it starts with
+# ' ', '+', '-' or '~'), so here they are content, full stop.
+query IIII
+SELECT s.lines_added, s.lines_removed, s.lines_modified, s.lines_context
+FROM (SELECT text_diff_stats(text_diff('-- a' || chr(10) || 'x',
+                                       '-- b' || chr(10) || 'x')) AS s);
+----
+1	1	0	1
+
+query IIII
+SELECT s.lines_added, s.lines_removed, s.lines_modified, s.lines_context
+FROM (SELECT text_diff_stats(text_diff('++ a' || chr(10) || 'x',
+                                       '++ b' || chr(10) || 'x')) AS s);
+----
+1	1	0	1
+
+# The same shape as `git diff` writes it: a SQL comment changed inside a hunk.
+# The file header above the hunk is still a header.
+query III
+SELECT line_type, content, line_number
+FROM text_diff_lines('diff --git a/q.sql b/q.sql' || chr(10) ||
+                     'index a370000..a440000 100644' || chr(10) ||
+                     '--- a/q.sql' || chr(10) ||
+                     '+++ b/q.sql' || chr(10) ||
+                     '@@ -1,2 +1,2 @@' || chr(10) ||
+                     '--- sql comment' || chr(10) ||
+                     '+-- SQL COMMENT' || chr(10) ||
+                     ' select 1;');
+----
+REMOVED	-- sql comment	1
+ADDED	-- SQL COMMENT	1
+CONTEXT	select 1;	2
+
+# A rename, a binary file and "\ No newline at end of file" contribute no
+# content lines, and the one real hunk in the same diff is counted normally.
+query IIII
+SELECT s.lines_added, s.lines_removed, s.lines_modified, s.lines_context
+FROM (SELECT text_diff_stats(
+    'diff --git a/old.txt b/new.txt' || chr(10) ||
+    'similarity index 100%' || chr(10) ||
+    'rename from old.txt' || chr(10) ||
+    'rename to new.txt' || chr(10) ||
+    'diff --git a/bin.dat b/bin.dat' || chr(10) ||
+    'index f7c6699..97c4e94 100644' || chr(10) ||
+    'Binary files a/bin.dat and b/bin.dat differ' || chr(10) ||
+    'diff --git a/nonl.txt b/nonl.txt' || chr(10) ||
+    '--- a/nonl.txt' || chr(10) ||
+    '+++ b/nonl.txt' || chr(10) ||
+    '@@ -1 +1 @@' || chr(10) ||
+    '-before' || chr(10) ||
+    '\ No newline at end of file' || chr(10) ||
+    '+after' || chr(10) ||
+    '\ No newline at end of file') AS s);
+----
+1	1	0	0
+
+# Several hunks in one file: each header restarts the numbering it declares, and
+# the counts it declares say where its body ends.
+query III
+SELECT line_type, content, line_number
+FROM text_diff_lines('--- a/multi.txt' || chr(10) || '+++ b/multi.txt' || chr(10) ||
+                     '@@ -1,2 +1,2 @@' || chr(10) || '-a' || chr(10) || '+A' || chr(10) ||
+                     ' b' || chr(10) ||
+                     '@@ -17,2 +17,2 @@ p' || chr(10) || ' s' || chr(10) ||
+                     '-t' || chr(10) || '+T');
+----
+REMOVED	a	1
+ADDED	A	1
+CONTEXT	b	2
+CONTEXT	s	17
+REMOVED	t	18
+ADDED	T	18

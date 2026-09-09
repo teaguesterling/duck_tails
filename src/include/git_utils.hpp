@@ -66,6 +66,43 @@ UnifiedGitParams ParseLateralGitParams(TableFunctionBindInput &input, int ref_pa
 void RejectNullRepoPathArgument(const Value &value);
 void RejectNullRepoPathParameter(const Value &value);
 
+// A repository path argument may name a path INSIDE the repository
+// ('repo/src'), which scopes the answer to it. git_status and git_diff_tree
+// parsed that path out of their first argument and then dropped it, so the
+// answer was the whole repository's regardless of what was asked -- a
+// well-formed status for a scope the caller did not request (#55).
+//
+// Combine the path from the argument with an explicit `path` named parameter.
+// Both together are two answers to one question, so they raise rather than one
+// silently winning. function_name prefixes the error.
+string CombineArgumentAndNamedPath(const string &function_name, const string &argument_path, const string &named_path);
+
+// Does `path` name `prefix` itself, or something inside it?
+//
+// Compares path COMPONENTS, not characters. A raw StringUtil::StartsWith says
+// "src_backup/x" is under "src", which is how git_tree(untracked := true)
+// returned files from a sibling directory the caller never asked about (#55).
+bool PathIsUnder(const string &path, const string &prefix);
+
+// Is this valid UTF-8?
+//
+// Shared because is_text has to mean the same thing everywhere: git_read and
+// git_blame classify on UTF-8 validity (a DuckDB VARCHAR requires it), and
+// git_tree used to classify on libgit2's binary heuristic alone. That heuristic
+// looks for a NUL byte in the first 8000, so a Latin-1 file -- valid 8-bit text,
+// no NUL, not valid UTF-8 -- came back is_text=true from git_tree and
+// is_text=false from git_read for the very same blob (#55).
+bool IsValidUTF8(const char *data, size_t length);
+
+// The is_text/encoding pair for a blob already in memory. git_binary_hint is
+// libgit2's own verdict (git_blob_is_binary); text also has to be valid UTF-8.
+void ClassifyBlobText(const char *data, size_t length, bool git_binary_hint, bool &is_text, string &encoding);
+
+// The same classification for a file on disk, which git_tree needs for untracked
+// files. Reads in chunks and validates as it goes, so classifying a listing does
+// not depend on being able to hold each file in memory.
+void ClassifyWorkdirFileText(const string &abs_path, bool &is_text, string &encoding);
+
 // RAII wrapper for git repository
 class GitRepository {
 public:

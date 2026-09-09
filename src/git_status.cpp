@@ -249,6 +249,7 @@ static unique_ptr<FunctionData> GitStatusBind(ClientContext &context, TableFunct
 	bool include_untracked = true;
 	bool include_ignored = false;
 	string path_filter;
+	string argument_path;
 
 	// Parse positional parameters
 	if (!input.inputs.empty()) {
@@ -263,6 +264,11 @@ static unique_ptr<FunctionData> GitStatusBind(ClientContext &context, TableFunct
 		try {
 			auto git_path = GitPath::Parse("git://" + first_param + "@HEAD");
 			repo_path = git_path.repository_path;
+			// The path INSIDE the repository, when the argument named one. It was
+			// parsed out here and then dropped, so git_status('repo/src') answered
+			// with the whole repository's status -- a well-formed answer to a
+			// question nobody asked (#55).
+			argument_path = git_path.file_path;
 		} catch (const std::exception &e) {
 			throw BinderException("git_status: failed to resolve repository path '%s': %s", first_param,
 			                      GitExceptionMessage(e));
@@ -287,6 +293,8 @@ static unique_ptr<FunctionData> GitStatusBind(ClientContext &context, TableFunct
 			path_filter = kv.second.GetValue<string>();
 		}
 	}
+
+	path_filter = CombineArgumentAndNamedPath("git_status", argument_path, path_filter);
 
 	return make_uniq<GitStatusFunctionData>(repo_path, include_untracked, include_ignored, path_filter);
 }
@@ -405,15 +413,20 @@ static OperatorResultType GitStatusEachFunction(ExecutionContext &context, Table
 				continue;
 			}
 
-			// Resolve repo path
+			// Resolve repo path, and the path inside it the row asked for. The
+			// LATERAL surface dropped that path exactly as the static one did:
+			// git_uri('repo', 'src') scoped nothing (#55).
 			string resolved_repo_path;
+			string row_path;
 			try {
 				auto git_path = GitPath::Parse("git://" + repo_path_or_uri + "@HEAD");
 				resolved_repo_path = git_path.repository_path;
+				row_path = git_path.file_path;
 			} catch (...) {
 				state.current_input_row++;
 				continue;
 			}
+			const string row_path_filter = CombineArgumentAndNamedPath("git_status", row_path, bind_data.path_filter);
 
 			state.current_rows.clear();
 
@@ -426,7 +439,7 @@ static OperatorResultType GitStatusEachFunction(ExecutionContext &context, Table
 
 			try {
 				CollectStatusRows(repo, resolved_repo_path, bind_data.include_untracked, bind_data.include_ignored,
-				                  bind_data.path_filter, state.current_rows);
+				                  row_path_filter, state.current_rows);
 			} catch (...) {
 				git_repository_free(repo);
 				state.current_input_row++;

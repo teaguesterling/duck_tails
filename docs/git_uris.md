@@ -143,7 +143,8 @@ JOIN LATERAL git_read_each(t.git_uri) r ON TRUE;
 -- Compare two versions (takes two separate git URIs)
 SELECT * FROM read_git_diff('git://file.txt@v1.0', 'git://file.txt@v2.0');
 
--- Compare against HEAD (single argument defaults to @HEAD comparison)
+-- Compare against HEAD: the single argument is the NEW side, and the OLD side
+-- is the same file at HEAD
 SELECT * FROM read_git_diff('git://file.txt@v1.0');
 ```
 

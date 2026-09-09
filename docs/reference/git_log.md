@@ -56,6 +56,21 @@ SELECT * FROM git_log('../other-project');
 SELECT * FROM git_log('vendor/duckdb');
 ```
 
+### With a Ref
+
+```sql
+-- One branch's history
+SELECT * FROM git_log('.', 'develop');
+
+-- A tag's history
+SELECT * FROM git_log('/path/to/repo', 'v1.0.0');
+
+-- Per-branch, with the ref coming from another row
+SELECT b.branch_name, l.commit_hash, l.message
+FROM git_branches('.') b,
+     LATERAL git_log_each('.', b.branch_name) l;
+```
+
 ### Filter by Date
 
 ```sql

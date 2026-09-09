@@ -12,50 +12,9 @@
 
 namespace duckdb {
 
-//===--------------------------------------------------------------------===//
-// UTF-8 Validation Helper
-//===--------------------------------------------------------------------===//
-
-// Simple UTF-8 validation to prevent verification crashes
-static bool IsValidUTF8(const char *data, size_t length) {
-	const unsigned char *bytes = reinterpret_cast<const unsigned char *>(data);
-	for (size_t i = 0; i < length;) {
-		unsigned char byte = bytes[i];
-
-		// ASCII (0-127)
-		if (byte <= 0x7F) {
-			i++;
-			continue;
-		}
-
-		// Multi-byte sequence
-		int num_bytes = 0;
-		if ((byte & 0xE0) == 0xC0) {
-			num_bytes = 2;
-		} else if ((byte & 0xF0) == 0xE0) {
-			num_bytes = 3;
-		} else if ((byte & 0xF8) == 0xF0) {
-			num_bytes = 4;
-		} else {
-			return false; // Invalid start byte
-		}
-
-		// Check if we have enough bytes
-		if (i + num_bytes > length) {
-			return false;
-		}
-
-		// Check continuation bytes
-		for (int j = 1; j < num_bytes; j++) {
-			if ((bytes[i + j] & 0xC0) != 0x80) {
-				return false;
-			}
-		}
-
-		i += num_bytes;
-	}
-	return true;
-}
+// UTF-8 validation lives in git_utils (IsValidUTF8): git_read, git_blame and
+// git_tree all classify is_text with it, and it has to mean the same thing in
+// all three (#55).
 
 //===--------------------------------------------------------------------===//
 // Helper Functions
@@ -249,7 +208,12 @@ static void ProcessWorkdirRead(const string &repo_path, const string &file_path,
 	string content;
 	content.resize(static_cast<size_t>(file_size));
 	if (file_size > 0) {
-		fs.Read(*handle, const_cast<char *>(content.data()), file_size);
+		// The positional Read: it loops until the whole request is satisfied and
+		// raises if it cannot be. The sequential overload is a single read(2),
+		// whose return value was discarded here -- and read(2) returns at most
+		// 2 GiB - 4 KiB on Linux, so a larger file came back silently truncated
+		// with the tail left as zero bytes (#55).
+		fs.Read(*handle, const_cast<char *>(content.data()), file_size, 0);
 	}
 
 	result.repo_path = repo_path;

@@ -60,8 +60,8 @@ Built-in text diffing with multiple output formats:
 -- Compare two files
 SELECT * FROM read_git_diff('git://file.txt@v1.0', 'git://file.txt@v2.0');
 
--- Get diff statistics
-SELECT * FROM text_diff_stats('old content', 'new content');
+-- Get diff statistics (a STRUCT of counts)
+SELECT text_diff_stats('old content', 'new content');
 ```
 
 ## Quick Start

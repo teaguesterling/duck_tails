@@ -533,7 +533,12 @@ unique_ptr<FileHandle> GitFileSystem::OpenFile(const string &path, FileOpenFlags
 				auto content = make_shared_ptr<string>();
 				content->resize(static_cast<size_t>(file_size));
 				if (file_size > 0) {
-					local_fs.Read(*local_handle, const_cast<char *>(content->data()), file_size);
+					// The positional Read: it loops until the whole request is
+					// satisfied and raises if it cannot be. The sequential overload
+					// is a single read(2), which returns at most 2 GiB - 4 KiB on
+					// Linux, so a larger file came back silently truncated with the
+					// tail left as zero bytes (#55).
+					local_fs.Read(*local_handle, const_cast<char *>(content->data()), file_size, 0);
 				}
 				return make_uniq<GitFileHandle>(*this, path, content, flags);
 			} else {

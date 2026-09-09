@@ -114,8 +114,8 @@ SELECT * FROM read_git_diff('local.txt', 'git://file@HEAD');
 -- Structured diff analysis
 SELECT * FROM text_diff_lines(diff_text('old content', 'new content'));
 
--- Diff statistics and metrics
-SELECT * FROM text_diff_stats('old content', 'new content');
+-- Diff statistics and metrics (a scalar returning a STRUCT of counts)
+SELECT text_diff_stats('old content', 'new content');
 ```
 
 ## 🚀 Quick Start

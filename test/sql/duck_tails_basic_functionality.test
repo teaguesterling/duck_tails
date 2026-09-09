@@ -26,15 +26,17 @@ SELECT diff_text('content', '') IS NOT NULL as has_diff;
 ----
 true
 
-# Test read_git_diff single argument works
+# Test read_git_diff single argument works. The file has to exist: the
+# single-argument form compares it against its HEAD version, and a file that
+# cannot be read now raises instead of returning the error as a row (#55.2).
 query I
-SELECT COUNT(*) > 0 as has_rows FROM read_git_diff('test.txt');
+SELECT COUNT(*) > 0 as has_rows FROM read_git_diff('README.md');
 ----
 true
 
-# Test read_git_diff two arguments works  
+# Test read_git_diff two arguments works
 query I
-SELECT COUNT(*) > 0 as has_rows FROM read_git_diff('file1.txt', 'file2.txt');
+SELECT COUNT(*) > 0 as has_rows FROM read_git_diff('README.md', 'LICENSE');
 ----
 true
 
@@ -44,8 +46,10 @@ SELECT COUNT(*) > 0 as has_rows FROM read_git_diff('git://README.md@HEAD', 'git:
 ----
 true
 
-# Test text_diff_lines function works
+# Test text_diff_lines function works. 'dummy' carries no diff prefix, so it is
+# a line outside any hunk and yields nothing; a real diff yields its lines
+# (#54 -- this used to answer with three fixed rows for any input at all).
 query I
-SELECT COUNT(*) > 0 as has_rows FROM text_diff_lines('dummy');
+SELECT COUNT(*) > 0 as has_rows FROM text_diff_lines(' context' || chr(10) || '-gone' || chr(10) || '+new');
 ----
 true

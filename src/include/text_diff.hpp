@@ -59,6 +59,24 @@ public:
 	// Create diff from two strings
 	static TextDiff CreateDiff(const string &old_text, const string &new_text);
 
+	// Read a diff back from its textual form: either ToString()'s output (' ', '+',
+	// '-' and '~' prefixes) or a unified diff. Headers ("--- a/x", "+++ b/x",
+	// "diff --git ...", "index ...", "\ No newline at end of file") are headers, not
+	// content -- counting "+++ b/x" as an added line is exactly the kind of
+	// plausible-but-wrong number this parser exists to avoid. A "@@ -a,b +c,d @@"
+	// hunk header sets the line numbers it declares; without one the numbering
+	// starts at 1. A line carrying no recognised prefix is outside any hunk and is
+	// skipped.
+	//
+	// "--- x" and "+++ x" are the two spellings that collide with content: a
+	// removed line reading "-- x" and an added one reading "++ x" render exactly
+	// like them, and both are everyday text in SQL and Markdown. So they count as
+	// headers only where a header can be -- in a unified diff (one that announces
+	// hunks with "@@"), and outside a hunk body, whose extent the hunk header's
+	// counts give. In ToString()'s output, which has no headers at all, they are
+	// always content.
+	static TextDiff Parse(const string &diff_text);
+
 	// Accessors
 	const vector<DiffLine> &GetLines() const {
 		return diff_lines_;

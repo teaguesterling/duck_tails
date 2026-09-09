@@ -32,39 +32,9 @@ static string oid_to_hex(const git_oid *oid) {
 	return string(hex);
 }
 
-// Simple UTF-8 validation to prevent DuckDB VARCHAR verification crashes on
-// non-UTF-8 text files. Mirrors git_read.cpp's IsValidUTF8 — duplicated here
-// rather than extracted until a third caller appears.
-static bool IsValidUTF8(const char *data, size_t length) {
-	const unsigned char *bytes = reinterpret_cast<const unsigned char *>(data);
-	for (size_t i = 0; i < length;) {
-		unsigned char byte = bytes[i];
-		if (byte <= 0x7F) {
-			i++;
-			continue;
-		}
-		int num_bytes = 0;
-		if ((byte & 0xE0) == 0xC0) {
-			num_bytes = 2;
-		} else if ((byte & 0xF0) == 0xE0) {
-			num_bytes = 3;
-		} else if ((byte & 0xF8) == 0xF0) {
-			num_bytes = 4;
-		} else {
-			return false;
-		}
-		if (i + num_bytes > length) {
-			return false;
-		}
-		for (int j = 1; j < num_bytes; j++) {
-			if ((bytes[i + j] & 0xC0) != 0x80) {
-				return false;
-			}
-		}
-		i += num_bytes;
-	}
-	return true;
-}
+// UTF-8 validation lives in git_utils (IsValidUTF8). The third caller this
+// comment used to wait for has arrived: git_tree classifies is_text with it too
+// now, so all three surfaces answer the same question the same way (#55).
 
 //===--------------------------------------------------------------------===//
 // GitBlameRow — covers both per-line and per-hunk output shapes.

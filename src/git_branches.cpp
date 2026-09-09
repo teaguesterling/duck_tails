@@ -38,7 +38,13 @@ unique_ptr<LocalTableFunctionState> GitBranchesLocalInit(ExecutionContext &conte
 unique_ptr<FunctionData> GitBranchesBind(ClientContext &context, TableFunctionBindInput &input,
                                          vector<LogicalType> &return_types, vector<CompatName> &names) {
 	// Use unified parameter parsing to support both git:// URIs and filesystem paths
-	auto params = ParseUnifiedGitParams(input, 1); // ref parameter at index 1 (optional)
+	// No ref parameter: only git_branches() and git_branches(repo) are registered,
+	// and a ref would have nothing to do here anyway -- the branch list is the
+	// repository's, not a commit's. The index-1 read this used to do was
+	// unreachable, and the comment describing it described a parameter the function
+	// does not accept (#52). 999 is the same "no such index" spelling git_blame
+	// uses.
+	auto params = ParseUnifiedGitParams(input, /*ref_param_index=*/999);
 
 	// Use GitContextManager for unified git URI processing and reference validation
 	string resolved_repo_path, resolved_file_path, final_ref;

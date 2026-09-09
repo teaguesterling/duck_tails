@@ -1,0 +1,181 @@
+# name: test/sql/path_scope_and_classification.test
+# description: git_status/git_diff_tree must honour the path they were given, git_tree(untracked) must not over-match a sibling directory, and is_text must not depend on which function read the bytes (#55)
+# group: [sql]
+
+require duck_tails
+
+require notwindows
+
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
+
+# Fixture: test/tmp/path-scope-repo, built by
+# test/scripts/setup_path_scope_fixture.sh (run from setup_fixtures.sh).
+#
+#   src/one.txt              tracked, changed in HEAD, modified in the workdir
+#   src/untracked.txt        untracked
+#   src_backup/one.txt       tracked, changed in HEAD, modified in the workdir
+#   src_backup/untracked.txt untracked
+#   docs/one.txt             tracked, changed in HEAD, modified in the workdir
+#   docs/untracked.txt       untracked
+#   docs/latin1_untracked.txt  untracked, Latin-1 (no NUL, not valid UTF-8)
+#   latin1.txt               tracked, Latin-1 (no NUL, not valid UTF-8)
+#
+# "src" and "src_backup" share a prefix on purpose: a filter that drops the path
+# answers 7, one that matches the prefix as raw text answers 4, and one that
+# honours the path answers 2. Three defects, three distinguishable numbers.
+
+# ==============================================================
+# #55.4 -- git_status must not discard the path part of its argument
+# ==============================================================
+
+# The whole repository: 3 modified + 4 untracked.
+query I
+SELECT COUNT(*) FROM git_status('test/tmp/path-scope-repo');
+----
+7
+
+# Scoped to src/: one modified file and one untracked file, nothing else.
+query I
+SELECT COUNT(*) FROM git_status('test/tmp/path-scope-repo/src');
+----
+2
+
+query I
+SELECT COUNT(*) FROM git_status('test/tmp/path-scope-repo/src')
+WHERE file_path NOT LIKE 'src/%';
+----
+0
+
+# The prefix-sharing sibling must not be pulled in with it.
+query I
+SELECT COUNT(*) FROM git_status('test/tmp/path-scope-repo/src')
+WHERE file_path LIKE 'src\_backup/%' ESCAPE '\';
+----
+0
+
+# ...and asking for the sibling gets the sibling, not both.
+query I
+SELECT COUNT(*) FROM git_status('test/tmp/path-scope-repo/src_backup');
+----
+2
+
+# A path in the argument and a path named parameter are two answers to the same
+# question; refuse rather than silently preferring one.
+statement error
+SELECT * FROM git_status('test/tmp/path-scope-repo/src', path := 'docs');
+----
+both
+
+# ==============================================================
+# #55.4 -- git_diff_tree must not discard the path part either
+# ==============================================================
+
+# HEAD~1 -> HEAD changed one file in each of the three directories.
+query I
+SELECT COUNT(*) FROM git_diff_tree('test/tmp/path-scope-repo', 'HEAD~1', 'HEAD');
+----
+3
+
+query I
+SELECT COUNT(*) FROM git_diff_tree('test/tmp/path-scope-repo/src', 'HEAD~1', 'HEAD');
+----
+1
+
+query I
+SELECT file_path FROM git_diff_tree('test/tmp/path-scope-repo/src', 'HEAD~1', 'HEAD');
+----
+src/one.txt
+
+statement error
+SELECT * FROM git_diff_tree('test/tmp/path-scope-repo/src', 'HEAD~1', 'HEAD', path := 'docs');
+----
+both
+
+# ==============================================================
+# #55.3 -- git_tree(untracked := true) must match path components, not raw prefixes
+# ==============================================================
+
+# src/ holds one tracked file and one untracked file.
+query I
+SELECT COUNT(*) FROM git_tree('git://test/tmp/path-scope-repo/src@WORKDIR', untracked := true)
+WHERE kind = 'file';
+----
+2
+
+# "src_backup/untracked.txt" starts with the characters "src"; it is not in src/.
+query I
+SELECT COUNT(*) FROM git_tree('git://test/tmp/path-scope-repo/src@WORKDIR', untracked := true)
+WHERE file_path LIKE 'src\_backup/%' ESCAPE '\';
+----
+0
+
+query I
+SELECT file_path FROM git_tree('git://test/tmp/path-scope-repo/src@WORKDIR', untracked := true)
+WHERE kind = 'file' ORDER BY file_path;
+----
+src/one.txt
+src/untracked.txt
+
+# The unscoped listing still sees every untracked file.
+query I
+SELECT COUNT(*) FROM git_tree('git://test/tmp/path-scope-repo@WORKDIR', untracked := true)
+WHERE kind = 'file';
+----
+8
+
+# ==============================================================
+# #55.1 -- is_text must not depend on which function read the bytes
+# ==============================================================
+
+# latin1.txt is 8-bit text with no NUL byte: libgit2's binary heuristic calls it
+# text, UTF-8 validation does not. git_read (and git_blame) answer false; git_tree
+# used to answer true for the same blob, so a caller filtering on is_text got two
+# different file sets from the two functions.
+query II
+SELECT is_text, encoding FROM git_read('git://test/tmp/path-scope-repo/latin1.txt@HEAD');
+----
+false	binary
+
+query II
+SELECT is_text, encoding FROM git_tree('git://test/tmp/path-scope-repo@HEAD')
+WHERE file_path = 'latin1.txt';
+----
+false	binary
+
+# Same question asked through both functions, one row per file, no disagreement.
+query I
+SELECT COUNT(*) FROM git_tree('git://test/tmp/path-scope-repo@HEAD') t
+JOIN (SELECT file_path, is_text FROM git_read('git://test/tmp/path-scope-repo/latin1.txt@HEAD')) r
+  ON r.file_path = t.file_path
+WHERE t.is_text <> r.is_text;
+----
+0
+
+# The staged copy of the same bytes is classified the same way.
+query II
+SELECT is_text, encoding FROM git_tree('git://test/tmp/path-scope-repo@STAGED')
+WHERE file_path = 'latin1.txt';
+----
+false	binary
+
+# And so is an untracked one, which git_tree classifies from disk rather than
+# from a blob.
+query II
+SELECT is_text, encoding FROM git_tree('git://test/tmp/path-scope-repo@WORKDIR', untracked := true)
+WHERE file_path = 'docs/latin1_untracked.txt';
+----
+false	binary
+
+# A plain ASCII file stays text on every path.
+query II
+SELECT is_text, encoding FROM git_tree('git://test/tmp/path-scope-repo@HEAD')
+WHERE file_path = 'src/one.txt';
+----
+true	utf8
+
+query II
+SELECT is_text, encoding FROM git_tree('git://test/tmp/path-scope-repo@WORKDIR', untracked := true)
+WHERE file_path = 'src/untracked.txt';
+----
+true	utf8
