@@ -61,7 +61,24 @@ elseif(WIN32)
     set(PLATFORM_DIR "windows_amd64")
 endif()
 
-set(TEST_EXTENSION_DIR "${CMAKE_BINARY_DIR}/extension/v${DUCKDB_MAJOR_VERSION}.${DUCKDB_MINOR_VERSION}.${DUCKDB_PATCH_VERSION}/${PLATFORM_DIR}")
+# Name the test extension folder the way DuckDB names its own. Deriving it from
+# MAJOR/MINOR/PATCH breaks whenever DuckDB is built from a BRANCH rather than a
+# vX.Y.Z tag: for v2.0-cyanoptera those three are empty, so the path became
+# literally "extension/v../<platform>". A component of ".." is a legal directory
+# name on Linux/macOS (so this passed there, silently, creating a junk folder)
+# but is invalid on Windows, where it failed the build:
+#   Error creating directory ".../build/release/extension/v../windows_amd64"
+# DUCKDB_NORMALIZED_VERSION is DuckDB's own answer to this question -- an explicit
+# version, else the git hash, else vX.Y.Z[-devN] -- and is never empty. It is what
+# DuckDB hands create_local_extension_repo.py for the real repo layout, so using it
+# keeps this test folder consistent with that. The fallback preserves the previous
+# expression if the variable is ever out of scope, so this can only improve on today.
+if(DUCKDB_NORMALIZED_VERSION)
+    set(TEST_EXTENSION_VERSION_DIR "${DUCKDB_NORMALIZED_VERSION}")
+else()
+    set(TEST_EXTENSION_VERSION_DIR "v${DUCKDB_MAJOR_VERSION}.${DUCKDB_MINOR_VERSION}.${DUCKDB_PATCH_VERSION}")
+endif()
+set(TEST_EXTENSION_DIR "${CMAKE_BINARY_DIR}/extension/${TEST_EXTENSION_VERSION_DIR}/${PLATFORM_DIR}")
 add_custom_command(
     TARGET ${LOADABLE_EXTENSION_NAME} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory ${TEST_EXTENSION_DIR}
