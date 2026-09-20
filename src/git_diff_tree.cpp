@@ -582,7 +582,36 @@ void RegisterGitDiffTreeFunction(ExtensionLoader &loader) {
 	git_diff_tree_three.named_parameters["untracked"] = LogicalType::BOOLEAN;
 	git_diff_tree_set.AddFunction(git_diff_tree_three);
 
-	loader.RegisterFunction(git_diff_tree_set);
+	CreateTableFunctionInfo info(std::move(git_diff_tree_set));
+	info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+	FunctionDescription desc0;
+	desc0.parameter_names = {};
+	desc0.description = "Show diff of working tree changes in current repository.";
+	desc0.examples = {"SELECT * FROM git_diff_tree()"};
+	desc0.categories = {"git"};
+	info.descriptions.push_back(desc0);
+
+	FunctionDescription desc1;
+	desc1.parameter_names = {"repo_path"};
+	desc1.description = "Show diff of working tree changes in specified repository.";
+	desc1.examples = {"SELECT * FROM git_diff_tree('.')"};
+	desc1.categories = {"git"};
+	info.descriptions.push_back(desc1);
+
+	FunctionDescription desc2;
+	desc2.parameter_names = {"repo_path", "ref"};
+	desc2.description = "Show diff against ref in specified repository.";
+	desc2.examples = {"SELECT * FROM git_diff_tree('.', 'HEAD')"};
+	desc2.categories = {"git"};
+	info.descriptions.push_back(desc2);
+
+	FunctionDescription desc3;
+	desc3.parameter_names = {"repo_path", "from_ref", "to_ref"};
+	desc3.description = "Show commit-to-commit diff between from_ref and to_ref.";
+	desc3.examples = {"SELECT * FROM git_diff_tree('.', 'HEAD~1', 'HEAD')"};
+	desc3.categories = {"git"};
+	info.descriptions.push_back(desc3);
+	loader.RegisterFunction(std::move(info));
 
 	// LATERAL: git_diff_tree_each
 	TableFunctionSet git_diff_tree_each_set("git_diff_tree_each");
@@ -608,7 +637,29 @@ void RegisterGitDiffTreeFunction(ExtensionLoader &loader) {
 	git_diff_tree_each_three.named_parameters["untracked"] = LogicalType::BOOLEAN;
 	git_diff_tree_each_set.AddFunction(git_diff_tree_each_three);
 
-	loader.RegisterFunction(git_diff_tree_each_set);
+	CreateTableFunctionInfo each_info(std::move(git_diff_tree_each_set));
+	each_info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+	FunctionDescription each_desc1;
+	each_desc1.parameter_names = {"repo_path"};
+	each_desc1.description = "LATERAL table function to show diff tree for input repo path.";
+	each_desc1.examples = {"SELECT * FROM repos, LATERAL git_diff_tree_each(path)"};
+	each_desc1.categories = {"git"};
+	each_info.descriptions.push_back(each_desc1);
+
+	FunctionDescription each_desc2;
+	each_desc2.parameter_names = {"repo_path", "ref"};
+	each_desc2.description = "LATERAL table function to show diff tree for input repo path against ref.";
+	each_desc2.examples = {"SELECT * FROM repos, LATERAL git_diff_tree_each(path, 'HEAD')"};
+	each_desc2.categories = {"git"};
+	each_info.descriptions.push_back(each_desc2);
+
+	FunctionDescription each_desc3;
+	each_desc3.parameter_names = {"repo_path", "from_ref", "to_ref"};
+	each_desc3.description = "LATERAL table function to show commit-to-commit diff tree.";
+	each_desc3.examples = {"SELECT * FROM pairs, LATERAL git_diff_tree_each(path, from_ref, to_ref)"};
+	each_desc3.categories = {"git"};
+	each_info.descriptions.push_back(each_desc3);
+	loader.RegisterFunction(std::move(each_info));
 }
 
 } // namespace duckdb

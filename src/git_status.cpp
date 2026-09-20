@@ -496,7 +496,22 @@ void RegisterGitStatusFunction(ExtensionLoader &loader) {
 	git_status_single.named_parameters["path"] = LogicalType::VARCHAR;
 	git_status_set.AddFunction(git_status_single);
 
-	loader.RegisterFunction(git_status_set);
+	CreateTableFunctionInfo info(std::move(git_status_set));
+	info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+	FunctionDescription desc0;
+	desc0.parameter_names = {};
+	desc0.description = "Show working tree status for current directory repository.";
+	desc0.examples = {"SELECT * FROM git_status()"};
+	desc0.categories = {"git"};
+	info.descriptions.push_back(desc0);
+
+	FunctionDescription desc1;
+	desc1.parameter_names = {"repo_path_or_uri"};
+	desc1.description = "Show working tree status for repository path or URI.";
+	desc1.examples = {"SELECT * FROM git_status('.')"};
+	desc1.categories = {"git"};
+	info.descriptions.push_back(desc1);
+	loader.RegisterFunction(std::move(info));
 
 	// LATERAL: git_status_each
 	TableFunctionSet git_status_each_set("git_status_each");
@@ -509,7 +524,15 @@ void RegisterGitStatusFunction(ExtensionLoader &loader) {
 	git_status_each_single.named_parameters["path"] = LogicalType::VARCHAR;
 	git_status_each_set.AddFunction(git_status_each_single);
 
-	loader.RegisterFunction(git_status_each_set);
+	CreateTableFunctionInfo each_info(std::move(git_status_each_set));
+	each_info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+	FunctionDescription each_desc;
+	each_desc.parameter_names = {"repo_path"};
+	each_desc.description = "LATERAL table function to show git working tree status for input repo path.";
+	each_desc.examples = {"SELECT * FROM repos, LATERAL git_status_each(path)"};
+	each_desc.categories = {"git"};
+	each_info.descriptions.push_back(each_desc);
+	loader.RegisterFunction(std::move(each_info));
 }
 
 } // namespace duckdb

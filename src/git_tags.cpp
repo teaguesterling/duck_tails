@@ -445,17 +445,36 @@ static OperatorResultType GitTagsEachFunction(ExecutionContext &context, TableFu
 //===--------------------------------------------------------------------===//
 
 void RegisterGitTagsFunction(ExtensionLoader &loader) {
-	// Single-argument version (existing)
-	TableFunction git_tags_func("git_tags", {LogicalType::VARCHAR}, GitTagsFunction, GitTagsBind, GitTagsInitGlobal);
-	git_tags_func.init_local = GitTagsLocalInit;
-	git_tags_func.named_parameters["repo_path"] = LogicalType::VARCHAR;
-	loader.RegisterFunction(git_tags_func);
+	TableFunctionSet git_tags_set("git_tags");
 
 	// Zero-argument version (defaults to current directory)
-	TableFunction git_tags_func_zero("git_tags", {}, GitTagsFunction, GitTagsBind, GitTagsInitGlobal);
+	TableFunction git_tags_func_zero({}, GitTagsFunction, GitTagsBind, GitTagsInitGlobal);
 	git_tags_func_zero.init_local = GitTagsLocalInit;
 	git_tags_func_zero.named_parameters["repo_path"] = LogicalType::VARCHAR;
-	loader.RegisterFunction(git_tags_func_zero);
+	git_tags_set.AddFunction(git_tags_func_zero);
+
+	// Single-argument version (existing)
+	TableFunction git_tags_func({LogicalType::VARCHAR}, GitTagsFunction, GitTagsBind, GitTagsInitGlobal);
+	git_tags_func.init_local = GitTagsLocalInit;
+	git_tags_func.named_parameters["repo_path"] = LogicalType::VARCHAR;
+	git_tags_set.AddFunction(git_tags_func);
+
+	CreateTableFunctionInfo info(std::move(git_tags_set));
+	info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+	FunctionDescription desc0;
+	desc0.parameter_names = {};
+	desc0.description = "List git tags from current directory repository.";
+	desc0.examples = {"SELECT * FROM git_tags()"};
+	desc0.categories = {"git"};
+	info.descriptions.push_back(desc0);
+
+	FunctionDescription desc1;
+	desc1.parameter_names = {"repo_path_or_uri"};
+	desc1.description = "List git tags from repository path or git:// URI.";
+	desc1.examples = {"SELECT * FROM git_tags('.')"};
+	desc1.categories = {"git"};
+	info.descriptions.push_back(desc1);
+	loader.RegisterFunction(std::move(info));
 
 	// LATERAL git_tags_each function (repository path comes from LATERAL context) - ONLY for dynamic input
 	TableFunctionSet git_tags_each_set("git_tags_each");
@@ -473,7 +492,22 @@ void RegisterGitTagsFunction(ExtensionLoader &loader) {
 	git_tags_each_two.named_parameters["repo_path"] = LogicalType::VARCHAR;
 	git_tags_each_set.AddFunction(git_tags_each_two);
 
-	loader.RegisterFunction(git_tags_each_set);
+	CreateTableFunctionInfo each_info(std::move(git_tags_each_set));
+	each_info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+	FunctionDescription each_desc1;
+	each_desc1.parameter_names = {"repo_path"};
+	each_desc1.description = "LATERAL table function to list git tags for input repository path.";
+	each_desc1.examples = {"SELECT * FROM repos, LATERAL git_tags_each(path)"};
+	each_desc1.categories = {"git"};
+	each_info.descriptions.push_back(each_desc1);
+
+	FunctionDescription each_desc2;
+	each_desc2.parameter_names = {"repo_path", "repo_path_alias"};
+	each_desc2.description = "LATERAL table function to list git tags for input repository path.";
+	each_desc2.examples = {"SELECT * FROM repos, LATERAL git_tags_each(path, path)"};
+	each_desc2.categories = {"git"};
+	each_info.descriptions.push_back(each_desc2);
+	loader.RegisterFunction(std::move(each_info));
 }
 
 } // namespace duckdb

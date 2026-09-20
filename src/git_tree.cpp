@@ -881,7 +881,36 @@ void RegisterGitTreeFunction(ExtensionLoader &loader) {
 	git_tree_zero.named_parameters["untracked"] = LogicalType::BOOLEAN;
 	git_tree_set.AddFunction(git_tree_zero);
 
-	loader.RegisterFunction(git_tree_set);
+	CreateTableFunctionInfo info(std::move(git_tree_set));
+	info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+	FunctionDescription desc0;
+	desc0.parameter_names = {"repo_path_or_uri"};
+	desc0.description = "List files in git tree for repository path or URI.";
+	desc0.examples = {"SELECT * FROM git_tree('.')"};
+	desc0.categories = {"git"};
+	info.descriptions.push_back(desc0);
+
+	FunctionDescription desc1;
+	desc1.parameter_names = {"repo_path_or_uri", "ref"};
+	desc1.description = "List files in git tree for repository path or URI at specified ref.";
+	desc1.examples = {"SELECT * FROM git_tree('.', 'HEAD')"};
+	desc1.categories = {"git"};
+	info.descriptions.push_back(desc1);
+
+	FunctionDescription desc2;
+	desc2.parameter_names = {"array"};
+	desc2.description = "List files in git tree for list of commits or trees.";
+	desc2.examples = {"SELECT * FROM git_tree(['HEAD'])"};
+	desc2.categories = {"git"};
+	info.descriptions.push_back(desc2);
+
+	FunctionDescription desc3;
+	desc3.parameter_names = {};
+	desc3.description = "List files in git tree for current directory repository at HEAD.";
+	desc3.examples = {"SELECT * FROM git_tree()"};
+	desc3.categories = {"git"};
+	info.descriptions.push_back(desc3);
+	loader.RegisterFunction(std::move(info));
 
 	// LATERAL git_tree_each function (commit ref comes from LATERAL context) - ONLY for dynamic input
 	TableFunctionSet git_tree_each_set("git_tree_each");
@@ -899,7 +928,22 @@ void RegisterGitTreeFunction(ExtensionLoader &loader) {
 	git_tree_each_two.named_parameters["array"] = LogicalType::LIST(LogicalType::VARCHAR);
 	git_tree_each_set.AddFunction(git_tree_each_two);
 
-	loader.RegisterFunction(git_tree_each_set);
+	CreateTableFunctionInfo each_info(std::move(git_tree_each_set));
+	each_info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+	FunctionDescription each_desc1;
+	each_desc1.parameter_names = {"repo_path"};
+	each_desc1.description = "LATERAL table function to list git tree files for input repo path.";
+	each_desc1.examples = {"SELECT * FROM repos, LATERAL git_tree_each(path)"};
+	each_desc1.categories = {"git"};
+	each_info.descriptions.push_back(each_desc1);
+
+	FunctionDescription each_desc2;
+	each_desc2.parameter_names = {"repo_path", "ref"};
+	each_desc2.description = "LATERAL table function to list git tree files for input repo path at ref.";
+	each_desc2.examples = {"SELECT * FROM repos, LATERAL git_tree_each(path, 'HEAD')"};
+	each_desc2.categories = {"git"};
+	each_info.descriptions.push_back(each_desc2);
+	loader.RegisterFunction(std::move(each_info));
 }
 
 } // namespace duckdb

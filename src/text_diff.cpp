@@ -9,6 +9,8 @@
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/common/file_system.hpp"
 #include "duckdb/common/file_opener.hpp"
+#include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
+#include "duckdb/parser/parsed_data/create_table_function_info.hpp"
 #include <algorithm>
 #include <cstring>
 #include <sstream>
@@ -764,12 +766,32 @@ void RegisterTextDiffType(ExtensionLoader &loader) {
 	// Register text_diff function
 	auto text_diff_func = ScalarFunction("text_diff", {LogicalType::VARCHAR, LogicalType::VARCHAR},
 	                                     LogicalType::VARCHAR, TextDiffFunction);
-	loader.RegisterFunction(text_diff_func);
+	{
+		CreateScalarFunctionInfo info(std::move(text_diff_func));
+		info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+		FunctionDescription desc;
+		desc.parameter_names = {"old_text", "new_text"};
+		desc.description = "Compute unified diff between two text strings.";
+		desc.examples = {"text_diff('old text', 'new text')"};
+		desc.categories = {"git"};
+		info.descriptions.push_back(desc);
+		loader.RegisterFunction(std::move(info));
+	}
 
 	// Register diff_text function (Phase 2 main function)
 	auto diff_text_func = ScalarFunction("diff_text", {LogicalType::VARCHAR, LogicalType::VARCHAR},
 	                                     LogicalType::VARCHAR, DiffTextFunction);
-	loader.RegisterFunction(diff_text_func);
+	{
+		CreateScalarFunctionInfo info(std::move(diff_text_func));
+		info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+		FunctionDescription desc;
+		desc.parameter_names = {"old_text", "new_text"};
+		desc.description = "Compute unified diff between two text strings.";
+		desc.examples = {"diff_text('old text', 'new text')"};
+		desc.categories = {"git"};
+		info.descriptions.push_back(desc);
+		loader.RegisterFunction(std::move(info));
+	}
 
 	// Register text_diff_stats: over a diff the caller already has, and over the
 	// pair of texts to diff first.
@@ -777,23 +799,67 @@ void RegisterTextDiffType(ExtensionLoader &loader) {
 	stats_set.AddFunction(ScalarFunction({LogicalType::VARCHAR}, TextDiffStatsType(), TextDiffStatsFunction));
 	stats_set.AddFunction(
 	    ScalarFunction({LogicalType::VARCHAR, LogicalType::VARCHAR}, TextDiffStatsType(), TextDiffStatsPairFunction));
-	loader.RegisterFunction(stats_set);
+	{
+		CreateScalarFunctionInfo info(std::move(stats_set));
+		info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+		FunctionDescription desc1;
+		desc1.parameter_names = {"diff_text"};
+		desc1.description = "Calculate statistics (lines added, removed, modified) for a diff string.";
+		desc1.examples = {"text_diff_stats('@@ -1 +1 @@\n-old\n+new')"};
+		desc1.categories = {"git"};
+		info.descriptions.push_back(desc1);
+
+		FunctionDescription desc2;
+		desc2.parameter_names = {"old_text", "new_text"};
+		desc2.description = "Calculate diff statistics between two text strings.";
+		desc2.examples = {"text_diff_stats('old', 'new')"};
+		desc2.categories = {"git"};
+		info.descriptions.push_back(desc2);
+		loader.RegisterFunction(std::move(info));
+	}
 
 	// Register text_diff_lines table function
 	TableFunction lines_func("text_diff_lines", {LogicalType::VARCHAR}, TextDiffLinesFunction, TextDiffLinesBind,
 	                         TextDiffLinesInit);
-	loader.RegisterFunction(lines_func);
+	{
+		CreateTableFunctionInfo info(std::move(lines_func));
+		info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+		FunctionDescription desc;
+		desc.parameter_names = {"diff_text"};
+		desc.description = "Parse diff string into rows of individual line changes.";
+		desc.examples = {"SELECT * FROM text_diff_lines('@@ -1 +1 @@\n-old\n+new')"};
+		desc.categories = {"git"};
+		info.descriptions.push_back(desc);
+		loader.RegisterFunction(std::move(info));
+	}
 
 	// Register read_git_diff table function (Phase 2 main function)
-	// Single-argument version
-	TableFunction read_git_diff_func_1("read_git_diff", {LogicalType::VARCHAR}, ReadGitDiffFunction, ReadGitDiffBind,
-	                                   ReadGitDiffInit);
-	loader.RegisterFunction(read_git_diff_func_1);
+	TableFunctionSet read_diff_set("read_git_diff");
+	TableFunction read_git_diff_func_1({LogicalType::VARCHAR}, ReadGitDiffFunction, ReadGitDiffBind, ReadGitDiffInit);
+	read_diff_set.AddFunction(read_git_diff_func_1);
 
-	// Two-argument version
-	TableFunction read_git_diff_func_2("read_git_diff", {LogicalType::VARCHAR, LogicalType::VARCHAR},
-	                                   ReadGitDiffFunction, ReadGitDiffBind, ReadGitDiffInit);
-	loader.RegisterFunction(read_git_diff_func_2);
+	TableFunction read_git_diff_func_2({LogicalType::VARCHAR, LogicalType::VARCHAR}, ReadGitDiffFunction,
+	                                   ReadGitDiffBind, ReadGitDiffInit);
+	read_diff_set.AddFunction(read_git_diff_func_2);
+
+	{
+		CreateTableFunctionInfo info(std::move(read_diff_set));
+		info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+		FunctionDescription desc1;
+		desc1.parameter_names = {"repo_path_or_uri"};
+		desc1.description = "Read git diff from repository path or git:// URI.";
+		desc1.examples = {"SELECT * FROM read_git_diff('.')"};
+		desc1.categories = {"git"};
+		info.descriptions.push_back(desc1);
+
+		FunctionDescription desc2;
+		desc2.parameter_names = {"path1", "path2"};
+		desc2.description = "Read git diff between two files or URIs.";
+		desc2.examples = {"SELECT * FROM read_git_diff('file1.txt', 'file2.txt')"};
+		desc2.categories = {"git"};
+		info.descriptions.push_back(desc2);
+		loader.RegisterFunction(std::move(info));
+	}
 }
 
 } // namespace duckdb
