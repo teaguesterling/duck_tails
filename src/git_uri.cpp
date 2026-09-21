@@ -8,6 +8,8 @@
 #include "duckdb/function/scalar_function.hpp"
 #include "duckdb/common/vector_operations/vector_operations.hpp"
 
+#include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
+
 namespace duckdb {
 
 //===--------------------------------------------------------------------===//
@@ -110,7 +112,15 @@ static void GitUriFunction(DataChunk &args, ExpressionState &state, Vector &resu
 void RegisterGitUriFunction(ExtensionLoader &loader) {
 	auto git_uri_func = ScalarFunction("git_uri", {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR},
 	                                   LogicalType::VARCHAR, GitUriFunction);
-	loader.RegisterFunction(git_uri_func);
+	CreateScalarFunctionInfo info(std::move(git_uri_func));
+	info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+	FunctionDescription desc;
+	desc.parameter_names = {"repo_path", "file_path", "commit_ref"};
+	desc.description = "Construct a canonical git:// URI from repo path, file path, and commit ref.";
+	desc.examples = {"git_uri('.', 'README.md', 'HEAD')"};
+	desc.categories = {"git"};
+	info.descriptions.push_back(desc);
+	loader.RegisterFunction(std::move(info));
 }
 
 } // namespace duckdb

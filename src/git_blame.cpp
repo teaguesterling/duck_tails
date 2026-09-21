@@ -8,6 +8,7 @@
 #include "duckdb/main/extension/extension_loader.hpp"
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/function/function_set.hpp"
+#include "duckdb/parser/parsed_data/create_table_function_info.hpp"
 #include "duckdb/common/exception.hpp"
 
 #include <git2.h>
@@ -764,14 +765,32 @@ void RegisterGitBlameFunction(ExtensionLoader &loader) {
 	hunks_one.init_local = GitBlameLocalInit;
 	declare_named_params(hunks_one);
 	git_blame_hunks_set.AddFunction(hunks_one);
-	loader.RegisterFunction(git_blame_hunks_set);
+
+	CreateTableFunctionInfo hunks_info(std::move(git_blame_hunks_set));
+	hunks_info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+	FunctionDescription hunks_desc;
+	hunks_desc.parameter_names = {"file_path_or_uri"};
+	hunks_desc.description = "Show git blame hunk annotations for a file.";
+	hunks_desc.examples = {"SELECT * FROM git_blame_hunks('README.md')"};
+	hunks_desc.categories = {"git"};
+	hunks_info.descriptions.push_back(hunks_desc);
+	loader.RegisterFunction(std::move(hunks_info));
 
 	TableFunctionSet git_blame_set("git_blame");
 	TableFunction blame_one({LogicalType::VARCHAR}, GitBlameFunction, GitBlameBind, GitBlameInitGlobal);
 	blame_one.init_local = GitBlameLocalInit;
 	declare_named_params(blame_one);
 	git_blame_set.AddFunction(blame_one);
-	loader.RegisterFunction(git_blame_set);
+
+	CreateTableFunctionInfo blame_info(std::move(git_blame_set));
+	blame_info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+	FunctionDescription blame_desc;
+	blame_desc.parameter_names = {"file_path_or_uri"};
+	blame_desc.description = "Show line-by-line git blame annotations for a file.";
+	blame_desc.examples = {"SELECT * FROM git_blame('README.md')"};
+	blame_desc.categories = {"git"};
+	blame_info.descriptions.push_back(blame_desc);
+	loader.RegisterFunction(std::move(blame_info));
 
 	auto declare_lateral_params = [](TableFunction &fn) {
 		fn.named_parameters["revision"] = LogicalType::VARCHAR;
@@ -795,7 +814,22 @@ void RegisterGitBlameFunction(ExtensionLoader &loader) {
 	declare_lateral_params(hunks_each_two);
 	git_blame_hunks_each_set.AddFunction(hunks_each_two);
 
-	loader.RegisterFunction(git_blame_hunks_each_set);
+	CreateTableFunctionInfo hunks_each_info(std::move(git_blame_hunks_each_set));
+	hunks_each_info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+	FunctionDescription hunks_each_desc1;
+	hunks_each_desc1.parameter_names = {"file_path"};
+	hunks_each_desc1.description = "LATERAL table function to show git blame hunk annotations.";
+	hunks_each_desc1.examples = {"SELECT * FROM files, LATERAL git_blame_hunks_each(path)"};
+	hunks_each_desc1.categories = {"git"};
+	hunks_each_info.descriptions.push_back(hunks_each_desc1);
+
+	FunctionDescription hunks_each_desc2;
+	hunks_each_desc2.parameter_names = {"file_path", "repo_path"};
+	hunks_each_desc2.description = "LATERAL table function to show git blame hunk annotations.";
+	hunks_each_desc2.examples = {"SELECT * FROM files, LATERAL git_blame_hunks_each(path, repo)"};
+	hunks_each_desc2.categories = {"git"};
+	hunks_each_info.descriptions.push_back(hunks_each_desc2);
+	loader.RegisterFunction(std::move(hunks_each_info));
 
 	TableFunctionSet git_blame_each_set("git_blame_each");
 	TableFunction blame_each_one({LogicalType::VARCHAR}, nullptr, GitBlameEachBind, GitBlameInitGlobal,
@@ -810,7 +844,22 @@ void RegisterGitBlameFunction(ExtensionLoader &loader) {
 	declare_lateral_params(blame_each_two);
 	git_blame_each_set.AddFunction(blame_each_two);
 
-	loader.RegisterFunction(git_blame_each_set);
+	CreateTableFunctionInfo blame_each_info(std::move(git_blame_each_set));
+	blame_each_info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+	FunctionDescription blame_each_desc1;
+	blame_each_desc1.parameter_names = {"file_path"};
+	blame_each_desc1.description = "LATERAL table function to show line-by-line git blame annotations.";
+	blame_each_desc1.examples = {"SELECT * FROM files, LATERAL git_blame_each(path)"};
+	blame_each_desc1.categories = {"git"};
+	blame_each_info.descriptions.push_back(blame_each_desc1);
+
+	FunctionDescription blame_each_desc2;
+	blame_each_desc2.parameter_names = {"file_path", "repo_path"};
+	blame_each_desc2.description = "LATERAL table function to show line-by-line git blame annotations.";
+	blame_each_desc2.examples = {"SELECT * FROM files, LATERAL git_blame_each(path, repo)"};
+	blame_each_desc2.categories = {"git"};
+	blame_each_info.descriptions.push_back(blame_each_desc2);
+	loader.RegisterFunction(std::move(blame_each_info));
 }
 
 } // namespace duckdb

@@ -8,6 +8,7 @@
 #include "duckdb/main/extension/extension_loader.hpp"
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/function/function_set.hpp"
+#include "duckdb/parser/parsed_data/create_table_function_info.hpp"
 #include "duckdb/common/exception.hpp"
 
 #include <git2.h>
@@ -335,27 +336,52 @@ unique_ptr<FunctionData> GitParentsEachBind(ClientContext &context, TableFunctio
 }
 
 void RegisterGitParentsFunction(ExtensionLoader &loader) {
-	// Single-argument version (ref)
-	TableFunction git_parents_func("git_parents", {LogicalType::VARCHAR}, GitParentsFunction, GitParentsBind,
-	                               GitParentsInitGlobal);
-	git_parents_func.init_local = GitParentsLocalInit;
-	git_parents_func.named_parameters["repo_path"] = LogicalType::VARCHAR;
-	git_parents_func.named_parameters["all_refs"] = LogicalType::BOOLEAN;
-	loader.RegisterFunction(git_parents_func);
-
-	// Two-argument version (repo_path_or_uri, ref)
-	TableFunction git_parents_two("git_parents", {LogicalType::VARCHAR, LogicalType::VARCHAR}, GitParentsFunction,
-	                              GitParentsBind, GitParentsInitGlobal);
-	git_parents_two.init_local = GitParentsLocalInit;
-	git_parents_two.named_parameters["all_refs"] = LogicalType::BOOLEAN;
-	loader.RegisterFunction(git_parents_two);
+	TableFunctionSet git_parents_set("git_parents");
 
 	// Zero-argument version (defaults to HEAD and current directory)
-	TableFunction git_parents_zero("git_parents", {}, GitParentsFunction, GitParentsBind, GitParentsInitGlobal);
+	TableFunction git_parents_zero({}, GitParentsFunction, GitParentsBind, GitParentsInitGlobal);
 	git_parents_zero.init_local = GitParentsLocalInit;
 	git_parents_zero.named_parameters["repo_path"] = LogicalType::VARCHAR;
 	git_parents_zero.named_parameters["all_refs"] = LogicalType::BOOLEAN;
-	loader.RegisterFunction(git_parents_zero);
+	git_parents_set.AddFunction(git_parents_zero);
+
+	// Single-argument version (ref)
+	TableFunction git_parents_func({LogicalType::VARCHAR}, GitParentsFunction, GitParentsBind, GitParentsInitGlobal);
+	git_parents_func.init_local = GitParentsLocalInit;
+	git_parents_func.named_parameters["repo_path"] = LogicalType::VARCHAR;
+	git_parents_func.named_parameters["all_refs"] = LogicalType::BOOLEAN;
+	git_parents_set.AddFunction(git_parents_func);
+
+	// Two-argument version (repo_path_or_uri, ref)
+	TableFunction git_parents_two({LogicalType::VARCHAR, LogicalType::VARCHAR}, GitParentsFunction, GitParentsBind,
+	                              GitParentsInitGlobal);
+	git_parents_two.init_local = GitParentsLocalInit;
+	git_parents_two.named_parameters["all_refs"] = LogicalType::BOOLEAN;
+	git_parents_set.AddFunction(git_parents_two);
+
+	CreateTableFunctionInfo info(std::move(git_parents_set));
+	info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+	FunctionDescription desc0;
+	desc0.parameter_names = {};
+	desc0.description = "List parent commits for HEAD in current repository.";
+	desc0.examples = {"SELECT * FROM git_parents()"};
+	desc0.categories = {"git"};
+	info.descriptions.push_back(desc0);
+
+	FunctionDescription desc1;
+	desc1.parameter_names = {"ref"};
+	desc1.description = "List parent commits for a given commit ref.";
+	desc1.examples = {"SELECT * FROM git_parents('HEAD')"};
+	desc1.categories = {"git"};
+	info.descriptions.push_back(desc1);
+
+	FunctionDescription desc2;
+	desc2.parameter_names = {"repo_path_or_uri", "ref"};
+	desc2.description = "List parent commits for a commit ref in a specified repository.";
+	desc2.examples = {"SELECT * FROM git_parents('.', 'HEAD')"};
+	desc2.categories = {"git"};
+	info.descriptions.push_back(desc2);
+	loader.RegisterFunction(std::move(info));
 
 	// LATERAL git_parents_each function
 	TableFunctionSet git_parents_each_set("git_parents_each");
@@ -373,7 +399,22 @@ void RegisterGitParentsFunction(ExtensionLoader &loader) {
 	git_parents_each_two.in_out_function = GitParentsEachFunction;
 	git_parents_each_set.AddFunction(git_parents_each_two);
 
-	loader.RegisterFunction(git_parents_each_set);
+	CreateTableFunctionInfo each_info(std::move(git_parents_each_set));
+	each_info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+	FunctionDescription each_desc1;
+	each_desc1.parameter_names = {"commit_ref"};
+	each_desc1.description = "LATERAL table function to list parent commits.";
+	each_desc1.examples = {"SELECT * FROM commits, LATERAL git_parents_each(hash)"};
+	each_desc1.categories = {"git"};
+	each_info.descriptions.push_back(each_desc1);
+
+	FunctionDescription each_desc2;
+	each_desc2.parameter_names = {"commit_ref", "repo_path"};
+	each_desc2.description = "LATERAL table function to list parent commits.";
+	each_desc2.examples = {"SELECT * FROM commits, LATERAL git_parents_each(hash, repo)"};
+	each_desc2.categories = {"git"};
+	each_info.descriptions.push_back(each_desc2);
+	loader.RegisterFunction(std::move(each_info));
 }
 
 } // namespace duckdb

@@ -460,33 +460,50 @@ unique_ptr<FunctionData> GitLogEachBind(ClientContext &context, TableFunctionBin
 }
 
 void RegisterGitLogFunction(ExtensionLoader &loader) {
+	TableFunctionSet git_log_set("git_log");
+
+	// Zero-argument version (defaults to current directory)
+	TableFunction git_log_func_zero({}, GitLogFunction, GitLogBind, GitLogInitGlobal);
+	git_log_func_zero.init_local = GitLogLocalInit;
+	git_log_func_zero.named_parameters["repo_path"] = LogicalType::VARCHAR;
+	git_log_set.AddFunction(git_log_func_zero);
+
 	// Single-argument version (existing)
-	TableFunction git_log_func("git_log", {LogicalType::VARCHAR}, GitLogFunction, GitLogBind, GitLogInitGlobal);
+	TableFunction git_log_func({LogicalType::VARCHAR}, GitLogFunction, GitLogBind, GitLogInitGlobal);
 	git_log_func.init_local = GitLogLocalInit;
 	git_log_func.named_parameters["repo_path"] = LogicalType::VARCHAR;
-	loader.RegisterFunction(git_log_func);
+	git_log_set.AddFunction(git_log_func);
 
 	// Two-argument version: git_log(repo_path_or_uri, ref).
-	//
-	// GitLogBind has always read a ref from argument index 1 -- resolving it,
-	// refusing it when the git:// URI already carries one, and walking history from
-	// it -- but no overload taking a second positional argument was ever
-	// registered, so that branch was unreachable and the comment above it described
-	// a parameter the function did not accept. docs/db.md published
-	// git_log('.', b.branch_name), which raised a Binder Error as written (#52).
-	// Registering the overload makes the ref a real argument, rather than deleting
-	// a working implementation of one.
-	TableFunction git_log_func_ref("git_log", {LogicalType::VARCHAR, LogicalType::VARCHAR}, GitLogFunction, GitLogBind,
+	TableFunction git_log_func_ref({LogicalType::VARCHAR, LogicalType::VARCHAR}, GitLogFunction, GitLogBind,
 	                               GitLogInitGlobal);
 	git_log_func_ref.init_local = GitLogLocalInit;
 	git_log_func_ref.named_parameters["repo_path"] = LogicalType::VARCHAR;
-	loader.RegisterFunction(git_log_func_ref);
+	git_log_set.AddFunction(git_log_func_ref);
 
-	// Zero-argument version (defaults to current directory)
-	TableFunction git_log_func_zero("git_log", {}, GitLogFunction, GitLogBind, GitLogInitGlobal);
-	git_log_func_zero.init_local = GitLogLocalInit;
-	git_log_func_zero.named_parameters["repo_path"] = LogicalType::VARCHAR;
-	loader.RegisterFunction(git_log_func_zero);
+	CreateTableFunctionInfo info(std::move(git_log_set));
+	info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+	FunctionDescription desc0;
+	desc0.parameter_names = {};
+	desc0.description = "Read git commit log from current directory.";
+	desc0.examples = {"SELECT * FROM git_log()"};
+	desc0.categories = {"git"};
+	info.descriptions.push_back(desc0);
+
+	FunctionDescription desc1;
+	desc1.parameter_names = {"repo_path_or_uri"};
+	desc1.description = "Read git commit log from repository path or git:// URI.";
+	desc1.examples = {"SELECT * FROM git_log('.')"};
+	desc1.categories = {"git"};
+	info.descriptions.push_back(desc1);
+
+	FunctionDescription desc2;
+	desc2.parameter_names = {"repo_path_or_uri", "ref"};
+	desc2.description = "Read git commit log from repository path or URI starting at ref.";
+	desc2.examples = {"SELECT * FROM git_log('.', 'HEAD')"};
+	desc2.categories = {"git"};
+	info.descriptions.push_back(desc2);
+	loader.RegisterFunction(std::move(info));
 
 	// LATERAL git_log_each function (commit ref comes from LATERAL context) - ONLY for dynamic input
 	TableFunctionSet git_log_each_set("git_log_each");
@@ -504,7 +521,22 @@ void RegisterGitLogFunction(ExtensionLoader &loader) {
 	git_log_each_two.named_parameters["repo_path"] = LogicalType::VARCHAR;
 	git_log_each_set.AddFunction(git_log_each_two);
 
-	loader.RegisterFunction(git_log_each_set);
+	CreateTableFunctionInfo each_info(std::move(git_log_each_set));
+	each_info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+	FunctionDescription each_desc1;
+	each_desc1.parameter_names = {"repo_path"};
+	each_desc1.description = "LATERAL table function to read git log for input repo path.";
+	each_desc1.examples = {"SELECT * FROM repos, LATERAL git_log_each(path)"};
+	each_desc1.categories = {"git"};
+	each_info.descriptions.push_back(each_desc1);
+
+	FunctionDescription each_desc2;
+	each_desc2.parameter_names = {"repo_path", "ref"};
+	each_desc2.description = "LATERAL table function to read git log for input repo path at ref.";
+	each_desc2.examples = {"SELECT * FROM repos, LATERAL git_log_each(path, 'HEAD')"};
+	each_desc2.categories = {"git"};
+	each_info.descriptions.push_back(each_desc2);
+	loader.RegisterFunction(std::move(each_info));
 }
 
 } // namespace duckdb

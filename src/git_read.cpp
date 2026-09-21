@@ -935,7 +935,44 @@ void RegisterGitReadFunction(ExtensionLoader &loader) {
 	git_read_5.named_parameters["repo_path"] = LogicalType::VARCHAR;
 	git_read_set.AddFunction(git_read_5);
 
-	loader.RegisterFunction(git_read_set);
+	CreateTableFunctionInfo info(std::move(git_read_set));
+	info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+	FunctionDescription desc1;
+	desc1.parameter_names = {"repo_path_or_uri_with_file"};
+	desc1.description = "Read git blob contents from a file path or git:// URI.";
+	desc1.examples = {"SELECT * FROM git_read('git://./README.md#HEAD')"};
+	desc1.categories = {"git"};
+	info.descriptions.push_back(desc1);
+
+	FunctionDescription desc2;
+	desc2.parameter_names = {"repo_path_or_uri_with_file", "max_bytes"};
+	desc2.description = "Read git blob contents up to max_bytes from a file path or git:// URI.";
+	desc2.examples = {"SELECT * FROM git_read('git://./README.md#HEAD', 1024)"};
+	desc2.categories = {"git"};
+	info.descriptions.push_back(desc2);
+
+	FunctionDescription desc3;
+	desc3.parameter_names = {"repo_path_or_uri_with_file", "max_bytes", "ref"};
+	desc3.description = "Read git blob contents from a file path or URI at specified ref.";
+	desc3.examples = {"SELECT * FROM git_read('README.md', 1024, 'HEAD')"};
+	desc3.categories = {"git"};
+	info.descriptions.push_back(desc3);
+
+	FunctionDescription desc4;
+	desc4.parameter_names = {"repo_path_or_uri_with_file", "max_bytes", "ref", "decode_base64"};
+	desc4.description = "Read git blob contents with base64 decoding options.";
+	desc4.examples = {"SELECT * FROM git_read('README.md', 1024, 'HEAD', 'auto')"};
+	desc4.categories = {"git"};
+	info.descriptions.push_back(desc4);
+
+	FunctionDescription desc5;
+	desc5.parameter_names = {"repo_path_or_uri_with_file", "max_bytes", "ref", "decode_base64", "transcode"};
+	desc5.description = "Read git blob contents with base64 and transcoding options.";
+	desc5.examples = {"SELECT * FROM git_read('README.md', 1024, 'HEAD', 'auto', 'utf-8')"};
+	desc5.categories = {"git"};
+	info.descriptions.push_back(desc5);
+
+	loader.RegisterFunction(std::move(info));
 
 	// git_read_each is ONLY for LATERAL joins - first param comes from LATERAL context
 	// For direct calls, use git_read instead
@@ -979,7 +1016,44 @@ void RegisterGitReadFunction(ExtensionLoader &loader) {
 	git_read_each_5.in_out_function = GitReadEachFunction;
 	git_read_each_set.AddFunction(git_read_each_5);
 
-	loader.RegisterFunction(git_read_each_set);
+	CreateTableFunctionInfo each_info(std::move(git_read_each_set));
+	each_info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+	FunctionDescription each_desc1;
+	each_desc1.parameter_names = {"repo_path_or_uri_with_file"};
+	each_desc1.description = "LATERAL table function to read git blob contents.";
+	each_desc1.examples = {"SELECT * FROM files, LATERAL git_read_each(uri)"};
+	each_desc1.categories = {"git"};
+	each_info.descriptions.push_back(each_desc1);
+
+	FunctionDescription each_desc2;
+	each_desc2.parameter_names = {"repo_path_or_uri_with_file", "ref"};
+	each_desc2.description = "LATERAL table function to read git blob contents at ref.";
+	each_desc2.examples = {"SELECT * FROM files, LATERAL git_read_each(path, ref)"};
+	each_desc2.categories = {"git"};
+	each_info.descriptions.push_back(each_desc2);
+
+	FunctionDescription each_desc3;
+	each_desc3.parameter_names = {"repo_path_or_uri_with_file", "ref", "max_bytes"};
+	each_desc3.description = "LATERAL table function to read git blob contents up to max_bytes.";
+	each_desc3.examples = {"SELECT * FROM files, LATERAL git_read_each(path, ref, 1024)"};
+	each_desc3.categories = {"git"};
+	each_info.descriptions.push_back(each_desc3);
+
+	FunctionDescription each_desc4;
+	each_desc4.parameter_names = {"repo_path_or_uri_with_file", "ref", "max_bytes", "decode_base64"};
+	each_desc4.description = "LATERAL table function to read git blob contents with base64 decoding.";
+	each_desc4.examples = {"SELECT * FROM files, LATERAL git_read_each(path, ref, 1024, 'auto')"};
+	each_desc4.categories = {"git"};
+	each_info.descriptions.push_back(each_desc4);
+
+	FunctionDescription each_desc5;
+	each_desc5.parameter_names = {"repo_path_or_uri_with_file", "ref", "max_bytes", "decode_base64", "transcode"};
+	each_desc5.description = "LATERAL table function to read git blob contents with base64 and transcoding.";
+	each_desc5.examples = {"SELECT * FROM files, LATERAL git_read_each(path, ref, 1024, 'auto', 'utf-8')"};
+	each_desc5.categories = {"git"};
+	each_info.descriptions.push_back(each_desc5);
+
+	loader.RegisterFunction(std::move(each_info));
 }
 
 } // namespace duckdb
