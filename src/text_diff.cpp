@@ -933,7 +933,8 @@ void RegisterTextDiffType(ExtensionLoader &loader) {
 		desc1.description = "Parse a diff into a list of line changes, one struct per line "
 		                    "(line_type, content, line_number). Unlike the text_diff_lines table "
 		                    "function, this composes with per-row values such as read_git_diff() output.";
-		desc1.examples = {"SELECT unnest(diff_lines(diff_text), recursive := true) FROM read_git_diff('git://README.md')"};
+		desc1.examples = {
+		    "SELECT unnest(diff_lines(diff_text), recursive := true) FROM read_git_diff('git://README.md')"};
 		desc1.categories = {"git"};
 		info.descriptions.push_back(desc1);
 		FunctionDescription desc2;
