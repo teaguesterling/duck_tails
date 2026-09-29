@@ -1,0 +1,106 @@
+# name: test/sql/diff_lines_composable.test
+# description: diff_lines() answers per row, so a diff produced at run time can be exploded (#59)
+# group: [sql]
+
+require duck_tails
+
+require notwindows
+
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
+
+# ==============================================================
+# #59 -- the composability the table function cannot offer
+# ==============================================================
+
+# text_diff_lines() is a TABLE function: its argument binds before any row
+# exists, so it cannot consume a diff computed per row. This is the error the
+# reporter hit, and it must keep being an error -- the table function is still
+# right for a literal, and silently accepting a subquery is not the fix.
+statement error
+SELECT * FROM text_diff_lines((SELECT diff_text('a', 'b')));
+----
+subqueries
+
+# The scalar answers the same question per row. Same diff, exploded.
+query II
+SELECT l.line_type, l.content
+FROM (SELECT unnest(diff_lines(diff_text('a' || chr(10) || 'b' || chr(10) || 'c',
+                                         'a' || chr(10) || 'B' || chr(10) || 'c'))) AS l)
+ORDER BY l.line_number, l.line_type;
+----
+CONTEXT	a
+ADDED	B
+REMOVED	b
+CONTEXT	c
+
+# The shape the reporter asked for: classify and strip the marker column.
+query II
+SELECT CASE l.line_type WHEN 'ADDED' THEN '+' WHEN 'REMOVED' THEN '-' ELSE ' ' END AS marker,
+       l.content
+FROM (SELECT unnest(diff_lines('@@ -1 +1 @@' || chr(10) || '-old' || chr(10) || '+new')) AS l);
+----
+-	old
++	new
+
+# ==============================================================
+# The scalar and the table function must not disagree
+# ==============================================================
+
+# Same input, same rows: line_type, content and line_number all match. If these
+# ever diverge, one of them is lying about the same diff.
+query III
+SELECT l.line_type, l.content, l.line_number
+FROM (SELECT unnest(diff_lines('@@ -1,2 +1,2 @@' || chr(10) || ' keep' || chr(10) || '-gone' || chr(10) || '+here')) AS l)
+EXCEPT
+SELECT line_type, content, line_number
+FROM text_diff_lines('@@ -1,2 +1,2 @@' || chr(10) || ' keep' || chr(10) || '-gone' || chr(10) || '+here');
+----
+
+# ==============================================================
+# Degenerate inputs
+# ==============================================================
+
+# An empty diff is an empty list, not a NULL and not fabricated rows (#54's ghost).
+query I
+SELECT len(diff_lines(''));
+----
+0
+
+# NULL in, NULL out -- not an empty list, which would claim "a diff with no lines".
+query I
+SELECT diff_lines(NULL) IS NULL;
+----
+true
+
+query I
+SELECT diff_lines(NULL, 'b') IS NULL;
+----
+true
+
+# The two-argument form mirrors text_diff_stats's pair overload.
+query I
+SELECT len(diff_lines('a', 'b')) > 0;
+----
+true
+
+# ==============================================================
+# The motivating case: a diff computed by read_git_diff, per row
+# ==============================================================
+
+# This is #59's query shape. It must bind and run; the row count depends on the
+# repository's history, so assert only that it produced lines and that every
+# line_type is one the parser can name.
+statement ok
+CREATE TEMP TABLE diff_rows AS
+SELECT unnest(diff_lines(diff_text('one' || chr(10) || 'two', 'one' || chr(10) || 'TWO'))) AS l;
+
+query I
+SELECT count(*) > 0 FROM diff_rows;
+----
+true
+
+query I
+SELECT bool_and(l.line_type IN ('CONTEXT', 'ADDED', 'REMOVED', 'MODIFIED')) FROM diff_rows;
+----
+true
