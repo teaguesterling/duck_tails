@@ -35,7 +35,7 @@ jobs:
     # required-check configuration may key on this job name.
     runs-on: ubuntu-latest
     env:
-      DUCKDB_VERSION: v1.5.5
+      DUCKDB_VERSION: v1.5.6
       DUCKDB_NEXT: v2.0-cyanoptera
       # Flip day (spec §3 step 3) keeps a duckdb-legacy-build at the outgoing version
       # for one release; set this to that version then so the stray-literal scan below
@@ -188,7 +188,7 @@ jobs:
       # Build against the v1.5.4 RELEASE TAG (not the branch tip): branch-tip
       # builds produce -dev extensions that won't load into a released CLI.
       # ci_tools_version tracks the v1.5-variegata branch (build scripts only).
-      duckdb_version: v1.5.5
+      duckdb_version: v1.5.6
       ci_tools_version: v1.5-variegata
       extension_name: duck_tails
       # See note above: exclude wasm (no libgit2 for wasm) and Windows
@@ -199,7 +199,7 @@ jobs:
     name: Code Quality Check
     uses: duckdb/extension-ci-tools/.github/workflows/_extension_code_quality.yml@v1.5-variegata
     with:
-      duckdb_version: v1.5.5
+      duckdb_version: v1.5.6
       ci_tools_version: v1.5-variegata
       extension_name: duck_tails
       # Note: tidy requires libgit2 which isn't available in the code quality runner
