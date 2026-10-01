@@ -1,3 +1,4 @@
+#include "named_parameter_compat.hpp"
 #include "git_functions.hpp"
 #include "duckdb_compat.hpp"
 #include "git_filesystem.hpp"
@@ -366,14 +367,14 @@ void RegisterGitBranchesFunction(ExtensionLoader &loader) {
 	// Zero-argument version (defaults to current directory)
 	TableFunction git_branches_func_zero({}, GitBranchesFunction, GitBranchesBind, GitBranchesInitGlobal);
 	git_branches_func_zero.init_local = GitBranchesLocalInit;
-	git_branches_func_zero.named_parameters["repo_path"] = LogicalType::VARCHAR;
+	DeclareNamedParameter(git_branches_func_zero, "repo_path", LogicalType::VARCHAR);
 	git_branches_set.AddFunction(git_branches_func_zero);
 
 	// Single-argument version (existing)
 	TableFunction git_branches_func({LogicalType::VARCHAR}, GitBranchesFunction, GitBranchesBind,
 	                                GitBranchesInitGlobal);
 	git_branches_func.init_local = GitBranchesLocalInit;
-	git_branches_func.named_parameters["repo_path"] = LogicalType::VARCHAR;
+	DeclareNamedParameter(git_branches_func, "repo_path", LogicalType::VARCHAR);
 	git_branches_set.AddFunction(git_branches_func);
 
 	CreateTableFunctionInfo info(std::move(git_branches_set));
@@ -400,14 +401,14 @@ void RegisterGitBranchesFunction(ExtensionLoader &loader) {
 	TableFunction git_branches_each_single({LogicalType::VARCHAR}, nullptr, GitBranchesEachBind, nullptr,
 	                                       GitBranchesLocalInit);
 	git_branches_each_single.in_out_function = GitBranchesEachFunction;
-	git_branches_each_single.named_parameters["repo_path"] = LogicalType::VARCHAR;
+	DeclareNamedParameter(git_branches_each_single, "repo_path", LogicalType::VARCHAR);
 	git_branches_each_set.AddFunction(git_branches_each_single);
 
 	// Two-argument version (repo_path, repo_path)
 	TableFunction git_branches_each_two({LogicalType::VARCHAR, LogicalType::VARCHAR}, nullptr, GitBranchesEachBind,
 	                                    nullptr, GitBranchesLocalInit);
 	git_branches_each_two.in_out_function = GitBranchesEachFunction;
-	git_branches_each_two.named_parameters["repo_path"] = LogicalType::VARCHAR;
+	DeclareNamedParameter(git_branches_each_two, "repo_path", LogicalType::VARCHAR);
 	git_branches_each_set.AddFunction(git_branches_each_two);
 
 	CreateTableFunctionInfo each_info(std::move(git_branches_each_set));
