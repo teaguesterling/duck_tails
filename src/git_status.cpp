@@ -1,3 +1,4 @@
+#include "named_parameter_compat.hpp"
 #include "duckdb.hpp"
 #include "duckdb_compat.hpp"
 #include "git_functions.hpp"
@@ -484,17 +485,17 @@ void RegisterGitStatusFunction(ExtensionLoader &loader) {
 	// Zero parameters: git_status()
 	TableFunction git_status_zero({}, GitStatusFunction, GitStatusBind, GitStatusInitGlobal);
 	git_status_zero.init_local = GitStatusLocalInit;
-	git_status_zero.named_parameters["untracked"] = LogicalType::BOOLEAN;
-	git_status_zero.named_parameters["ignored"] = LogicalType::BOOLEAN;
-	git_status_zero.named_parameters["path"] = LogicalType::VARCHAR;
+	DeclareNamedParameters(
+	    git_status_zero,
+	    {{"untracked", LogicalType::BOOLEAN}, {"ignored", LogicalType::BOOLEAN}, {"path", LogicalType::VARCHAR}});
 	git_status_set.AddFunction(git_status_zero);
 
 	// Single parameter: git_status(repo_path_or_uri)
 	TableFunction git_status_single({LogicalType::VARCHAR}, GitStatusFunction, GitStatusBind, GitStatusInitGlobal);
 	git_status_single.init_local = GitStatusLocalInit;
-	git_status_single.named_parameters["untracked"] = LogicalType::BOOLEAN;
-	git_status_single.named_parameters["ignored"] = LogicalType::BOOLEAN;
-	git_status_single.named_parameters["path"] = LogicalType::VARCHAR;
+	DeclareNamedParameters(
+	    git_status_single,
+	    {{"untracked", LogicalType::BOOLEAN}, {"ignored", LogicalType::BOOLEAN}, {"path", LogicalType::VARCHAR}});
 	git_status_set.AddFunction(git_status_single);
 
 	CreateTableFunctionInfo info(std::move(git_status_set));
@@ -520,9 +521,9 @@ void RegisterGitStatusFunction(ExtensionLoader &loader) {
 	TableFunction git_status_each_single({LogicalType::VARCHAR}, nullptr, GitStatusEachBind, nullptr,
 	                                     GitStatusLocalInit);
 	git_status_each_single.in_out_function = GitStatusEachFunction;
-	git_status_each_single.named_parameters["untracked"] = LogicalType::BOOLEAN;
-	git_status_each_single.named_parameters["ignored"] = LogicalType::BOOLEAN;
-	git_status_each_single.named_parameters["path"] = LogicalType::VARCHAR;
+	DeclareNamedParameters(
+	    git_status_each_single,
+	    {{"untracked", LogicalType::BOOLEAN}, {"ignored", LogicalType::BOOLEAN}, {"path", LogicalType::VARCHAR}});
 	git_status_each_set.AddFunction(git_status_each_single);
 
 	CreateTableFunctionInfo each_info(std::move(git_status_each_set));

@@ -1,3 +1,4 @@
+#include "named_parameter_compat.hpp"
 #include "duckdb.hpp"
 #include "duckdb_compat.hpp"
 #include "git_functions.hpp"
@@ -855,31 +856,31 @@ void RegisterGitTreeFunction(ExtensionLoader &loader) {
 	// Single parameter: git_tree(repo_path_or_uri)
 	TableFunction git_tree_single({LogicalType::VARCHAR}, GitTreeFunction, GitTreeBind, GitTreeInitGlobal);
 	git_tree_single.init_local = GitTreeLocalInit;
-	git_tree_single.named_parameters["array"] = LogicalType::LIST(LogicalType::VARCHAR);
-	git_tree_single.named_parameters["untracked"] = LogicalType::BOOLEAN;
+	DeclareNamedParameters(git_tree_single,
+	                       {{"array", LogicalType::LIST(LogicalType::VARCHAR)}, {"untracked", LogicalType::BOOLEAN}});
 	git_tree_set.AddFunction(git_tree_single);
 
 	// Two parameters: git_tree(repo_path_or_uri, ref)
 	TableFunction git_tree_two({LogicalType::VARCHAR, LogicalType::VARCHAR}, GitTreeFunction, GitTreeBind,
 	                           GitTreeInitGlobal);
 	git_tree_two.init_local = GitTreeLocalInit;
-	git_tree_two.named_parameters["array"] = LogicalType::LIST(LogicalType::VARCHAR);
-	git_tree_two.named_parameters["untracked"] = LogicalType::BOOLEAN;
+	DeclareNamedParameters(git_tree_two,
+	                       {{"array", LogicalType::LIST(LogicalType::VARCHAR)}, {"untracked", LogicalType::BOOLEAN}});
 	git_tree_set.AddFunction(git_tree_two);
 
 	// Array parameter: git_tree(array=['commit1', 'commit2'])
 	TableFunction git_tree_array({LogicalType::LIST(LogicalType::VARCHAR)}, GitTreeFunction, GitTreeBind,
 	                             GitTreeInitGlobal);
 	git_tree_array.init_local = GitTreeLocalInit;
-	git_tree_array.named_parameters["array"] = LogicalType::LIST(LogicalType::VARCHAR);
-	git_tree_array.named_parameters["untracked"] = LogicalType::BOOLEAN;
+	DeclareNamedParameters(git_tree_array,
+	                       {{"array", LogicalType::LIST(LogicalType::VARCHAR)}, {"untracked", LogicalType::BOOLEAN}});
 	git_tree_set.AddFunction(git_tree_array);
 
 	// Zero parameters: git_tree() (uses current directory, HEAD)
 	TableFunction git_tree_zero({}, GitTreeFunction, GitTreeBind, GitTreeInitGlobal);
 	git_tree_zero.init_local = GitTreeLocalInit;
-	git_tree_zero.named_parameters["array"] = LogicalType::LIST(LogicalType::VARCHAR);
-	git_tree_zero.named_parameters["untracked"] = LogicalType::BOOLEAN;
+	DeclareNamedParameters(git_tree_zero,
+	                       {{"array", LogicalType::LIST(LogicalType::VARCHAR)}, {"untracked", LogicalType::BOOLEAN}});
 	git_tree_set.AddFunction(git_tree_zero);
 
 	CreateTableFunctionInfo info(std::move(git_tree_set));
@@ -919,14 +920,14 @@ void RegisterGitTreeFunction(ExtensionLoader &loader) {
 	// Single parameter version
 	TableFunction git_tree_each_single({LogicalType::VARCHAR}, nullptr, GitTreeEachBind, nullptr, GitTreeLocalInit);
 	git_tree_each_single.in_out_function = GitTreeEachFunction;
-	git_tree_each_single.named_parameters["array"] = LogicalType::LIST(LogicalType::VARCHAR);
+	DeclareNamedParameter(git_tree_each_single, "array", LogicalType::LIST(LogicalType::VARCHAR));
 	git_tree_each_set.AddFunction(git_tree_each_single);
 
 	// Two parameter version
 	TableFunction git_tree_each_two({LogicalType::VARCHAR, LogicalType::VARCHAR}, nullptr, GitTreeEachBind, nullptr,
 	                                GitTreeLocalInit);
 	git_tree_each_two.in_out_function = GitTreeEachFunction;
-	git_tree_each_two.named_parameters["array"] = LogicalType::LIST(LogicalType::VARCHAR);
+	DeclareNamedParameter(git_tree_each_two, "array", LogicalType::LIST(LogicalType::VARCHAR));
 	git_tree_each_set.AddFunction(git_tree_each_two);
 
 	CreateTableFunctionInfo each_info(std::move(git_tree_each_set));

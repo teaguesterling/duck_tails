@@ -1,3 +1,4 @@
+#include "named_parameter_compat.hpp"
 #include "git_functions.hpp"
 #include "duckdb_compat.hpp"
 #include "git_filesystem.hpp"
@@ -465,20 +466,20 @@ void RegisterGitLogFunction(ExtensionLoader &loader) {
 	// Zero-argument version (defaults to current directory)
 	TableFunction git_log_func_zero({}, GitLogFunction, GitLogBind, GitLogInitGlobal);
 	git_log_func_zero.init_local = GitLogLocalInit;
-	git_log_func_zero.named_parameters["repo_path"] = LogicalType::VARCHAR;
+	DeclareNamedParameter(git_log_func_zero, "repo_path", LogicalType::VARCHAR);
 	git_log_set.AddFunction(git_log_func_zero);
 
 	// Single-argument version (existing)
 	TableFunction git_log_func({LogicalType::VARCHAR}, GitLogFunction, GitLogBind, GitLogInitGlobal);
 	git_log_func.init_local = GitLogLocalInit;
-	git_log_func.named_parameters["repo_path"] = LogicalType::VARCHAR;
+	DeclareNamedParameter(git_log_func, "repo_path", LogicalType::VARCHAR);
 	git_log_set.AddFunction(git_log_func);
 
 	// Two-argument version: git_log(repo_path_or_uri, ref).
 	TableFunction git_log_func_ref({LogicalType::VARCHAR, LogicalType::VARCHAR}, GitLogFunction, GitLogBind,
 	                               GitLogInitGlobal);
 	git_log_func_ref.init_local = GitLogLocalInit;
-	git_log_func_ref.named_parameters["repo_path"] = LogicalType::VARCHAR;
+	DeclareNamedParameter(git_log_func_ref, "repo_path", LogicalType::VARCHAR);
 	git_log_set.AddFunction(git_log_func_ref);
 
 	CreateTableFunctionInfo info(std::move(git_log_set));
@@ -511,14 +512,14 @@ void RegisterGitLogFunction(ExtensionLoader &loader) {
 	// Version that takes commit ref as first parameter (for LATERAL context)
 	TableFunction git_log_each_single({LogicalType::VARCHAR}, nullptr, GitLogEachBind, nullptr, GitLogLocalInit);
 	git_log_each_single.in_out_function = GitLogEachFunction;
-	git_log_each_single.named_parameters["repo_path"] = LogicalType::VARCHAR;
+	DeclareNamedParameter(git_log_each_single, "repo_path", LogicalType::VARCHAR);
 	git_log_each_set.AddFunction(git_log_each_single);
 
 	// Two-argument version (ref, repo_path)
 	TableFunction git_log_each_two({LogicalType::VARCHAR, LogicalType::VARCHAR}, nullptr, GitLogEachBind, nullptr,
 	                               GitLogLocalInit);
 	git_log_each_two.in_out_function = GitLogEachFunction;
-	git_log_each_two.named_parameters["repo_path"] = LogicalType::VARCHAR;
+	DeclareNamedParameter(git_log_each_two, "repo_path", LogicalType::VARCHAR);
 	git_log_each_set.AddFunction(git_log_each_two);
 
 	CreateTableFunctionInfo each_info(std::move(git_log_each_set));

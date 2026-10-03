@@ -1,3 +1,4 @@
+#include "named_parameter_compat.hpp"
 #include "git_functions.hpp"
 #include "duckdb_compat.hpp"
 #include "git_filesystem.hpp"
@@ -911,28 +912,28 @@ void RegisterGitReadFunction(ExtensionLoader &loader) {
 	TableFunctionSet git_read_set("git_read");
 
 	TableFunction git_read_1({LogicalType::VARCHAR}, GitReadFunction, GitReadBind, GitReadInitGlobal);
-	git_read_1.named_parameters["repo_path"] = LogicalType::VARCHAR;
+	DeclareNamedParameter(git_read_1, "repo_path", LogicalType::VARCHAR);
 	git_read_set.AddFunction(git_read_1);
 
 	TableFunction git_read_2({LogicalType::VARCHAR, LogicalType::BIGINT}, GitReadFunction, GitReadBind,
 	                         GitReadInitGlobal);
-	git_read_2.named_parameters["repo_path"] = LogicalType::VARCHAR;
+	DeclareNamedParameter(git_read_2, "repo_path", LogicalType::VARCHAR);
 	git_read_set.AddFunction(git_read_2);
 
 	TableFunction git_read_3({LogicalType::VARCHAR, LogicalType::BIGINT, LogicalType::VARCHAR}, GitReadFunction,
 	                         GitReadBind, GitReadInitGlobal);
-	git_read_3.named_parameters["repo_path"] = LogicalType::VARCHAR;
+	DeclareNamedParameter(git_read_3, "repo_path", LogicalType::VARCHAR);
 	git_read_set.AddFunction(git_read_3);
 
 	TableFunction git_read_4({LogicalType::VARCHAR, LogicalType::BIGINT, LogicalType::VARCHAR, LogicalType::VARCHAR},
 	                         GitReadFunction, GitReadBind, GitReadInitGlobal);
-	git_read_4.named_parameters["repo_path"] = LogicalType::VARCHAR;
+	DeclareNamedParameter(git_read_4, "repo_path", LogicalType::VARCHAR);
 	git_read_set.AddFunction(git_read_4);
 
 	TableFunction git_read_5(
 	    {LogicalType::VARCHAR, LogicalType::BIGINT, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR},
 	    GitReadFunction, GitReadBind, GitReadInitGlobal);
-	git_read_5.named_parameters["repo_path"] = LogicalType::VARCHAR;
+	DeclareNamedParameter(git_read_5, "repo_path", LogicalType::VARCHAR);
 	git_read_set.AddFunction(git_read_5);
 
 	CreateTableFunctionInfo info(std::move(git_read_set));

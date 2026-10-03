@@ -1,3 +1,4 @@
+#include "named_parameter_compat.hpp"
 #include "duckdb.hpp"
 #include "duckdb_compat.hpp"
 #include "git_functions.hpp"
@@ -751,13 +752,13 @@ static OperatorResultType GitBlameEachFunction(ExecutionContext &context, TableF
 
 void RegisterGitBlameFunction(ExtensionLoader &loader) {
 	auto declare_named_params = [](TableFunction &fn) {
-		fn.named_parameters["repo_path"] = LogicalType::VARCHAR;
-		fn.named_parameters["revision"] = LogicalType::VARCHAR;
-		fn.named_parameters["min_line"] = LogicalType::BIGINT;
-		fn.named_parameters["max_line"] = LogicalType::BIGINT;
-		fn.named_parameters["ignore_whitespace"] = LogicalType::BOOLEAN;
-		fn.named_parameters["use_mailmap"] = LogicalType::BOOLEAN;
-		fn.named_parameters["first_parent"] = LogicalType::BOOLEAN;
+		DeclareNamedParameters(fn, {{"repo_path", LogicalType::VARCHAR},
+		                            {"revision", LogicalType::VARCHAR},
+		                            {"min_line", LogicalType::BIGINT},
+		                            {"max_line", LogicalType::BIGINT},
+		                            {"ignore_whitespace", LogicalType::BOOLEAN},
+		                            {"use_mailmap", LogicalType::BOOLEAN},
+		                            {"first_parent", LogicalType::BOOLEAN}});
 	};
 
 	TableFunctionSet git_blame_hunks_set("git_blame_hunks");
@@ -793,12 +794,12 @@ void RegisterGitBlameFunction(ExtensionLoader &loader) {
 	loader.RegisterFunction(std::move(blame_info));
 
 	auto declare_lateral_params = [](TableFunction &fn) {
-		fn.named_parameters["revision"] = LogicalType::VARCHAR;
-		fn.named_parameters["min_line"] = LogicalType::BIGINT;
-		fn.named_parameters["max_line"] = LogicalType::BIGINT;
-		fn.named_parameters["ignore_whitespace"] = LogicalType::BOOLEAN;
-		fn.named_parameters["use_mailmap"] = LogicalType::BOOLEAN;
-		fn.named_parameters["first_parent"] = LogicalType::BOOLEAN;
+		DeclareNamedParameters(fn, {{"revision", LogicalType::VARCHAR},
+		                            {"min_line", LogicalType::BIGINT},
+		                            {"max_line", LogicalType::BIGINT},
+		                            {"ignore_whitespace", LogicalType::BOOLEAN},
+		                            {"use_mailmap", LogicalType::BOOLEAN},
+		                            {"first_parent", LogicalType::BOOLEAN}});
 	};
 
 	TableFunctionSet git_blame_hunks_each_set("git_blame_hunks_each");
