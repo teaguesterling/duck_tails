@@ -511,6 +511,105 @@ static void TextDiffStatsPairFunction(DataChunk &args, ExpressionState &state, V
 }
 
 //===--------------------------------------------------------------------===//
+// diff_lines (scalar)
+//===--------------------------------------------------------------------===//
+
+// text_diff_lines() is a TABLE function, so its argument is bound before any row
+// exists. That makes it uncomposable with anything that produces a diff at run
+// time: feeding it read_git_diff()'s output fails with "Binder Error: Table
+// function cannot contain subqueries" (#59, reported by RedHotUnicorn).
+//
+// This is the same shape as text_diff_stats, which is scalar for the same
+// reason: it answers about a diff the caller already has, once per row. So a
+// diff from read_git_diff() can be exploded with UNNEST:
+//
+//   SELECT unnest(diff_lines(diff_text), recursive := true)
+//   FROM read_git_diff('git://README.md@<old>', 'git://README.md@<new>');
+//
+// The table function stays as it is: it remains the right tool for a literal.
+static LogicalType TextDiffLineType() {
+	child_list_t<LogicalType> children;
+	children.emplace_back("line_type", LogicalType::VARCHAR);
+	children.emplace_back("content", LogicalType::VARCHAR);
+	children.emplace_back("line_number", LogicalType::BIGINT);
+	return LogicalType::STRUCT(std::move(children));
+}
+
+static const char *TextDiffLineTypeName(TextDiff::LineType type) {
+	switch (type) {
+	case TextDiff::LineType::CONTEXT:
+		return "CONTEXT";
+	case TextDiff::LineType::ADDED:
+		return "ADDED";
+	case TextDiff::LineType::REMOVED:
+		return "REMOVED";
+	case TextDiff::LineType::MODIFIED:
+		return "MODIFIED";
+	}
+	return "CONTEXT";
+}
+
+static Value TextDiffLinesValue(const vector<TextDiff::DiffLine> &lines) {
+	vector<Value> values;
+	values.reserve(lines.size());
+	for (const auto &line : lines) {
+		// Same rule as the table function: the line's number in the file it
+		// exists in -- the new file for context and added lines, the old file for
+		// a removed one. The two must agree, or the same diff describes itself
+		// differently depending on which function you reach for.
+		const idx_t line_number =
+		    line.type == TextDiff::LineType::REMOVED ? line.old_line_number : line.new_line_number;
+
+		child_list_t<Value> children;
+		children.emplace_back("line_type", Value(TextDiffLineTypeName(line.type)));
+		children.emplace_back("content", Value(line.content));
+		children.emplace_back("line_number", Value::BIGINT(static_cast<int64_t>(line_number)));
+		values.push_back(Value::STRUCT(std::move(children)));
+	}
+	return Value::LIST(TextDiffLineType(), std::move(values));
+}
+
+// Over a diff the caller already has.
+static void DiffLinesFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+	auto &diff_vector = args.data[0];
+
+	result.SetVectorType(VectorType::FLAT_VECTOR);
+	for (idx_t i = 0; i < args.size(); i++) {
+		auto diff_value = diff_vector.GetValue(i);
+		if (diff_value.IsNull()) {
+			result.SetValue(i, Value(LogicalType::LIST(TextDiffLineType())));
+			continue;
+		}
+		auto diff = TextDiff::Parse(diff_value.ToString());
+		result.SetValue(i, TextDiffLinesValue(diff.GetLines()));
+	}
+	if (args.AllConstant()) {
+		result.SetVectorType(VectorType::CONSTANT_VECTOR);
+	}
+}
+
+// Over the pair of texts to diff first, mirroring text_diff_stats's two forms.
+static void DiffLinesPairFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+	auto &old_vector = args.data[0];
+	auto &new_vector = args.data[1];
+
+	result.SetVectorType(VectorType::FLAT_VECTOR);
+	for (idx_t i = 0; i < args.size(); i++) {
+		auto old_value = old_vector.GetValue(i);
+		auto new_value = new_vector.GetValue(i);
+		if (old_value.IsNull() || new_value.IsNull()) {
+			result.SetValue(i, Value(LogicalType::LIST(TextDiffLineType())));
+			continue;
+		}
+		auto diff = TextDiff::CreateDiff(old_value.ToString(), new_value.ToString());
+		result.SetValue(i, TextDiffLinesValue(diff.GetLines()));
+	}
+	if (args.AllConstant()) {
+		result.SetVectorType(VectorType::CONSTANT_VECTOR);
+	}
+}
+
+//===--------------------------------------------------------------------===//
 // text_diff_lines
 //===--------------------------------------------------------------------===//
 
@@ -813,6 +912,35 @@ void RegisterTextDiffType(ExtensionLoader &loader) {
 		desc2.parameter_names = {"old_text", "new_text"};
 		desc2.description = "Calculate diff statistics between two text strings.";
 		desc2.examples = {"text_diff_stats('old', 'new')"};
+		desc2.categories = {"git"};
+		info.descriptions.push_back(desc2);
+		loader.RegisterFunction(std::move(info));
+	}
+
+	// Register diff_lines: the composable counterpart to the text_diff_lines table
+	// function below. A table function's argument binds before any row exists, so
+	// text_diff_lines() cannot consume read_git_diff()'s output (#59); this can.
+	ScalarFunctionSet lines_set("diff_lines");
+	lines_set.AddFunction(
+	    ScalarFunction({LogicalType::VARCHAR}, LogicalType::LIST(TextDiffLineType()), DiffLinesFunction));
+	lines_set.AddFunction(ScalarFunction({LogicalType::VARCHAR, LogicalType::VARCHAR},
+	                                     LogicalType::LIST(TextDiffLineType()), DiffLinesPairFunction));
+	{
+		CreateScalarFunctionInfo info(std::move(lines_set));
+		info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+		FunctionDescription desc1;
+		desc1.parameter_names = {"diff_text"};
+		desc1.description = "Parse a diff into a list of line changes, one struct per line "
+		                    "(line_type, content, line_number). Unlike the text_diff_lines table "
+		                    "function, this composes with per-row values such as read_git_diff() output.";
+		desc1.examples = {
+		    "SELECT unnest(diff_lines(diff_text), recursive := true) FROM read_git_diff('git://README.md')"};
+		desc1.categories = {"git"};
+		info.descriptions.push_back(desc1);
+		FunctionDescription desc2;
+		desc2.parameter_names = {"old_text", "new_text"};
+		desc2.description = "Diff two strings and return the result as a list of line changes.";
+		desc2.examples = {"diff_lines('old text', 'new text')"};
 		desc2.categories = {"git"};
 		info.descriptions.push_back(desc2);
 		loader.RegisterFunction(std::move(info));
