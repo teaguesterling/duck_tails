@@ -1,3 +1,4 @@
+#include "named_parameter_compat.hpp"
 #include "duckdb.hpp"
 #include "duckdb_compat.hpp"
 #include "git_functions.hpp"
@@ -555,32 +556,28 @@ void RegisterGitDiffTreeFunction(ExtensionLoader &loader) {
 	// Zero parameters: git_diff_tree()
 	TableFunction git_diff_tree_zero({}, GitDiffTreeFunction, GitDiffTreeBind, GitDiffTreeInitGlobal);
 	git_diff_tree_zero.init_local = GitDiffTreeLocalInit;
-	git_diff_tree_zero.named_parameters["path"] = LogicalType::VARCHAR;
-	git_diff_tree_zero.named_parameters["untracked"] = LogicalType::BOOLEAN;
+	DeclareNamedParameters(git_diff_tree_zero, {{"path", LogicalType::VARCHAR}, {"untracked", LogicalType::BOOLEAN}});
 	git_diff_tree_set.AddFunction(git_diff_tree_zero);
 
 	// Single parameter: git_diff_tree(repo_path)
 	TableFunction git_diff_tree_single({LogicalType::VARCHAR}, GitDiffTreeFunction, GitDiffTreeBind,
 	                                   GitDiffTreeInitGlobal);
 	git_diff_tree_single.init_local = GitDiffTreeLocalInit;
-	git_diff_tree_single.named_parameters["path"] = LogicalType::VARCHAR;
-	git_diff_tree_single.named_parameters["untracked"] = LogicalType::BOOLEAN;
+	DeclareNamedParameters(git_diff_tree_single, {{"path", LogicalType::VARCHAR}, {"untracked", LogicalType::BOOLEAN}});
 	git_diff_tree_set.AddFunction(git_diff_tree_single);
 
 	// Two parameters: git_diff_tree(repo_path, ref)
 	TableFunction git_diff_tree_two({LogicalType::VARCHAR, LogicalType::VARCHAR}, GitDiffTreeFunction, GitDiffTreeBind,
 	                                GitDiffTreeInitGlobal);
 	git_diff_tree_two.init_local = GitDiffTreeLocalInit;
-	git_diff_tree_two.named_parameters["path"] = LogicalType::VARCHAR;
-	git_diff_tree_two.named_parameters["untracked"] = LogicalType::BOOLEAN;
+	DeclareNamedParameters(git_diff_tree_two, {{"path", LogicalType::VARCHAR}, {"untracked", LogicalType::BOOLEAN}});
 	git_diff_tree_set.AddFunction(git_diff_tree_two);
 
 	// Three parameters: git_diff_tree(repo_path, from_ref, to_ref) — commit-to-commit diff
 	TableFunction git_diff_tree_three({LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR},
 	                                  GitDiffTreeFunction, GitDiffTreeBind, GitDiffTreeInitGlobal);
 	git_diff_tree_three.init_local = GitDiffTreeLocalInit;
-	git_diff_tree_three.named_parameters["path"] = LogicalType::VARCHAR;
-	git_diff_tree_three.named_parameters["untracked"] = LogicalType::BOOLEAN;
+	DeclareNamedParameters(git_diff_tree_three, {{"path", LogicalType::VARCHAR}, {"untracked", LogicalType::BOOLEAN}});
 	git_diff_tree_set.AddFunction(git_diff_tree_three);
 
 	CreateTableFunctionInfo info(std::move(git_diff_tree_set));
@@ -620,22 +617,22 @@ void RegisterGitDiffTreeFunction(ExtensionLoader &loader) {
 	TableFunction git_diff_tree_each_single({LogicalType::VARCHAR}, nullptr, GitDiffTreeEachBind, nullptr,
 	                                        GitDiffTreeLocalInit);
 	git_diff_tree_each_single.in_out_function = GitDiffTreeEachFunction;
-	git_diff_tree_each_single.named_parameters["path"] = LogicalType::VARCHAR;
-	git_diff_tree_each_single.named_parameters["untracked"] = LogicalType::BOOLEAN;
+	DeclareNamedParameters(git_diff_tree_each_single,
+	                       {{"path", LogicalType::VARCHAR}, {"untracked", LogicalType::BOOLEAN}});
 	git_diff_tree_each_set.AddFunction(git_diff_tree_each_single);
 
 	TableFunction git_diff_tree_each_two({LogicalType::VARCHAR, LogicalType::VARCHAR}, nullptr, GitDiffTreeEachBind,
 	                                     nullptr, GitDiffTreeLocalInit);
 	git_diff_tree_each_two.in_out_function = GitDiffTreeEachFunction;
-	git_diff_tree_each_two.named_parameters["path"] = LogicalType::VARCHAR;
-	git_diff_tree_each_two.named_parameters["untracked"] = LogicalType::BOOLEAN;
+	DeclareNamedParameters(git_diff_tree_each_two,
+	                       {{"path", LogicalType::VARCHAR}, {"untracked", LogicalType::BOOLEAN}});
 	git_diff_tree_each_set.AddFunction(git_diff_tree_each_two);
 
 	TableFunction git_diff_tree_each_three({LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR}, nullptr,
 	                                       GitDiffTreeEachBind, nullptr, GitDiffTreeLocalInit);
 	git_diff_tree_each_three.in_out_function = GitDiffTreeEachFunction;
-	git_diff_tree_each_three.named_parameters["path"] = LogicalType::VARCHAR;
-	git_diff_tree_each_three.named_parameters["untracked"] = LogicalType::BOOLEAN;
+	DeclareNamedParameters(git_diff_tree_each_three,
+	                       {{"path", LogicalType::VARCHAR}, {"untracked", LogicalType::BOOLEAN}});
 	git_diff_tree_each_set.AddFunction(git_diff_tree_each_three);
 
 	CreateTableFunctionInfo each_info(std::move(git_diff_tree_each_set));

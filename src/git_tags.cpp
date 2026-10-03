@@ -1,3 +1,4 @@
+#include "named_parameter_compat.hpp"
 #include "git_functions.hpp"
 #include "duckdb_compat.hpp"
 #include "git_filesystem.hpp"
@@ -450,13 +451,13 @@ void RegisterGitTagsFunction(ExtensionLoader &loader) {
 	// Zero-argument version (defaults to current directory)
 	TableFunction git_tags_func_zero({}, GitTagsFunction, GitTagsBind, GitTagsInitGlobal);
 	git_tags_func_zero.init_local = GitTagsLocalInit;
-	git_tags_func_zero.named_parameters["repo_path"] = LogicalType::VARCHAR;
+	DeclareNamedParameter(git_tags_func_zero, "repo_path", LogicalType::VARCHAR);
 	git_tags_set.AddFunction(git_tags_func_zero);
 
 	// Single-argument version (existing)
 	TableFunction git_tags_func({LogicalType::VARCHAR}, GitTagsFunction, GitTagsBind, GitTagsInitGlobal);
 	git_tags_func.init_local = GitTagsLocalInit;
-	git_tags_func.named_parameters["repo_path"] = LogicalType::VARCHAR;
+	DeclareNamedParameter(git_tags_func, "repo_path", LogicalType::VARCHAR);
 	git_tags_set.AddFunction(git_tags_func);
 
 	CreateTableFunctionInfo info(std::move(git_tags_set));
@@ -482,14 +483,14 @@ void RegisterGitTagsFunction(ExtensionLoader &loader) {
 	// Version that takes repository path as first parameter (for LATERAL context)
 	TableFunction git_tags_each_single({LogicalType::VARCHAR}, nullptr, GitTagsEachBind, nullptr, GitTagsLocalInit);
 	git_tags_each_single.in_out_function = GitTagsEachFunction;
-	git_tags_each_single.named_parameters["repo_path"] = LogicalType::VARCHAR;
+	DeclareNamedParameter(git_tags_each_single, "repo_path", LogicalType::VARCHAR);
 	git_tags_each_set.AddFunction(git_tags_each_single);
 
 	// Two-argument version (repo_path, repo_path)
 	TableFunction git_tags_each_two({LogicalType::VARCHAR, LogicalType::VARCHAR}, nullptr, GitTagsEachBind, nullptr,
 	                                GitTagsLocalInit);
 	git_tags_each_two.in_out_function = GitTagsEachFunction;
-	git_tags_each_two.named_parameters["repo_path"] = LogicalType::VARCHAR;
+	DeclareNamedParameter(git_tags_each_two, "repo_path", LogicalType::VARCHAR);
 	git_tags_each_set.AddFunction(git_tags_each_two);
 
 	CreateTableFunctionInfo each_info(std::move(git_tags_each_set));

@@ -1,3 +1,4 @@
+#include "named_parameter_compat.hpp"
 #include "duckdb.hpp"
 #include "duckdb_compat.hpp"
 #include "git_functions.hpp"
@@ -58,10 +59,11 @@ unique_ptr<FunctionData> GitParentsBind(ClientContext &context, TableFunctionBin
 	auto params = ParseUnifiedGitParams(input, 1); // ref parameter at index 1
 
 	// Check for named parameters
-	if (input.named_parameters.count("repo_path") && !StringUtil::StartsWith(params.repo_path_or_uri, "git://")) {
+	if (HasNamedParam(input.named_parameters, "repo_path") &&
+	    !StringUtil::StartsWith(params.repo_path_or_uri, "git://")) {
 		params.resolved_repo_path = StringValue::Get(input.named_parameters.at("repo_path"));
 	}
-	if (input.named_parameters.count("all_refs")) {
+	if (HasNamedParam(input.named_parameters, "all_refs")) {
 		all_refs = BooleanValue::Get(input.named_parameters.at("all_refs"));
 	}
 
@@ -341,22 +343,20 @@ void RegisterGitParentsFunction(ExtensionLoader &loader) {
 	// Zero-argument version (defaults to HEAD and current directory)
 	TableFunction git_parents_zero({}, GitParentsFunction, GitParentsBind, GitParentsInitGlobal);
 	git_parents_zero.init_local = GitParentsLocalInit;
-	git_parents_zero.named_parameters["repo_path"] = LogicalType::VARCHAR;
-	git_parents_zero.named_parameters["all_refs"] = LogicalType::BOOLEAN;
+	DeclareNamedParameters(git_parents_zero, {{"repo_path", LogicalType::VARCHAR}, {"all_refs", LogicalType::BOOLEAN}});
 	git_parents_set.AddFunction(git_parents_zero);
 
 	// Single-argument version (ref)
 	TableFunction git_parents_func({LogicalType::VARCHAR}, GitParentsFunction, GitParentsBind, GitParentsInitGlobal);
 	git_parents_func.init_local = GitParentsLocalInit;
-	git_parents_func.named_parameters["repo_path"] = LogicalType::VARCHAR;
-	git_parents_func.named_parameters["all_refs"] = LogicalType::BOOLEAN;
+	DeclareNamedParameters(git_parents_func, {{"repo_path", LogicalType::VARCHAR}, {"all_refs", LogicalType::BOOLEAN}});
 	git_parents_set.AddFunction(git_parents_func);
 
 	// Two-argument version (repo_path_or_uri, ref)
 	TableFunction git_parents_two({LogicalType::VARCHAR, LogicalType::VARCHAR}, GitParentsFunction, GitParentsBind,
 	                              GitParentsInitGlobal);
 	git_parents_two.init_local = GitParentsLocalInit;
-	git_parents_two.named_parameters["all_refs"] = LogicalType::BOOLEAN;
+	DeclareNamedParameter(git_parents_two, "all_refs", LogicalType::BOOLEAN);
 	git_parents_set.AddFunction(git_parents_two);
 
 	CreateTableFunctionInfo info(std::move(git_parents_set));
@@ -390,7 +390,7 @@ void RegisterGitParentsFunction(ExtensionLoader &loader) {
 	TableFunction git_parents_each_single({LogicalType::VARCHAR}, nullptr, GitParentsEachBind, nullptr,
 	                                      GitParentsLocalInit);
 	git_parents_each_single.in_out_function = GitParentsEachFunction;
-	git_parents_each_single.named_parameters["repo_path"] = LogicalType::VARCHAR;
+	DeclareNamedParameter(git_parents_each_single, "repo_path", LogicalType::VARCHAR);
 	git_parents_each_set.AddFunction(git_parents_each_single);
 
 	// Two-argument version (commit_ref, repo_path)
