@@ -295,6 +295,20 @@ SELECT git_canonicalize('git:///nonexistent-duck-tails-test/a.md@feature/foo');
 ----
 git:///nonexistent-duck-tails-test/a.md@feature/foo
 
+# A '..' in a deprecated path suffix is applied inside the repository
+# ("../README.md", which does not exist there). Moved in front of ?ref= it
+# would be resolved before discovery and could name a different repository
+# and file, so the rewrite is refused rather than made lossy.
+query I
+SELECT git_canonicalize('git://test/tmp/slash-refs-repo@HEAD/../README.md');
+----
+git://test/tmp/slash-refs-repo@HEAD/../README.md
+
+query I
+SELECT git_canonicalize('git://test/tmp/slash-refs-repo@HEAD/../*.md');
+----
+git://test/tmp/slash-refs-repo@HEAD/../*.md
+
 query I
 SELECT git_canonicalize(NULL) IS NULL;
 ----
@@ -328,6 +342,61 @@ FROM (VALUES
      LATERAL git_read_each(git_canonicalize(v.u)) a;
 ----
 7	7
+
+# ==============================================================
+# The table functions read ?ref= exactly as they read @rev
+# ==============================================================
+
+# docs/git_uris.md shows git_tree, git_log, git_parents, read_git_diff and
+# the conflict check in the ?ref= form; each answer must match the @ form.
+query II
+SELECT (SELECT COUNT(*) FROM git_tree('git://test/tmp/slash-refs-repo?ref=feature/foo')),
+       (SELECT COUNT(*) FROM git_tree('git://test/tmp/slash-refs-repo@feature/foo'));
+----
+4	4
+
+query II
+SELECT (SELECT COUNT(*) FROM git_log('git://test/tmp/slash-refs-repo?ref=feature/foo')),
+       (SELECT COUNT(*) FROM git_log('git://test/tmp/slash-refs-repo@feature/foo'));
+----
+2	2
+
+query I
+SELECT (SELECT commit_hash FROM git_parents('git://test/tmp/slash-refs-repo?ref=feature/foo'))
+     = (SELECT commit_hash FROM git_parents('git://test/tmp/slash-refs-repo@feature/foo'));
+----
+true
+
+query I
+SELECT (SELECT string_agg(diff_text, '') FROM read_git_diff('git://test/tmp/slash-refs-repo/README.md?ref=main',
+                                                            'git://test/tmp/slash-refs-repo/README.md?ref=feature/foo'))
+     = (SELECT string_agg(diff_text, '') FROM read_git_diff('git://test/tmp/slash-refs-repo/README.md@main',
+                                                            'git://test/tmp/slash-refs-repo/README.md@feature/foo'));
+----
+true
+
+query II
+SELECT (SELECT COUNT(*) FROM git_blame('git://test/tmp/slash-refs-repo/README.md?ref=feature/foo')),
+       (SELECT COUNT(*) FROM git_blame('git://test/tmp/slash-refs-repo/README.md@feature/foo'));
+----
+1	1
+
+# A ref in the URI and a ref parameter conflict, in either spelling.
+statement error
+SELECT COUNT(*) FROM git_tree('git://test/tmp/slash-refs-repo?ref=main', 'feature/foo');
+----
+Conflicting ref specifications
+
+# repo_path is spliced into a relative URI that carries ?ref=.
+query I
+SELECT trim(text, chr(10)) FROM git_read('git://README.md?ref=feature/foo', repo_path := 'test/tmp/slash-refs-repo');
+----
+feature branch content
+
+query I
+SELECT COUNT(*) FROM git_log('git://?ref=feature/foo', repo_path := 'test/tmp/slash-refs-repo');
+----
+2
 
 # ==============================================================
 # git_uri() emits the canonical form
