@@ -212,6 +212,29 @@ static void SplitRevisionFromPath(const string &repository_path, string &revisio
 	git_repository_free(repo);
 }
 
+// The canonical form carries the revision in the URI query component:
+// "git://README.md?ref=HEAD". Only "?ref=" opens it -- a bare '?' is a glob
+// wildcard ("data/file?.csv") and stays in the path. The value is taken
+// literally: no percent-decoding and no '&' split, since ref names may
+// contain both.
+static constexpr const char *REF_QUERY = "?ref=";
+
+// The '@' that starts the revision in the deprecated "git://path@rev" form:
+// the LAST '@' that is not followed by '{', so reflog syntax survives.
+//   file.csv@HEAD             -> "HEAD"
+//   file.csv@HEAD@{0}         -> "HEAD@{0}"
+//   file.csv@main@{1.day.ago} -> "main@{1.day.ago}"
+//   file.csv@HEAD/**/*.csv    -> "HEAD/**/*.csv" (glob split off by the caller)
+static size_t FindRevisionSeparator(const string &url) {
+	size_t at_pos = string::npos;
+	for (size_t i = 0; i < url.length(); ++i) {
+		if (url[i] == '@' && (i + 1 >= url.length() || url[i + 1] != '{')) {
+			at_pos = i;
+		}
+	}
+	return at_pos;
+}
+
 //===--------------------------------------------------------------------===//
 // GitPath Implementation
 //===--------------------------------------------------------------------===//
@@ -225,6 +248,18 @@ GitPath GitPath::Parse(const string &git_url) {
 		url = url.substr(6);
 	}
 
+	// Cut the query component before anything else. What precedes it is the
+	// path, verbatim -- an '@' there is part of a file name -- and the value is
+	// the ref, whole: it is never split into ref + path, because '/' inside a
+	// query value is not a path separator.
+	bool ref_in_query = false;
+	size_t query_pos = url.find(REF_QUERY);
+	if (query_pos != string::npos) {
+		result.revision = url.substr(query_pos + strlen(REF_QUERY));
+		url = url.substr(0, query_pos);
+		ref_in_query = true;
+	}
+
 	// Normalize Windows backslashes to forward slashes for URI parsing
 	// (git URIs always use forward slashes as separators)
 	for (auto &c : url) {
@@ -233,25 +268,13 @@ GitPath GitPath::Parse(const string &git_url) {
 		}
 	}
 
-	// Find @ symbol to separate path from revision
-	// We need to find the LAST @ that is NOT followed by '{' to support reflog syntax
-	// Examples:
-	//   git://file.csv@HEAD           -> split at @, revision = "HEAD"
-	//   git://file.csv@HEAD@{0}       -> split at first @, revision = "HEAD@{0}"
-	//   git://file.csv@main@{1.day.ago} -> split at first @, revision = "main@{1.day.ago}"
-	//   git://file.csv@HEAD/**/*.csv  -> split at @, revision = "HEAD/**/*.csv" (glob handled below)
-	size_t at_pos = string::npos;
-	for (size_t i = 0; i < url.length(); ++i) {
-		if (url[i] == '@') {
-			// Check if this @ is followed by '{'
-			if (i + 1 >= url.length() || url[i + 1] != '{') {
-				at_pos = i; // This is a candidate, keep looking for the last one
-			}
-		}
-	}
+	// Deprecated form: the revision follows an '@' in the path.
+	size_t at_pos = ref_in_query ? string::npos : FindRevisionSeparator(url);
 
 	string path_suffix = "";
-	if (at_pos != string::npos) {
+	if (ref_in_query) {
+		// Revision already taken from the query component.
+	} else if (at_pos != string::npos) {
 		result.revision = url.substr(at_pos + 1);
 		url = url.substr(0, at_pos);
 
@@ -279,7 +302,9 @@ GitPath GitPath::Parse(const string &git_url) {
 	if (url.empty()) {
 		result.repository_path = ".";
 		// Ask the repository where the ref ends and the path begins.
-		SplitRevisionFromPath(result.repository_path, result.revision, path_suffix);
+		if (!ref_in_query) {
+			SplitRevisionFromPath(result.repository_path, result.revision, path_suffix);
+		}
 		result.file_path = path_suffix.empty() ? "" : path_suffix.substr(1); // Remove leading /
 	} else {
 		// Use repository discovery for ALL paths (simple and complex)
@@ -291,7 +316,9 @@ GitPath GitPath::Parse(const string &git_url) {
 			result.repository_path = FindGitRepository(url, git_url);
 
 			// Ask the repository where the ref ends and the path begins.
-			SplitRevisionFromPath(result.repository_path, result.revision, path_suffix);
+			if (!ref_in_query) {
+				SplitRevisionFromPath(result.repository_path, result.revision, path_suffix);
+			}
 
 			// Normalize the URL path for consistent file path calculation
 			string normalized_url = NormalizePath(url);
@@ -364,6 +391,61 @@ GitPath GitPath::Parse(const string &git_url) {
 	}
 
 	return result;
+}
+
+string GitPath::Canonicalize(const string &git_url) {
+	if (!StringUtil::StartsWith(git_url, "git://")) {
+		return git_url;
+	}
+	string url = git_url.substr(6);
+	if (url.find(REF_QUERY) != string::npos) {
+		return git_url; // already canonical
+	}
+	size_t at_pos = FindRevisionSeparator(url);
+	if (at_pos == string::npos) {
+		return git_url; // no revision: HEAD by default, nothing to move
+	}
+
+	// Split exactly as Parse does for the deprecated form, but on the text
+	// the caller wrote: the path keeps its spelling and only the ref moves.
+	string path = url.substr(0, at_pos);
+	string revision = url.substr(at_pos + 1);
+	for (auto &c : revision) {
+		if (c == '\\') {
+			c = '/';
+		}
+	}
+	string path_suffix;
+	size_t suffix_pos = FindGlobSuffixStart(revision);
+	if (suffix_pos != string::npos) {
+		path_suffix = revision.substr(suffix_pos);
+		revision = revision.substr(0, suffix_pos);
+	}
+
+	// Only the repository knows where a slash-bearing ref ends
+	// ("@feature/foo" vs "@HEAD/data/rows.csv"). Ask it through Parse so the
+	// answer is the one Parse gives; when it cannot be asked, the input is
+	// returned as is, which is always lossless.
+	if (revision.find('/') != string::npos) {
+		GitPath parsed;
+		try {
+			parsed = Parse(git_url);
+		} catch (const std::exception &) {
+			return git_url;
+		}
+		if (!StringUtil::StartsWith(revision, parsed.revision)) {
+			return git_url;
+		}
+		path_suffix = revision.substr(parsed.revision.length()) + path_suffix;
+		revision = parsed.revision;
+	}
+
+	// "git://" + "/README.md" would read as an absolute path. An empty path
+	// means the current directory to Parse, so say that explicitly.
+	if (path.empty() && !path_suffix.empty()) {
+		path = ".";
+	}
+	return "git://" + path + path_suffix + REF_QUERY + revision;
 }
 
 string GitPath::ToString() const {
@@ -446,6 +528,13 @@ GitFileSystem::~GitFileSystem() {
 
 bool GitFileSystem::CanHandleFile(const string &fpath) {
 	return StringUtil::StartsWith(fpath, "git://");
+}
+
+// The inherited implementation would fold "git://a.md" into "git:/a.md".
+// Rewriting @rev into ?ref= keeps the revision, which is part of a git
+// file's identity, so the canonical path still opens the same file.
+string GitFileSystem::CanonicalizePath(const string &path, optional_ptr<FileOpener> opener) {
+	return GitPath::Canonicalize(path);
 }
 
 // Check if a revision string is a pseudo-ref
@@ -606,7 +695,7 @@ vector<OpenFileInfo> GitFileSystem::Glob(const string &pattern, FileOpener *open
 							rel_path = rel_path.substr(workdir_prefix.length());
 						}
 						results.emplace_back(
-						    OpenFileInfo {"git://" + git_path.repository_path + "/" + rel_path + "@WORKDIR"});
+						    OpenFileInfo {"git://" + git_path.repository_path + "/" + rel_path + REF_QUERY + "WORKDIR"});
 					}
 				} catch (...) {
 					// Return empty on error
@@ -664,7 +753,7 @@ vector<OpenFileInfo> GitFileSystem::Glob(const string &pattern, FileOpener *open
 								             : entry_path == git_path.file_path;
 								if (matched) {
 									results.emplace_back(OpenFileInfo {"git://" + git_path.repository_path + "/" +
-									                                   entry_path + "@STAGED"});
+									                                   entry_path + REF_QUERY + "STAGED"});
 								}
 							}
 							git_index_free(index);
@@ -1085,12 +1174,11 @@ vector<OpenFileInfo> GitFileSystem::ListFiles(git_repository *repo, const GitPat
 	// one has to carry the repository and the revision. Handing back a bare
 	// tree path would quietly reopen the file at HEAD of whatever repository
 	// the working directory happens to be in.
+	//
+	// Always in the canonical form, so the path a consumer gets back ends with
+	// the file name and a file name containing '@' survives the round trip.
 	auto to_uri = [&](const string &entry_path) {
-		string uri = "git://" + git_path.repository_path + "/" + entry_path;
-		if (!git_path.revision.empty()) {
-			uri += "@" + git_path.revision;
-		}
-		return OpenFileInfo {uri};
+		return OpenFileInfo {"git://" + git_path.repository_path + "/" + entry_path + REF_QUERY + git_path.revision};
 	};
 
 	if (pattern.empty()) {

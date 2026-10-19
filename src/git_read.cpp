@@ -772,6 +772,12 @@ static OperatorResultType GitReadEachFunction(ExecutionContext &context, TableFu
 			// git:// URI — repo discovery in GitPath::Parse walks up from that path at runtime.
 			string uri;
 			if (StringUtil::StartsWith(first_param, "git://")) {
+				// Appended to a ?ref= URI the ref would land inside the ref value
+				// ("?ref=main@feature/foo"), naming a ref nobody wrote.
+				if (!explicit_ref.empty() && first_param.find("?ref=") != string::npos) {
+					throw InvalidInputException("git_read_each: '%s' already names a ref; cannot also apply ref '%s'",
+					                            first_param, explicit_ref);
+				}
 				uri = explicit_ref.empty() ? first_param : first_param + "@" + explicit_ref;
 			} else {
 				const string &ref = explicit_ref.empty() ? bind_data.ref : explicit_ref;

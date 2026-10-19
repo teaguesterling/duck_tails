@@ -81,6 +81,10 @@ struct GitPath {
 	bool is_three_dot;  // True for "..." syntax, false for ".." syntax
 
 	static GitPath Parse(const string &git_url);
+	// Rewrite the deprecated "git://path@rev" form into "git://path?ref=rev".
+	// Lossless: the result parses to the same repository, file and revision.
+	// Anything it cannot rewrite with that guarantee comes back unchanged.
+	static string Canonicalize(const string &git_url);
 	string ToString() const;
 };
 
@@ -163,6 +167,7 @@ public:
 		return "GitFileSystem";
 	}
 	bool CanHandleFile(const string &fpath) override;
+	string CanonicalizePath(const string &path, optional_ptr<FileOpener> opener = nullptr) override;
 
 	// Core FileSystem interface
 	unique_ptr<FileHandle> OpenFile(const string &path, FileOpenFlags flags,
