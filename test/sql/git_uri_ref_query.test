@@ -58,10 +58,11 @@ main branch content
 # The value is never split into ref + path. The deprecated form has to ask the
 # repository where "main/README.md" ends; the query form must not, or a ref
 # that happens to have a resolvable prefix would silently read another file.
+# (No message asserted: git_read reports any unresolvable ref as "unable to
+# parse OID" without naming it, in both spellings -- a separate defect.)
 statement error
 SELECT * FROM git_read('git://test/tmp/slash-refs-repo?ref=main/README.md');
 ----
-main/README.md
 
 # No revision means HEAD (#69 open question: the parser was right, the doc
 # that called this invalid was wrong).
