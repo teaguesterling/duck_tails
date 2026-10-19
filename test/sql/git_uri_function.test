@@ -88,13 +88,13 @@ SELECT git_uri('repo', 'merged.txt', 'main...feature');
 git://repo/merged.txt?ref=main...feature
 
 # Test 14: Consistency with git_tree output
-# Verify that git_tree's git_uri column uses the same format
-query I
-SELECT COUNT(*) > 0 as has_consistent_uris
-FROM git_tree('git://test/tmp/main-repo@HEAD')
-WHERE git_uri LIKE 'git://%@%';
+# git_tree's git_uri column must be exactly what git_uri() builds from the
+# same row, so the two outputs named git_uri cannot drift apart again.
+query II
+SELECT COUNT(*) > 0, COUNT(*) FILTER (WHERE git_uri <> git_uri(repo_path, file_path, commit_hash))
+FROM git_tree('git://test/tmp/main-repo@HEAD');
 ----
-true
+true	0
 
 # Test 15: Round-trip test - parse and reconstruct
 # Create a URI, then verify it can be parsed by git functions

@@ -57,7 +57,7 @@ true
 # Test: URI format consistency across both functions
 query I
 SELECT 
-  count_if(git_uri LIKE 'git://%@%') = COUNT(*) as valid_uris
+  count_if(git_uri LIKE 'git://%?ref=%') = COUNT(*) as valid_uris
 FROM git_tree('git://test/tmp/main-repo@HEAD')
 LIMIT 5;
 ----
