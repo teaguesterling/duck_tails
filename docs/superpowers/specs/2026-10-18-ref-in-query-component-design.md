@@ -1,0 +1,310 @@
+# Git URI: move the revision into the query component
+
+**Status:** approved (Teague, 2026-10-18). Grammar settled, open question
+settled, implemented on duck_tails `feat/git-uri-ref-query` (#69).
+
+**Problem owner:** duck_tails. **Blocked consumers:** duckdb_markdown,
+sitting_duck, duckdb_panduck.
+
+---
+
+## The problem
+
+`git://<path>@<revision>` puts the revision after the file name, so the file
+name's extension is not the end of the string:
+
+```
+git://README.md@HEAD
+              ^^^^^ the extension is now "md@head"
+```
+
+Every consumer that decides anything from a file extension must therefore parse
+duck_tails' grammar. Three already do, independently:
+
+| repository | file | what it does |
+|---|---|---|
+| duckdb_markdown | `src/markdown_reader_files.cpp:52` | strips `?`/`#`, then `@` from the last component |
+| sitting_duck | `src/include/ast_file_utils.hpp:55`, `src/ast_file_utils.cpp:307` | strips the scheme, then `@HEAD~3` |
+| duckdb_panduck | `src/reader_registry.cpp:55` | `base.find_last_of('@')` — last `@` anywhere, so reflog syntax breaks it |
+
+That grammar is not simple enough to duplicate correctly. `GitPath::Parse`
+(`src/git_filesystem.cpp:219-270`) has to:
+
+  - take the **last** `@` that is not followed by `{`, so reflog syntax
+    (`@HEAD@{0}`, `@main@{1.day.ago}`) survives
+  - tolerate a revision containing `/` (`@feature/foo`, `@refs/heads/main`)
+  - split a glob appended *after* the revision (`@HEAD/**/*.csv`), which it can
+    only do by finding a glob metacharacter, because slashes are legal in refs
+
+A consumer that reimplements this gets it wrong, or gets it right and then
+rots. Both are already visible: duckdb_markdown handles `?`/`#` and a trailing
+`@rev` but not a glob suffix, and duckdb_panduck omits the `{` exclusion, so
+`git://a.md@HEAD@{0}` already resolves to extension `md@head` there.
+
+## The decision
+
+**The canonical form becomes `git://<path>?ref=<revision>`.**
+
+```
+git://README.md?ref=HEAD
+git://src/main.cpp?ref=feature/foo
+git://docs/a.md?ref=HEAD@{0}
+git://**/*.csv?ref=v1.0
+```
+
+The revision moves into the RFC 3986 query component. The file name is again
+the end of the path, so its extension is readable without knowing anything
+about git.
+
+### Why the query component, and not a path prefix
+
+`git://<revision>/<path>` was considered and rejected. Refs contain slashes
+(`feature/foo`, `refs/heads/main`), so `git://feature/foo/a.md` cannot be split
+into ref and path without asking the repository. The query component has no
+such ambiguity: everything before `?` is the path, everything after is
+parameters.
+
+### Why this removes the special cases rather than relocating them
+
+`?query` is not duck_tails syntax. It is the URI standard, and consumers
+already implement it for their own reasons. duckdb_markdown's recogniser
+already contains:
+
+```cpp
+// markdown_reader_files.cpp:64
+auto query_pos = path.find_first_of("?#");
+```
+
+So `git://README.md?ref=HEAD` resolves to `README.md` under code that predates
+this design and mentions neither git nor duck_tails.
+
+**The duplication ends by delegation, not by deletion.** `@revision` is
+accepted indefinitely (Teague, 2026-10-18), so a caller can always type
+`git://README.md@HEAD` straight into a reader. A consumer that simply deletes
+its strip therefore regresses on that spelling. What it deletes its strip *for*
+is a call to `CanonicalizePath`, which duck_tails owns:
+
+| consumer state | `git://README.md@HEAD` resolves? |
+|---|---|
+| keeps its own `@` strip | yes — the status quo, one buggy copy per consumer |
+| strip deleted, calls `CanonicalizePath` | yes — VFS returns `?ref=`, the consumer's existing `?`/`#` cut finishes |
+| strip deleted, no `CanonicalizePath` | **no** — extension reads `md@head` |
+
+So the gain is not "no code anywhere". It is one implementation of the grammar,
+in the repository that defines it, instead of three reimplementations of which
+two are already wrong. A shared helper or a `git_strip_ref()` scalar function
+would centralise the parsing too, but each would make every consumer depend on
+duck_tails at build time; `CanonicalizePath` is already in DuckDB's own
+interface, so it costs the consumer no new dependency.
+
+## CanonicalizePath is the migration bridge
+
+`FileSystem::CanonicalizePath` (`file_system.hpp:321`) is dispatched by
+`VirtualFileSystem` to whichever filesystem claims the path:
+
+```cpp
+// duckdb src/common/virtual_file_system.cpp:278
+string VirtualFileSystem::CanonicalizePath(const string &path_p, optional_ptr<FileOpener> opener) {
+    return FindFileSystem(path_p, opener).CanonicalizePath(path_p, opener);
+}
+```
+
+`GitFileSystem` overrides it to rewrite the deprecated form into the canonical
+one:
+
+```
+CanonicalizePath("git://a.md@HEAD")  ->  "git://a.md?ref=HEAD"
+```
+
+**The revision is preserved, so canonicalization stays lossless.** This matters
+more than it looks. An earlier draft had `CanonicalizePath` *strip* the
+revision to yield `a.md`. That is wrong: for git the revision is part of the
+file's identity, `git://a.md@HEAD` and `git://a.md@v1.0` are different files,
+and a canonical path that cannot be opened again breaks the contract every
+other filesystem keeps. Rewriting rather than stripping avoids this entirely.
+
+### CanonicalizePath is an enhancement, not a requirement
+
+Measured on the three DuckDB lines duck_tails and its consumers ship against:
+
+| line | `CanonicalizePath` declared | VFS dispatch |
+|---|---|---|
+| v1.4.5 (`andium`) | no | no |
+| v1.5.6 (`variegata`) | yes | yes |
+| 2.0 | yes | yes |
+
+**Whether a consumer may depend on it is per-consumer, not a blanket rule.** An
+earlier draft of this spec said consumers must not depend on it at all. That
+was wrong on this spec's own evidence: only duckdb_markdown and duckdb_scalarfs
+carry an `andium` field, so only those two are constrained by v1.4.5.
+
+| consumer | ships v1.4.5 | may call `CanonicalizePath` |
+|---|---|---|
+| sitting_duck, duckdb_panduck | no | yes, unconditionally |
+| duckdb_markdown, duckdb_scalarfs | ~~yes~~ dropping | yes, unconditionally (see ruling below) |
+
+**Ruling (Teague, 2026-10-18): v1.4.5 is not a target.** The 1.4 series was
+LTS, but it reaches end of life imminently and is no longer built for. So no
+consumer keeps an `if constexpr` probe or an `@` fallback for it. Every
+consumer calls `CanonicalizePath` unconditionally. The `andium` fields in the
+duckdb_markdown and duckdb_scalarfs descriptors are stale, and each consumer
+drops its own as part of its migration.
+
+**Ruling (Teague, 2026-10-18): normalisation goes only through the VFS.** A
+reader does not parse another extension's URI grammar to recover a file name.
+It asks the filesystem that owns the path. With v1.4.5 out of scope (ruling
+above), this rule has no exceptions.
+
+This rule governs **vendor grammar**, not URI syntax. Cutting at `?` or `#` is
+RFC 3986, which consumers implement for their own reasons and which the new
+canonical form relies on. Read as "never parse a URL locally", the rule would
+delete standards-compliant code and leave nothing working below v1.5.6. So
+duckdb_panduck keeps `StripUrlQuery` and deletes `StripGitRevision`; the
+distinction between those two is exactly the line this rule draws.
+
+**A consumer keeps the result only if it still starts with the input's
+scheme** (Teague, 2026-10-18). Otherwise it uses the path as written. A
+`try`/`catch` alone is not enough, because for `git://` no exception is ever
+raised. By reading DuckDB v1.5.6 (not run):
+
+  - `VirtualFileSystem::FindFileSystem` throws `MissingExtensionException`
+    only for the prefixes in `EXTENSION_FILE_PREFIXES`
+    (`extension_entries.hpp:1277`: http, https, s3, gcs, r2, azure, hf...).
+    `git://` is not one of them.
+  - With duck_tails not loaded, the path falls to `default_fs`
+    (`virtual_file_system.cpp:391`). `LocalFileSystem::CanonicalizePath`
+    (`local_file_system.cpp:1451`) makes it absolute and probes the disk, so it
+    returns roughly `/<cwd>/git:/a.md@HEAD`.
+  - A duck_tails release without the override inherits
+    `FileSystem::CanonicalizePath`, which folds `git://a.md@HEAD` into
+    `git:/a.md@HEAD`.
+
+The scheme check catches both silent cases with one string comparison. Keep
+the `try`/`catch` as well, for the registered prefixes that do throw.
+Reported by the duckdb_panduck session.
+
+## Compatibility
+
+  - `@revision` continues to parse, indefinitely for now, and is documented as
+    deprecated rather than removed. Removal is a separate decision with its own
+    deprecation window.
+  - `git_uri(repo_path, file_path, revision)` emits the **new** form. It is the
+    advertised constructor, so it is how most callers will migrate without
+    changing anything.
+  - `@revision` is valid but not canonical (Teague, 2026-10-18). Every
+    `git_uri` a duck_tails function returns (`git_uri()`, the `git_tree` and
+    `git_read` columns, glob results) is in the `?ref=` form, whichever form
+    the input used.
+  - **The path before `?ref=` is verbatim** (Teague, 2026-10-18). An `@` there
+    is part of a file name, so `git://icon@2x.png?ref=HEAD` works. The two
+    forms still cannot combine: `git://a.md@HEAD?ref=v1.0` names a file called
+    `a.md@HEAD` and fails as not found. A dedicated error was the earlier plan,
+    but it cannot coexist with a lossless rewrite: `git://icon@2x.png@HEAD`
+    canonicalizes to a URI with an `@` before `?ref=`, which that error would
+    reject.
+  - The query starts at the first `?ref=`; a lone `?` stays a glob wildcard.
+    The value is literal: no percent-decoding, no `&` split, since refs may
+    contain both.
+  - `git_canonicalize(uri)` exposes the `CanonicalizePath` rewrite in SQL
+    (Teague, 2026-10-18), for tests and for migrating stored URIs.
+  - `..` is **resolved, not forbidden**. This section used to say "forbidden in
+    the file-path component", and measurement contradicts it: `..` is resolved
+    lexically before repository discovery (`git://docs/../README.md@HEAD` reads
+    `README.md`), and an escape fails because discovery finds no repository.
+    Both forms behave the same. `git_canonicalize` will not move a `..` from
+    after `@rev` to before `?ref=`, because there it would resolve differently.
+  - Nested-repository discovery is unchanged: it operates on the path, which is
+    now simply the part before `?`.
+
+## Open question, settled
+
+**Is a URI with no revision valid?** Yes: it means `HEAD`. The parser was
+right and the doc was wrong. Settled in duck_tails `9664b12`, as the
+implementation task directed. The original question follows.
+
+`docs/git_uris.md:89` says `git://./file.txt` is "Invalid (missing @
+separator)". `GitPath::Parse` disagrees — `git_filesystem.cpp:268-270` falls
+through to `result.revision = "HEAD"`. One of these is wrong today.
+
+Under the new grammar a bare path becomes the ordinary case
+(`git://README.md`, ref defaulting to `HEAD`), so this cannot stay ambiguous.
+Settle it explicitly, then make the doc and the parser agree.
+
+## Consumer-side work, filed separately
+
+  - **duckdb_markdown** — call `CanonicalizePath` unconditionally, with the
+    same scheme check as panduck, and delete its `@` strip. It no
+    longer needs a v1.4.5 fallback (ruling above); drop the stale `andium`
+    field. Keep the RFC `?`/`#` strip. Separate from issue #100, which is about
+    paths with *no* extension and is not fixed by this.
+  - **sitting_duck** — delete the strip in `ast_file_utils`.
+  - **duckdb_panduck** — tracked in duckdb_panduck#148 (which absorbed #147).
+    Not a one-line table edit: by the delegation table above, a deleted strip
+    with no `CanonicalizePath` call breaks `git://README.md@HEAD`. It ships in
+    two stages (Teague, 2026-10-18, relayed by the duckdb_panduck session and
+    matching #148's body).
+
+    **Stage 1, before the duck_tails release that carries #70:**
+      1. Call `CanonicalizePath` through the VFS before taking the extension.
+         No version probe: panduck ships no v1.4.5 line.
+      2. Use the canonical path only if it still starts with `git://`;
+         otherwise use the path as written (see the scheme check above). Keep
+         the `try`/`catch` for registered prefixes.
+      3. Move `git://` to the `StripUrlQuery` row of `SCHEME_CLEANERS`
+         (`src/reader_registry.cpp:80-84`), beside `http`/`https`. Keep
+         `StripGitRevision` only as the fallback for a path that step 2
+         rejected.
+
+    **Stage 2, after that duck_tails release:**
+      4. Delete `StripGitRevision`.
+
+    **Why two stages.** A released duck_tails has no override, so its
+    `CanonicalizePath` returns `git:/a.md@HEAD` and step 2 rejects it. Without
+    the fallback, `git://a.md@HEAD` would then give extension `md@head` and no
+    reader, where it gives markdown today (measured by the panduck session).
+    With the fallback, both `@rev` and `?ref=` work against any duck_tails.
+
+    `ExtOfPath` has no `ClientContext` today, so its callers must pass one in.
+    **Revision stripping only chooses the reader** (Teague, 2026-10-18): the
+    canonical path selects the reader, and the reader still opens the path as
+    the user wrote it. The registry's table comment — "schemes whose URIs carry
+    decoration AFTER the extension" — is the clearest statement of this problem
+    anywhere in the fleet.
+
+    panduck also has a live defect, removed by step 4 in stage 2
+    (duckdb_panduck#148):
+    `StripGitRevision` takes the last `@` with no `{` exclusion, so
+    `git://a.md@HEAD@{0}` yields base `a.md@HEAD` and extension `md@head`.
+
+Each is blocked until `?ref=` is the documented form, and none of them may drop
+`@` handling outright — only move it to `CanonicalizePath`.
+
+**Release order: consumers first** (Teague, 2026-10-18). duck_tails #70 makes
+glob results and `git_uri` columns return `?ref=`. Measured by the
+duckdb_panduck session: released panduck returns NULL for
+`panduck_format_for('git://a.md?ref=HEAD')`. So #70 may merge, but the
+duck_tails release that carries it waits until duckdb_panduck#148 has
+shipped stage 1 (steps 1-3 above), along with any other consumer found
+to mis-read `?ref=`. The other
+consumers have not been measured yet.
+
+Measured from the registry descriptors: only **duckdb_markdown** and
+**duckdb_scalarfs** carry an `andium` (v1.4.5) field. Since the v1.4.5 ruling,
+that field is stale, and every consumer calls `CanonicalizePath`
+unconditionally.
+
+## Related: other schemes, and why they are not this problem
+
+The same "the reader cannot read the extension" symptom has three other causes
+in the fleet, each with its own answer. Rulings by Teague, 2026-10-18:
+
+| scheme | answer |
+|---|---|
+| `pathvariable:`, `pathmacro:` (scalarfs) | **Resolve in the canonicalize phase.** Expanding a variable to its value is lossless and identity-preserving, exactly what `CanonicalizePath` is for. The resolved path carries a real extension. |
+| `mcp://` (duckdb_mcp) | **Carry an extension on the resource URL.** There is no mimetype-to-extension map in the fleet, and building one is DuckDB's business, not ours. |
+| `data:` (scalarfs) | **Requires an explicit reader.** No content sniffing. libmagic was considered and rejected as too heavy for the benefit. A caller who writes `read_markdown_blocks('data:,...')` has already declared the format. |
+
+The `data:` ruling is what duckdb_markdown#100 must implement: a path with **no**
+extension is no evidence either way and should be opened, while a path with a
+recognised non-markdown extension (`.png`) should still be refused. That
+three-way rule is independent of this design.
