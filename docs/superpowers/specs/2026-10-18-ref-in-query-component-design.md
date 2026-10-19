@@ -147,6 +147,19 @@ A consumer free of v1.4.5 should prefer the call, because it is the only route
 that stays correct as the grammar evolves. A consumer carrying v1.4.5 keeps a
 local fallback until it drops that line.
 
+**Ruling (Teague, 2026-10-18): normalisation goes only through the VFS.** A
+reader does not parse another extension's URI grammar to recover a file name.
+It asks the filesystem that owns the path. The table above is the exception
+schedule, not a softening: v1.4.5 has no `CanonicalizePath`, so the two
+consumers that ship it keep a guarded fallback until they drop the line.
+
+This rule governs **vendor grammar**, not URI syntax. Cutting at `?` or `#` is
+RFC 3986, which consumers implement for their own reasons and which the new
+canonical form relies on. Read as "never parse a URL locally", the rule would
+delete standards-compliant code and leave nothing working below v1.5.6. So
+duckdb_panduck keeps `StripUrlQuery` and deletes `StripGitRevision`; the
+distinction between those two is exactly the line this rule draws.
+
 A consumer that does call it needs a `try`/`catch`: `FindFileSystem` raises
 `File X requires the extension Y to be loaded` when no registered filesystem
 claims the path.
