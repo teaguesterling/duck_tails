@@ -13,79 +13,79 @@ SET extension_directory='__BUILD_DIRECTORY__/extension';
 query T
 SELECT git_uri('.', 'README.md', 'HEAD');
 ----
-git://./README.md@HEAD
+git://./README.md?ref=HEAD
 
 # Test 2: URI with nested repository path
 query T
 SELECT git_uri('test/tmp/main-repo', 'src/main.cpp', 'v1.0');
 ----
-git://test/tmp/main-repo/src/main.cpp@v1.0
+git://test/tmp/main-repo/src/main.cpp?ref=v1.0
 
 # Test 3: URI with absolute path
 query T
 SELECT git_uri('/abs/path/repo', 'file.txt', 'main');
 ----
-git:///abs/path/repo/file.txt@main
+git:///abs/path/repo/file.txt?ref=main
 
 # Test 4: URI with empty file path (repository root)
 query T
 SELECT git_uri('/abs/path/repo', '', 'main');
 ----
-git:///abs/path/repo@main
+git:///abs/path/repo?ref=main
 
 # Test 5: URI with path ending in slash
 query T
 SELECT git_uri('repo/', 'file.txt', 'HEAD');
 ----
-git://repo/file.txt@HEAD
+git://repo/file.txt?ref=HEAD
 
 # Test 6: URI with file path starting with slash
 query T
 SELECT git_uri('repo', '/file.txt', 'HEAD');
 ----
-git://repo/file.txt@HEAD
+git://repo/file.txt?ref=HEAD
 
 # Test 7: URI with both trailing and leading slashes
 query T
 SELECT git_uri('repo/', '/file.txt', 'HEAD');
 ----
-git://repo/file.txt@HEAD
+git://repo/file.txt?ref=HEAD
 
 # Test 8: URI with commit SHA
 query T
 SELECT git_uri('.', 'file.txt', 'abc123def456');
 ----
-git://./file.txt@abc123def456
+git://./file.txt?ref=abc123def456
 
 # Test 9: URI with branch name
 query T
 SELECT git_uri('repo', 'docs/guide.md', 'feature/new-feature');
 ----
-git://repo/docs/guide.md@feature/new-feature
+git://repo/docs/guide.md?ref=feature/new-feature
 
 # Test 10: URI with tag
 query T
 SELECT git_uri('project', 'version.txt', 'v2.0.0');
 ----
-git://project/version.txt@v2.0.0
+git://project/version.txt?ref=v2.0.0
 
 # Test 11: URI with relative ref
 query T
 SELECT git_uri('.', 'file.txt', 'HEAD~1');
 ----
-git://./file.txt@HEAD~1
+git://./file.txt?ref=HEAD~1
 
 # Test 12: URI with range (two-dot)
 query T
 SELECT git_uri('repo', 'changed.txt', 'v1.0..v2.0');
 ----
-git://repo/changed.txt@v1.0..v2.0
+git://repo/changed.txt?ref=v1.0..v2.0
 
 # Test 13: URI with range (three-dot)
 query T
 SELECT git_uri('repo', 'merged.txt', 'main...feature');
 ----
-git://repo/merged.txt@main...feature
+git://repo/merged.txt?ref=main...feature
 
 # Test 14: Consistency with git_tree output
 # Verify that git_tree's git_uri column uses the same format
@@ -114,9 +114,9 @@ SELECT git_uri(repo, file, ref) FROM (
 ) AS t(repo, file, ref)
 ORDER BY 1;
 ----
-git://repo1/file1.txt@HEAD
-git://repo2/dir/file2.txt@main
-git://repo3@v1.0
+git://repo1/file1.txt?ref=HEAD
+git://repo2/dir/file2.txt?ref=main
+git://repo3?ref=v1.0
 
 # Test 17: NULL handling
 query I
