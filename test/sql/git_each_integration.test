@@ -15,7 +15,7 @@ PRAGMA enable_verification;
 
 # Test git_uri helper function integration with git_tree git_uri  
 query T
-SELECT git_uri LIKE '%/README.md@' || commit_hash as uri_matches
+SELECT git_uri LIKE '%/README.md?ref=' || commit_hash as uri_matches
 FROM git_tree('test/tmp/main-repo', 'HEAD') 
 WHERE file_path = 'README.md'
 ----

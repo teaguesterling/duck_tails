@@ -399,6 +399,60 @@ SELECT COUNT(*) FROM git_log('git://?ref=feature/foo', repo_path := 'test/tmp/sl
 2
 
 # ==============================================================
+# The git_uri columns emit the canonical form
+# ==============================================================
+
+# @rev is still valid input, but every git_uri a function hands back is in
+# the canonical form, whichever spelling it was given.
+query I
+SELECT git_uri FROM git_read('git://test/tmp/slash-refs-repo/README.md@feature/foo');
+----
+git://test/tmp/slash-refs-repo/README.md?ref=feature/foo
+
+query I
+SELECT git_uri FROM git_read('git://test/tmp/slash-refs-repo/README.md?ref=feature/foo');
+----
+git://test/tmp/slash-refs-repo/README.md?ref=feature/foo
+
+query I
+SELECT git_uri LIKE '%/slash-refs-repo/README.md?ref=feature/foo'
+FROM git_read('test/tmp/slash-refs-repo/README.md', 'feature/foo');
+----
+true
+
+query I
+SELECT r.git_uri
+FROM (VALUES ('git://test/tmp/slash-refs-repo/README.md@main')) AS v(u), LATERAL git_read_each(v.u) r;
+----
+git://test/tmp/slash-refs-repo/README.md?ref=main
+
+query I
+SELECT COUNT(*) FILTER (WHERE git_uri NOT LIKE 'git://%?ref=%')
+FROM git_tree('git://test/tmp/slash-refs-repo?ref=feature/foo');
+----
+0
+
+query I
+SELECT COUNT(*) > 0 AND COUNT(*) FILTER (WHERE git_uri NOT LIKE '%?ref=STAGED') = 0
+FROM git_tree('git://test/tmp/staged-glob-repo?ref=STAGED');
+----
+true
+
+query I
+SELECT COUNT(*) > 0 AND COUNT(*) FILTER (WHERE git_uri NOT LIKE '%?ref=WORKDIR') = 0
+FROM git_tree('git://test/tmp/staged-glob-repo?ref=WORKDIR');
+----
+true
+
+# A git_tree URI feeds straight back into a reader.
+query I
+SELECT trim(r.text, chr(10))
+FROM git_tree('git://test/tmp/slash-refs-repo?ref=feature/foo') t, LATERAL git_read_each(t.git_uri) r
+WHERE t.file_path = 'README.md';
+----
+feature branch content
+
+# ==============================================================
 # git_uri() emits the canonical form
 # ==============================================================
 

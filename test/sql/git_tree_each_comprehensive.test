@@ -87,7 +87,7 @@ true
 
 # Test git_uri column format
 query T
-SELECT git_uri LIKE 'git://%/test/tmp/main-repo/README.md@%' as correct_format 
+SELECT git_uri LIKE 'git://%/test/tmp/main-repo/README.md?ref=%' as correct_format 
 FROM git_tree_each('test/tmp/main-repo', 'HEAD') 
 WHERE file_path = 'README.md'
 ----
