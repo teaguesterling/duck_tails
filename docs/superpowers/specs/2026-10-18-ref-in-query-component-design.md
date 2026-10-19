@@ -76,13 +76,26 @@ auto query_pos = path.find_first_of("?#");
 ```
 
 So `git://README.md?ref=HEAD` resolves to `README.md` under code that predates
-this design and mentions neither git nor duck_tails. The `@revision` branch
-below it is then dead and is deleted. The same holds for sitting_duck and
-panduck.
+this design and mentions neither git nor duck_tails.
 
-This is the whole point of the change. A shared helper, a vendored utility, or
-a `git_strip_ref()` scalar function would all centralise the special case.
-Moving the revision into the query component **ends** it.
+**The duplication ends by delegation, not by deletion.** `@revision` is
+accepted indefinitely (Teague, 2026-10-18), so a caller can always type
+`git://README.md@HEAD` straight into a reader. A consumer that simply deletes
+its strip therefore regresses on that spelling. What it deletes its strip *for*
+is a call to `CanonicalizePath`, which duck_tails owns:
+
+| consumer state | `git://README.md@HEAD` resolves? |
+|---|---|
+| keeps its own `@` strip | yes — the status quo, one buggy copy per consumer |
+| strip deleted, calls `CanonicalizePath` | yes — VFS returns `?ref=`, the consumer's existing `?`/`#` cut finishes |
+| strip deleted, no `CanonicalizePath` | **no** — extension reads `md@head` |
+
+So the gain is not "no code anywhere". It is one implementation of the grammar,
+in the repository that defines it, instead of three reimplementations of which
+two are already wrong. A shared helper or a `git_strip_ref()` scalar function
+would centralise the parsing too, but each would make every consumer depend on
+duck_tails at build time; `CanonicalizePath` is already in DuckDB's own
+interface, so it costs the consumer no new dependency.
 
 ## CanonicalizePath is the migration bridge
 
@@ -158,9 +171,12 @@ Settle it explicitly, then make the doc and the parser agree.
 
 ## Consumer-side work, filed separately
 
-  - **duckdb_markdown** — delete the `@` branch of `IsMarkdownFileName`. Keep
-    the RFC `?`/`#` strip. Separate from issue #100, which is about paths with
-    *no* extension and is not fixed by this.
+  - **duckdb_markdown** — the awkward one. Its descriptor carries `andium`, so
+    it ships the v1.4.5 line, where `CanonicalizePath` does not exist. It must
+    either keep a minimal `@` fallback behind an `if constexpr` probe, or stop
+    supporting decorated git paths on that line. Keep the RFC `?`/`#` strip
+    either way. Separate from issue #100, which is about paths with *no*
+    extension and is not fixed by this.
   - **sitting_duck** — delete the strip in `ast_file_utils`.
   - **duckdb_panduck** — a one-line table edit, not a deletion. It keys cleaners
     by scheme (`src/reader_registry.cpp:80-84`), so `git://` moves from
@@ -173,8 +189,13 @@ Settle it explicitly, then make the doc and the parser agree.
     `@` with no `{` exclusion, so `git://a.md@HEAD@{0}` yields base `a.md@HEAD`
     and extension `md@head`. Reflog syntax is already broken there.
 
-Each is blocked until `?ref=` is the documented form, because a consumer cannot
-drop support for a spelling its users still type.
+Each is blocked until `?ref=` is the documented form, and none of them may drop
+`@` handling outright — only move it to `CanonicalizePath`.
+
+Measured from the registry descriptors: only **duckdb_markdown** and
+**duckdb_scalarfs** carry an `andium` (v1.4.5) field. sitting_duck, panduck and
+duck_tails itself do not, so those three can call `CanonicalizePath`
+unconditionally with no compatibility probe.
 
 ## Related: other schemes, and why they are not this problem
 
