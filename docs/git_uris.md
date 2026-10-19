@@ -200,9 +200,9 @@ SELECT filename FROM read_text('git://docs/*.md?ref=v1.0');
 
 ### Tree Operations
 ```sql
--- git_tree outputs git_uri column (still in the deprecated @ form)
+-- git_tree outputs git_uri column, in the canonical form
 SELECT git_uri FROM git_tree('HEAD');
--- Returns URIs like: 'git://./src/main.cpp@abc123'
+-- Returns URIs like: 'git://./src/main.cpp?ref=abc123'
 
 -- Using URIs to read specific files
 SELECT * FROM git_tree('HEAD') t
@@ -260,7 +260,8 @@ SELECT * FROM git_parents('git://.?ref=feature-branch');
 - All URI construction should use `git_uri()` function for consistency
 - Repository discovery happens at parse time via `GitPath::Parse`
 - URIs are normalized to absolute repository paths internally
-- The `git_uri` column in git functions provides ready-to-use URIs
+- The `git_uri` column in git functions provides ready-to-use URIs, always in
+  the canonical `?ref=` form, whichever form the input used
 - Functions validate that git:// URIs don't conflict with revision parameters
 
 ## Schema Standardization
