@@ -64,8 +64,9 @@ After repository discovery, the remaining path becomes the file path:
   both `%` and `&`. `ref` is the only parameter.
 - Everything before `?ref=` is the path, taken literally. An `@` there is part
   of a file name: `git://icon@2x.png?ref=HEAD` names `icon@2x.png`.
-- An empty value (`git://README.md?ref=`) means the default revision, the same
-  as the deprecated `git://README.md@`.
+- An empty value (`git://README.md?ref=`) means the default revision in the
+  git table functions, the same as the deprecated `git://README.md@`. DuckDB's
+  readers (`read_text`, `read_csv`) reject an empty revision in both forms.
 - Do not combine the two forms. In `git://a.md@HEAD?ref=v1.0` the path is the
   file name `a.md@HEAD`, so the URI fails with a file-not-found error unless a
   file with that exact name exists.
@@ -125,7 +126,8 @@ When a git URI is parsed, the system discovers the repository by:
 - `git://?ref=HEAD`, `git://@HEAD` - Valid (an empty path means the current
   directory, with no file path)
 - `git://.?ref=HEAD`, `git://.@HEAD` - Valid (current directory, no file path)
-- `git://./file.txt?ref=`, `git://./file.txt@` - Valid (default revision)
+- `git://./file.txt?ref=`, `git://./file.txt@` - Valid in the git table
+  functions (default revision); rejected by DuckDB's readers
 - `git://./file.txt` - Valid (defaults to HEAD)
 
 ## Canonical form
@@ -150,6 +152,9 @@ inputs are returned unchanged:
 - a non-`git://` string
 - a deprecated URI whose revision contains `/`, when the repository is not
   available to settle where the ref ends
+- a deprecated URI whose path after the revision contains `..`: after `@rev`
+  it applies inside the repository, but in front of `?ref=` it would resolve
+  before repository discovery
 
 ## The git_uri() Function
 
