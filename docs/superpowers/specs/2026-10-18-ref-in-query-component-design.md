@@ -133,10 +133,19 @@ Measured on the three DuckDB lines duck_tails and its consumers ship against:
 | v1.5.6 (`variegata`) | yes | yes |
 | 2.0 | yes | yes |
 
-Consumers must therefore **not** depend on it. They rely on the RFC query strip
-they already have, which works on every line. `CanonicalizePath` exists so that
-a consumer which wants a resolved name can ask for one, and so that the
-deprecated `@rev` form keeps working for consumers that do ask.
+**Whether a consumer may depend on it is per-consumer, not a blanket rule.** An
+earlier draft of this spec said consumers must not depend on it at all. That
+was wrong on this spec's own evidence: only duckdb_markdown and duckdb_scalarfs
+carry an `andium` field, so only those two are constrained by v1.4.5.
+
+| consumer | ships v1.4.5 | may call `CanonicalizePath` |
+|---|---|---|
+| sitting_duck, duckdb_panduck | no | yes, unconditionally |
+| duckdb_markdown, duckdb_scalarfs | yes | behind an `if constexpr` probe, with the `@` strip as the fallback |
+
+A consumer free of v1.4.5 should prefer the call, because it is the only route
+that stays correct as the grammar evolves. A consumer carrying v1.4.5 keeps a
+local fallback until it drops that line.
 
 A consumer that does call it needs a `try`/`catch`: `FindFileSystem` raises
 `File X requires the extension Y to be loaded` when no registered filesystem
