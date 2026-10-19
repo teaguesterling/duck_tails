@@ -57,7 +57,7 @@ LIMIT 1
 
 # Test git_uri construction with dynamic parameters from git_log_each
 query T
-SELECT git_uri('test/tmp/main-repo', 'README.md', l.commit_hash) LIKE 'git://test/tmp/main-repo/README.md@%' as uri_ok
+SELECT git_uri('test/tmp/main-repo', 'README.md', l.commit_hash) LIKE 'git://test/tmp/main-repo/README.md?ref=%' as uri_ok
 FROM git_log_each('test/tmp/main-repo') l
 LIMIT 1
 ----

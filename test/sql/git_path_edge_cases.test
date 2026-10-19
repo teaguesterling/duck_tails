@@ -49,13 +49,13 @@ file
 
 # Test 7: git_uri function with various path formats
 query T
-SELECT git_uri('.', 'README.md', 'HEAD') LIKE 'git://%README.md@HEAD' as uri_correct;
+SELECT git_uri('.', 'README.md', 'HEAD') LIKE 'git://%README.md?ref=HEAD' as uri_correct;
 ----
 true
 
 # Test 8: git_uri with nested repository
 query T
-SELECT git_uri('test/tmp/main-repo', 'README.md', 'HEAD') = 'git://test/tmp/main-repo/README.md@HEAD' as uri_correct;
+SELECT git_uri('test/tmp/main-repo', 'README.md', 'HEAD') = 'git://test/tmp/main-repo/README.md?ref=HEAD' as uri_correct;
 ----
 true
 

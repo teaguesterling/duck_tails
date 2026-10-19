@@ -15,61 +15,61 @@ PRAGMA enable_verification;
 query T
 SELECT git_uri('.', 'README.md', 'HEAD')
 ----
-git://./README.md@HEAD
+git://./README.md?ref=HEAD
 
 # Test git_uri with absolute repository path
 query T
 SELECT git_uri('/path/to/repo', 'src/main.cpp', 'v1.0')
 ----
-git:///path/to/repo/src/main.cpp@v1.0
+git:///path/to/repo/src/main.cpp?ref=v1.0
 
 # Test git_uri with relative repository path
 query T
 SELECT git_uri('../other-repo', 'config.json', 'abc123')
 ----
-git://../other-repo/config.json@abc123
+git://../other-repo/config.json?ref=abc123
 
 # Test git_uri with empty file path
 query T
 SELECT git_uri('/repo', '', 'HEAD')
 ----
-git:///repo@HEAD
+git:///repo?ref=HEAD
 
 # Test git_uri with file path that starts with slash
 query T
 SELECT git_uri('repo', '/absolute/file.txt', 'main')
 ----
-git://repo/absolute/file.txt@main
+git://repo/absolute/file.txt?ref=main
 
 # Test git_uri with repository path that ends with slash
 query T
 SELECT git_uri('repo/', 'file.txt', 'HEAD')
 ----
-git://repo/file.txt@HEAD
+git://repo/file.txt?ref=HEAD
 
 # Test git_uri with both paths having appropriate slashes
 query T
 SELECT git_uri('repo/', '/file.txt', 'HEAD')
 ----
-git://repo/file.txt@HEAD
+git://repo/file.txt?ref=HEAD
 
 # Test git_uri with complex file path
 query T
 SELECT git_uri('.', 'deep/nested/path/file.txt', 'feature-branch')
 ----
-git://./deep/nested/path/file.txt@feature-branch
+git://./deep/nested/path/file.txt?ref=feature-branch
 
 # Test git_uri with special commit references
 query T
 SELECT git_uri('.', 'README.md', 'HEAD~5')
 ----
-git://./README.md@HEAD~5
+git://./README.md?ref=HEAD~5
 
 # Test git_uri with tag reference
 query T
 SELECT git_uri('.', 'CHANGELOG.md', 'v2.1.0')
 ----
-git://./CHANGELOG.md@v2.1.0
+git://./CHANGELOG.md?ref=v2.1.0
 
 # Test git_uri function signature and return type
 statement ok
@@ -99,9 +99,9 @@ SELECT
 FROM (VALUES ('README.md'), ('src/main.cpp'), ('docs/api.md')) t(path)
 ORDER BY path
 ----
-README.md	git://./README.md@HEAD
-docs/api.md	git://./docs/api.md@HEAD
-src/main.cpp	git://./src/main.cpp@HEAD
+README.md	git://./README.md?ref=HEAD
+docs/api.md	git://./docs/api.md?ref=HEAD
+src/main.cpp	git://./src/main.cpp?ref=HEAD
 
 # Test git_uri integration with table functions
 statement ok
