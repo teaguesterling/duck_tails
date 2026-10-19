@@ -308,8 +308,9 @@ static void ProcessIndexRead(const string &repo_path, const string &file_path, c
 
 // Helper function to process a git:// URI and extract content using GitContextManager
 static void ProcessGitURI(const string &uri, const GitReadBindData &bind_data, GitReadLocalState::ReadResult &result) {
-	// Initialize all fields with defaults
-	result.git_uri = uri;
+	// Initialize all fields with defaults. The URI may arrive in the deprecated
+	// @rev form; the git_uri column always reports the canonical one.
+	result.git_uri = GitPath::Canonicalize(uri);
 	result.repo_path = "";
 	result.commit_hash = "";
 	result.tree_hash = "";
@@ -334,11 +335,9 @@ static void ProcessGitURI(const string &uri, const GitReadBindData &bind_data, G
 		switch (ctx.ref_kind) {
 		case RefKind::WORKDIR:
 			ProcessWorkdirRead(ctx.repo_path, ctx.file_path, bind_data, result);
-			result.git_uri = uri;
 			return;
 		case RefKind::INDEX:
 			ProcessIndexRead(ctx.repo_path, ctx.file_path, bind_data, result);
-			result.git_uri = uri;
 			return;
 		case RefKind::COMMIT:
 			break; // Fall through to existing commit path
