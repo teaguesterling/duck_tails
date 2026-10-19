@@ -240,15 +240,29 @@ Settle it explicitly, then make the doc and the parser agree.
   - **sitting_duck** — delete the strip in `ast_file_utils`.
   - **duckdb_panduck** — tracked in duckdb_panduck#148 (which absorbed #147).
     Not a one-line table edit: by the delegation table above, a deleted strip
-    with no `CanonicalizePath` call breaks `git://README.md@HEAD`. Four steps:
+    with no `CanonicalizePath` call breaks `git://README.md@HEAD`. It ships in
+    two stages (Teague, 2026-10-18, relayed by the duckdb_panduck session and
+    matching #148's body).
+
+    **Stage 1, before the duck_tails release that carries #70:**
       1. Call `CanonicalizePath` through the VFS before taking the extension.
          No version probe: panduck ships no v1.4.5 line.
       2. Use the canonical path only if it still starts with `git://`;
          otherwise use the path as written (see the scheme check above). Keep
          the `try`/`catch` for registered prefixes.
       3. Move `git://` to the `StripUrlQuery` row of `SCHEME_CLEANERS`
-         (`src/reader_registry.cpp:80-84`), beside `http`/`https`.
+         (`src/reader_registry.cpp:80-84`), beside `http`/`https`. Keep
+         `StripGitRevision` only as the fallback for a path that step 2
+         rejected.
+
+    **Stage 2, after that duck_tails release:**
       4. Delete `StripGitRevision`.
+
+    **Why two stages.** A released duck_tails has no override, so its
+    `CanonicalizePath` returns `git:/a.md@HEAD` and step 2 rejects it. Without
+    the fallback, `git://a.md@HEAD` would then give extension `md@head` and no
+    reader, where it gives markdown today (measured by the panduck session).
+    With the fallback, both `@rev` and `?ref=` work against any duck_tails.
 
     `ExtOfPath` has no `ClientContext` today, so its callers must pass one in.
     **Revision stripping only chooses the reader** (Teague, 2026-10-18): the
@@ -257,7 +271,8 @@ Settle it explicitly, then make the doc and the parser agree.
     decoration AFTER the extension" — is the clearest statement of this problem
     anywhere in the fleet.
 
-    panduck also has a live defect, removed by step 4 (duckdb_panduck#148):
+    panduck also has a live defect, removed by step 4 in stage 2
+    (duckdb_panduck#148):
     `StripGitRevision` takes the last `@` with no `{` exclusion, so
     `git://a.md@HEAD@{0}` yields base `a.md@HEAD` and extension `md@head`.
 
@@ -269,7 +284,8 @@ glob results and `git_uri` columns return `?ref=`. Measured by the
 duckdb_panduck session: released panduck returns NULL for
 `panduck_format_for('git://a.md?ref=HEAD')`. So #70 may merge, but the
 duck_tails release that carries it waits until duckdb_panduck#148 has
-shipped, along with any other consumer found to mis-read `?ref=`. The other
+shipped stage 1 (steps 1-3 above), along with any other consumer found
+to mis-read `?ref=`. The other
 consumers have not been measured yet.
 
 Measured from the registry descriptors: only **duckdb_markdown** and
