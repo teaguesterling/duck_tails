@@ -1,7 +1,7 @@
 # Git URI: move the revision into the query component
 
-**Status:** approved in principle (Teague, 2026-10-18). Grammar settled; one open
-question below must be answered before implementation.
+**Status:** approved (Teague, 2026-10-18). Grammar settled, open question
+settled, implemented on duck_tails `feat/git-uri-ref-query` (#69).
 
 **Problem owner:** duck_tails. **Blocked consumers:** duckdb_markdown,
 sitting_duck, duckdb_panduck.
@@ -141,17 +141,19 @@ carry an `andium` field, so only those two are constrained by v1.4.5.
 | consumer | ships v1.4.5 | may call `CanonicalizePath` |
 |---|---|---|
 | sitting_duck, duckdb_panduck | no | yes, unconditionally |
-| duckdb_markdown, duckdb_scalarfs | yes | behind an `if constexpr` probe, with the `@` strip as the fallback |
+| duckdb_markdown, duckdb_scalarfs | ~~yes~~ dropping | yes, unconditionally (see ruling below) |
 
-A consumer free of v1.4.5 should prefer the call, because it is the only route
-that stays correct as the grammar evolves. A consumer carrying v1.4.5 keeps a
-local fallback until it drops that line.
+**Ruling (Teague, 2026-10-18): v1.4.5 is not a target.** The 1.4 series was
+LTS, but it reaches end of life imminently and is no longer built for. So no
+consumer keeps an `if constexpr` probe or an `@` fallback for it. Every
+consumer calls `CanonicalizePath` unconditionally. The `andium` fields in the
+duckdb_markdown and duckdb_scalarfs descriptors are stale, and each consumer
+drops its own as part of its migration.
 
 **Ruling (Teague, 2026-10-18): normalisation goes only through the VFS.** A
 reader does not parse another extension's URI grammar to recover a file name.
-It asks the filesystem that owns the path. The table above is the exception
-schedule, not a softening: v1.4.5 has no `CanonicalizePath`, so the two
-consumers that ship it keep a guarded fallback until they drop the line.
+It asks the filesystem that owns the path. With v1.4.5 out of scope (ruling
+above), this rule has no exceptions.
 
 This rule governs **vendor grammar**, not URI syntax. Cutting at `?` or `#` is
 RFC 3986, which consumers implement for their own reasons and which the new
@@ -172,16 +174,36 @@ claims the path.
   - `git_uri(repo_path, file_path, revision)` emits the **new** form. It is the
     advertised constructor, so it is how most callers will migrate without
     changing anything.
-  - Both forms must not be combined. `git://a.md@HEAD?ref=v1.0` is an error,
-    not a precedence puzzle.
-  - `..` remains forbidden in the file-path component after repository
-    discovery. The query component does not relax that.
+  - `@revision` is valid but not canonical (Teague, 2026-10-18). Every
+    `git_uri` a duck_tails function returns (`git_uri()`, the `git_tree` and
+    `git_read` columns, glob results) is in the `?ref=` form, whichever form
+    the input used.
+  - **The path before `?ref=` is verbatim** (Teague, 2026-10-18). An `@` there
+    is part of a file name, so `git://icon@2x.png?ref=HEAD` works. The two
+    forms still cannot combine: `git://a.md@HEAD?ref=v1.0` names a file called
+    `a.md@HEAD` and fails as not found. A dedicated error was the earlier plan,
+    but it cannot coexist with a lossless rewrite: `git://icon@2x.png@HEAD`
+    canonicalizes to a URI with an `@` before `?ref=`, which that error would
+    reject.
+  - The query starts at the first `?ref=`; a lone `?` stays a glob wildcard.
+    The value is literal: no percent-decoding, no `&` split, since refs may
+    contain both.
+  - `git_canonicalize(uri)` exposes the `CanonicalizePath` rewrite in SQL
+    (Teague, 2026-10-18), for tests and for migrating stored URIs.
+  - `..` is **resolved, not forbidden**. This section used to say "forbidden in
+    the file-path component", and measurement contradicts it: `..` is resolved
+    lexically before repository discovery (`git://docs/../README.md@HEAD` reads
+    `README.md`), and an escape fails because discovery finds no repository.
+    Both forms behave the same. `git_canonicalize` will not move a `..` from
+    after `@rev` to before `?ref=`, because there it would resolve differently.
   - Nested-repository discovery is unchanged: it operates on the path, which is
     now simply the part before `?`.
 
-## Open question, to settle before implementation
+## Open question, settled
 
-**Is a URI with no revision valid?**
+**Is a URI with no revision valid?** Yes: it means `HEAD`. The parser was
+right and the doc was wrong. Settled in duck_tails `9664b12`, as the
+implementation task directed. The original question follows.
 
 `docs/git_uris.md:89` says `git://./file.txt` is "Invalid (missing @
 separator)". `GitPath::Parse` disagrees — `git_filesystem.cpp:268-270` falls
@@ -193,12 +215,11 @@ Settle it explicitly, then make the doc and the parser agree.
 
 ## Consumer-side work, filed separately
 
-  - **duckdb_markdown** — the awkward one. Its descriptor carries `andium`, so
-    it ships the v1.4.5 line, where `CanonicalizePath` does not exist. It must
-    either keep a minimal `@` fallback behind an `if constexpr` probe, or stop
-    supporting decorated git paths on that line. Keep the RFC `?`/`#` strip
-    either way. Separate from issue #100, which is about paths with *no*
-    extension and is not fixed by this.
+  - **duckdb_markdown** — call `CanonicalizePath` unconditionally, with the
+    same not-loaded `try`/`catch` as panduck, and delete its `@` strip. It no
+    longer needs a v1.4.5 fallback (ruling above); drop the stale `andium`
+    field. Keep the RFC `?`/`#` strip. Separate from issue #100, which is about
+    paths with *no* extension and is not fixed by this.
   - **sitting_duck** — delete the strip in `ast_file_utils`.
   - **duckdb_panduck** — tracked in duckdb_panduck#148 (which absorbed #147).
     Not a one-line table edit: by the delegation table above, a deleted strip
@@ -226,9 +247,9 @@ Each is blocked until `?ref=` is the documented form, and none of them may drop
 `@` handling outright — only move it to `CanonicalizePath`.
 
 Measured from the registry descriptors: only **duckdb_markdown** and
-**duckdb_scalarfs** carry an `andium` (v1.4.5) field. sitting_duck, panduck and
-duck_tails itself do not, so those three can call `CanonicalizePath`
-unconditionally with no compatibility probe.
+**duckdb_scalarfs** carry an `andium` (v1.4.5) field. Since the v1.4.5 ruling,
+that field is stale, and every consumer calls `CanonicalizePath`
+unconditionally.
 
 ## Related: other schemes, and why they are not this problem
 
