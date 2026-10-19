@@ -162,9 +162,26 @@ delete standards-compliant code and leave nothing working below v1.5.6. So
 duckdb_panduck keeps `StripUrlQuery` and deletes `StripGitRevision`; the
 distinction between those two is exactly the line this rule draws.
 
-A consumer that does call it needs a `try`/`catch`: `FindFileSystem` raises
-`File X requires the extension Y to be loaded` when no registered filesystem
-claims the path.
+**A consumer keeps the result only if it still starts with the input's
+scheme** (Teague, 2026-10-18). Otherwise it uses the path as written. A
+`try`/`catch` alone is not enough, because for `git://` no exception is ever
+raised. By reading DuckDB v1.5.6 (not run):
+
+  - `VirtualFileSystem::FindFileSystem` throws `MissingExtensionException`
+    only for the prefixes in `EXTENSION_FILE_PREFIXES`
+    (`extension_entries.hpp:1277`: http, https, s3, gcs, r2, azure, hf...).
+    `git://` is not one of them.
+  - With duck_tails not loaded, the path falls to `default_fs`
+    (`virtual_file_system.cpp:391`). `LocalFileSystem::CanonicalizePath`
+    (`local_file_system.cpp:1451`) makes it absolute and probes the disk, so it
+    returns roughly `/<cwd>/git:/a.md@HEAD`.
+  - A duck_tails release without the override inherits
+    `FileSystem::CanonicalizePath`, which folds `git://a.md@HEAD` into
+    `git:/a.md@HEAD`.
+
+The scheme check catches both silent cases with one string comparison. Keep
+the `try`/`catch` as well, for the registered prefixes that do throw.
+Reported by the duckdb_panduck session.
 
 ## Compatibility
 
@@ -216,7 +233,7 @@ Settle it explicitly, then make the doc and the parser agree.
 ## Consumer-side work, filed separately
 
   - **duckdb_markdown** — call `CanonicalizePath` unconditionally, with the
-    same not-loaded `try`/`catch` as panduck, and delete its `@` strip. It no
+    same scheme check as panduck, and delete its `@` strip. It no
     longer needs a v1.4.5 fallback (ruling above); drop the stale `andium`
     field. Keep the RFC `?`/`#` strip. Separate from issue #100, which is about
     paths with *no* extension and is not fixed by this.
@@ -226,8 +243,9 @@ Settle it explicitly, then make the doc and the parser agree.
     with no `CanonicalizePath` call breaks `git://README.md@HEAD`. Four steps:
       1. Call `CanonicalizePath` through the VFS before taking the extension.
          No version probe: panduck ships no v1.4.5 line.
-      2. Catch the "requires the extension" error when duck_tails is not
-         loaded, and use the path as written.
+      2. Use the canonical path only if it still starts with `git://`;
+         otherwise use the path as written (see the scheme check above). Keep
+         the `try`/`catch` for registered prefixes.
       3. Move `git://` to the `StripUrlQuery` row of `SCHEME_CLEANERS`
          (`src/reader_registry.cpp:80-84`), beside `http`/`https`.
       4. Delete `StripGitRevision`.
@@ -245,6 +263,14 @@ Settle it explicitly, then make the doc and the parser agree.
 
 Each is blocked until `?ref=` is the documented form, and none of them may drop
 `@` handling outright — only move it to `CanonicalizePath`.
+
+**Release order: consumers first** (Teague, 2026-10-18). duck_tails #70 makes
+glob results and `git_uri` columns return `?ref=`. Measured by the
+duckdb_panduck session: released panduck returns NULL for
+`panduck_format_for('git://a.md?ref=HEAD')`. So #70 may merge, but the
+duck_tails release that carries it waits until duckdb_panduck#148 has
+shipped, along with any other consumer found to mis-read `?ref=`. The other
+consumers have not been measured yet.
 
 Measured from the registry descriptors: only **duckdb_markdown** and
 **duckdb_scalarfs** carry an `andium` (v1.4.5) field. Since the v1.4.5 ruling,
