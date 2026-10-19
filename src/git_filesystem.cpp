@@ -440,6 +440,15 @@ string GitPath::Canonicalize(const string &git_url) {
 		revision = parsed.revision;
 	}
 
+	// After "@rev" a ".." is applied inside the repository; in front of
+	// "?ref=" it would be resolved before discovery and could reach another
+	// repository and file. Moving it would not be lossless, so don't.
+	for (auto &segment : StringUtil::Split(path_suffix, '/')) {
+		if (segment == "..") {
+			return git_url;
+		}
+	}
+
 	// "git://" + "/README.md" would read as an absolute path. An empty path
 	// means the current directory to Parse, so say that explicitly.
 	if (path.empty() && !path_suffix.empty()) {
