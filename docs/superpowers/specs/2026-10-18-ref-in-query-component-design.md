@@ -200,16 +200,27 @@ Settle it explicitly, then make the doc and the parser agree.
     either way. Separate from issue #100, which is about paths with *no*
     extension and is not fixed by this.
   - **sitting_duck** — delete the strip in `ast_file_utils`.
-  - **duckdb_panduck** — a one-line table edit, not a deletion. It keys cleaners
-    by scheme (`src/reader_registry.cpp:80-84`), so `git://` moves from
-    `StripGitRevision` to the `StripUrlQuery` already used for `http`/`https`,
-    and `StripGitRevision` is deleted. Its table comment — "schemes whose URIs
-    carry decoration AFTER the extension" — is the clearest statement of this
-    problem anywhere in the fleet.
+  - **duckdb_panduck** — tracked in duckdb_panduck#148 (which absorbed #147).
+    Not a one-line table edit: by the delegation table above, a deleted strip
+    with no `CanonicalizePath` call breaks `git://README.md@HEAD`. Four steps:
+      1. Call `CanonicalizePath` through the VFS before taking the extension.
+         No version probe: panduck ships no v1.4.5 line.
+      2. Catch the "requires the extension" error when duck_tails is not
+         loaded, and use the path as written.
+      3. Move `git://` to the `StripUrlQuery` row of `SCHEME_CLEANERS`
+         (`src/reader_registry.cpp:80-84`), beside `http`/`https`.
+      4. Delete `StripGitRevision`.
 
-    panduck also has a live defect this fixes: `StripGitRevision` takes the last
-    `@` with no `{` exclusion, so `git://a.md@HEAD@{0}` yields base `a.md@HEAD`
-    and extension `md@head`. Reflog syntax is already broken there.
+    `ExtOfPath` has no `ClientContext` today, so its callers must pass one in.
+    **Revision stripping only chooses the reader** (Teague, 2026-10-18): the
+    canonical path selects the reader, and the reader still opens the path as
+    the user wrote it. The registry's table comment — "schemes whose URIs carry
+    decoration AFTER the extension" — is the clearest statement of this problem
+    anywhere in the fleet.
+
+    panduck also has a live defect, removed by step 4 (duckdb_panduck#148):
+    `StripGitRevision` takes the last `@` with no `{` exclusion, so
+    `git://a.md@HEAD@{0}` yields base `a.md@HEAD` and extension `md@head`.
 
 Each is blocked until `?ref=` is the documented form, and none of them may drop
 `@` handling outright — only move it to `CanonicalizePath`.
