@@ -330,33 +330,132 @@ vector<string> TextDiff::SplitLines(const string &text) {
 	return lines;
 }
 
+// Walking the shortest diff back needs one V row per edit (d^2 entries in all), so
+// past this many edits the changed middle is written as one block of removals and
+// one of additions: still a correct diff, just not the shortest. 2048 edits keep
+// the rows under 34 MB.
+static constexpr int64_t MAX_EDIT_DISTANCE = 2048;
+
+// Myers' O(ND) diff ("An O(ND) Difference Algorithm and Its Variations", 1986): the
+// fewest whole-line removals and additions that turn old_lines into new_lines.
 vector<TextDiff::DiffLine> TextDiff::ComputeDiff(const vector<string> &old_lines, const vector<string> &new_lines) {
 	vector<DiffLine> result;
+	const int64_t old_size = static_cast<int64_t>(old_lines.size());
+	const int64_t new_size = static_cast<int64_t>(new_lines.size());
 
-	// Simple diff algorithm - Myers algorithm would be better but this is sufficient
-	size_t old_idx = 0, new_idx = 0;
+	// Lines shared at the top and bottom are context; the search runs on the middle,
+	// where x indexes old_lines[prefix + x] and y indexes new_lines[prefix + y].
+	int64_t prefix = 0;
+	while (prefix < old_size && prefix < new_size && old_lines[prefix] == new_lines[prefix]) {
+		prefix++;
+	}
+	int64_t suffix = 0;
+	while (suffix < old_size - prefix && suffix < new_size - prefix &&
+	       old_lines[old_size - 1 - suffix] == new_lines[new_size - 1 - suffix]) {
+		suffix++;
+	}
+	const int64_t n = old_size - prefix - suffix;
+	const int64_t m = new_size - prefix - suffix;
 
-	while (old_idx < old_lines.size() || new_idx < new_lines.size()) {
-		if (old_idx >= old_lines.size()) {
-			// Only new lines remaining - all additions
-			result.emplace_back(LineType::ADDED, new_lines[new_idx], 0, new_idx + 1);
-			new_idx++;
-		} else if (new_idx >= new_lines.size()) {
-			// Only old lines remaining - all removals
-			result.emplace_back(LineType::REMOVED, old_lines[old_idx], old_idx + 1, 0);
-			old_idx++;
-		} else if (old_lines[old_idx] == new_lines[new_idx]) {
-			// Lines match - context
-			result.emplace_back(LineType::CONTEXT, old_lines[old_idx], old_idx + 1, new_idx + 1);
-			old_idx++;
-			new_idx++;
-		} else {
-			// Lines differ - mark as modified (simplified)
-			result.emplace_back(LineType::REMOVED, old_lines[old_idx], old_idx + 1, 0);
-			result.emplace_back(LineType::ADDED, new_lines[new_idx], 0, new_idx + 1);
-			old_idx++;
-			new_idx++;
+	// trace[d * d + d + k] is the furthest x a path with d edits reaches on diagonal
+	// k = x - y, or -1 when none reaches it. Row d covers k = -d..d.
+	vector<int64_t> trace;
+	auto furthest = [&](int64_t d, int64_t k) -> int64_t & {
+		return trace[d * d + d + k];
+	};
+	// The x at which a d-edit path onto diagonal k makes its last edit: a step down
+	// from diagonal k + 1 (an addition) or right from k - 1 (a removal), whichever
+	// stays inside the texts and gets further.
+	auto last_edit = [&](int64_t d, int64_t k, bool &removal) {
+		const int64_t above = k < d ? furthest(d - 1, k + 1) : -1;
+		const int64_t left = k > -d ? furthest(d - 1, k - 1) : -1;
+		int64_t x = -1;
+		removal = false;
+		if (above >= 0 && above - (k + 1) < m) {
+			x = above;
 		}
+		if (left >= 0 && left < n && left + 1 > x) {
+			x = left + 1;
+			removal = true;
+		}
+		return x;
+	};
+
+	int64_t distance = -1;
+	for (int64_t d = 0; d <= MAX_EDIT_DISTANCE && distance < 0; d++) {
+		trace.resize(static_cast<size_t>((d + 1) * (d + 1)), -1);
+		for (int64_t k = -d; k <= d; k += 2) {
+			bool removal;
+			int64_t x = d == 0 ? 0 : last_edit(d, k, removal);
+			if (x < 0) {
+				continue;
+			}
+			while (x < n && x - k < m && old_lines[prefix + x] == new_lines[prefix + x - k]) {
+				x++;
+			}
+			furthest(d, k) = x;
+			if (x == n && x - k == m) {
+				distance = d;
+				break;
+			}
+		}
+	}
+
+	vector<DiffLine> middle;
+	if (distance < 0) {
+		for (int64_t x = 0; x < n; x++) {
+			middle.emplace_back(LineType::REMOVED, old_lines[prefix + x], prefix + x + 1, 0);
+		}
+		for (int64_t y = 0; y < m; y++) {
+			middle.emplace_back(LineType::ADDED, new_lines[prefix + y], 0, prefix + y + 1);
+		}
+	} else {
+		// Walk back from the end, one edit per row, then put the lines in order.
+		int64_t x = n, y = m;
+		for (int64_t d = distance; d >= 0; d--) {
+			bool removal = false;
+			const int64_t edit_x = d == 0 ? 0 : last_edit(d, x - y, removal);
+			while (x > edit_x) {
+				x--;
+				y--;
+				middle.emplace_back(LineType::CONTEXT, old_lines[prefix + x], prefix + x + 1, prefix + y + 1);
+			}
+			if (d == 0) {
+				break;
+			}
+			if (removal) {
+				x--;
+				middle.emplace_back(LineType::REMOVED, old_lines[prefix + x], prefix + x + 1, 0);
+			} else {
+				y--;
+				middle.emplace_back(LineType::ADDED, new_lines[prefix + y], 0, prefix + y + 1);
+			}
+		}
+		std::reverse(middle.begin(), middle.end());
+		// Within a run of changed lines, removals come first, as git writes them.
+		auto is_context = [](const DiffLine &line) {
+			return line.type == LineType::CONTEXT;
+		};
+		auto is_removal = [](const DiffLine &line) {
+			return line.type == LineType::REMOVED;
+		};
+		for (auto run = middle.begin(); run != middle.end();) {
+			auto run_end = std::find_if(run, middle.end(), is_context);
+			std::stable_partition(run, run_end, is_removal);
+			run = run_end == middle.end() ? run_end : run_end + 1;
+		}
+	}
+
+	for (int64_t i = 0; i < prefix; i++) {
+		result.emplace_back(LineType::CONTEXT, old_lines[i], i + 1, i + 1);
+	}
+	for (auto &line : middle) {
+		result.push_back(std::move(line));
+	}
+	for (int64_t i = 0; i < suffix; i++) {
+		const int64_t old_idx = old_size - suffix + i;
+		const int64_t new_idx = new_size - suffix + i;
+		result.emplace_back(LineType::CONTEXT, old_lines[old_idx], old_idx + 1, new_idx + 1);
 	}
 
 	return result;

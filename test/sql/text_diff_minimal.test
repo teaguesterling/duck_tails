@@ -1,0 +1,177 @@
+# name: test/sql/text_diff_minimal.test
+# description: diff_text/text_diff_stats/diff_lines report the minimal line diff, so one inserted line does not misalign every line after it
+# group: [sql]
+
+require duck_tails
+
+require notwindows
+
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
+
+# ==============================================================
+# Insertions
+# ==============================================================
+
+# One line inserted at the top is one added line; the three after it are unchanged.
+query IIII
+SELECT s.lines_added, s.lines_removed, s.lines_modified, s.lines_context
+FROM (SELECT text_diff_stats('a' || chr(10) || 'b' || chr(10) || 'c',
+                             'x' || chr(10) || 'a' || chr(10) || 'b' || chr(10) || 'c') AS s);
+----
+1	0	0	3
+
+query III
+SELECT line_type, content, line_number
+FROM text_diff_lines(diff_text('a' || chr(10) || 'b' || chr(10) || 'c',
+                               'x' || chr(10) || 'a' || chr(10) || 'b' || chr(10) || 'c'));
+----
+ADDED	x	1
+CONTEXT	a	2
+CONTEXT	b	3
+CONTEXT	c	4
+
+# In the middle.
+query IIII
+SELECT s.lines_added, s.lines_removed, s.lines_modified, s.lines_context
+FROM (SELECT text_diff_stats('a' || chr(10) || 'b' || chr(10) || 'c',
+                             'a' || chr(10) || 'b' || chr(10) || 'x' || chr(10) || 'c') AS s);
+----
+1	0	0	3
+
+query III
+SELECT line_type, content, line_number
+FROM text_diff_lines(diff_text('a' || chr(10) || 'b' || chr(10) || 'c',
+                               'a' || chr(10) || 'b' || chr(10) || 'x' || chr(10) || 'c'));
+----
+CONTEXT	a	1
+CONTEXT	b	2
+ADDED	x	3
+CONTEXT	c	4
+
+# At the end.
+query III
+SELECT line_type, content, line_number
+FROM text_diff_lines(diff_text('a' || chr(10) || 'b' || chr(10) || 'c',
+                               'a' || chr(10) || 'b' || chr(10) || 'c' || chr(10) || 'x'));
+----
+CONTEXT	a	1
+CONTEXT	b	2
+CONTEXT	c	3
+ADDED	x	4
+
+# ==============================================================
+# Deletions, replacements, moves
+# ==============================================================
+
+query III
+SELECT line_type, content, line_number
+FROM text_diff_lines(diff_text('a' || chr(10) || 'b' || chr(10) || 'c' || chr(10) || 'd',
+                               'a' || chr(10) || 'c' || chr(10) || 'd'));
+----
+CONTEXT	a	1
+REMOVED	b	2
+CONTEXT	c	2
+CONTEXT	d	3
+
+query IIII
+SELECT s.lines_added, s.lines_removed, s.lines_modified, s.lines_context
+FROM (SELECT text_diff_stats('a' || chr(10) || 'b' || chr(10) || 'c' || chr(10) || 'd',
+                             'a' || chr(10) || 'c' || chr(10) || 'd') AS s);
+----
+0	1	0	3
+
+# Two replaced lines: the removals come before the additions, as git writes them.
+query III
+SELECT line_type, content, line_number
+FROM text_diff_lines(diff_text('a' || chr(10) || 'b' || chr(10) || 'c' || chr(10) || 'd',
+                               'a' || chr(10) || 'X' || chr(10) || 'Y' || chr(10) || 'd'));
+----
+CONTEXT	a	1
+REMOVED	b	2
+REMOVED	c	3
+ADDED	X	2
+ADDED	Y	3
+CONTEXT	d	4
+
+# A line moved from the top to the bottom is one removal and one addition.
+query III
+SELECT line_type, content, line_number
+FROM text_diff_lines(diff_text('a' || chr(10) || 'b' || chr(10) || 'c',
+                               'b' || chr(10) || 'c' || chr(10) || 'a'));
+----
+REMOVED	a	1
+CONTEXT	b	1
+CONTEXT	c	2
+ADDED	a	3
+
+# ==============================================================
+# Degenerate inputs
+# ==============================================================
+
+query IIII
+SELECT s.lines_added, s.lines_removed, s.lines_modified, s.lines_context
+FROM (SELECT text_diff_stats('a' || chr(10) || 'b', 'a' || chr(10) || 'b') AS s);
+----
+0	0	0	0
+
+query III
+SELECT line_type, content, line_number
+FROM text_diff_lines(diff_text('', 'a' || chr(10) || 'b'));
+----
+ADDED	a	1
+ADDED	b	2
+
+query III
+SELECT line_type, content, line_number
+FROM text_diff_lines(diff_text('a' || chr(10) || 'b', ''));
+----
+REMOVED	a	1
+REMOVED	b	2
+
+# ==============================================================
+# A 340-line document with 8 lines inserted after line 52
+# ==============================================================
+
+# Every third line is blank, so the document repeats lines the way prose does.
+statement ok
+CREATE TABLE doc AS
+WITH body AS (
+    SELECT i::DOUBLE AS pos, CASE WHEN i % 3 = 0 THEN '' ELSE 'line ' || i END AS line, false AS inserted
+    FROM range(1, 341) t(i)
+),
+both_sides AS (
+    SELECT * FROM body
+    UNION ALL
+    SELECT 52 + j / 10 AS pos, 'inserted ' || j AS line, true AS inserted
+    FROM range(1, 9) t(j)
+)
+SELECT string_agg(CASE WHEN inserted THEN NULL ELSE line END, chr(10) ORDER BY pos) AS old_text,
+       string_agg(line, chr(10) ORDER BY pos) AS new_text
+FROM both_sides;
+
+query IIII
+SELECT s.lines_added, s.lines_removed, s.lines_modified, s.lines_context
+FROM (SELECT text_diff_stats(old_text, new_text) AS s FROM doc);
+----
+8	0	0	340
+
+query IIII
+SELECT s.lines_added, s.lines_removed, s.lines_modified, s.lines_context
+FROM (SELECT text_diff_stats(new_text, old_text) AS s FROM doc);
+----
+0	8	0	340
+
+# The added lines are the inserted ones, numbered where they sit in the new file.
+query II
+SELECT list(l.content ORDER BY l.line_number), list(l.line_number ORDER BY l.line_number)
+FROM (SELECT unnest(diff_lines(old_text, new_text)) AS l FROM doc)
+WHERE l.line_type = 'ADDED';
+----
+[inserted 1, inserted 2, inserted 3, inserted 4, inserted 5, inserted 6, inserted 7, inserted 8]	[53, 54, 55, 56, 57, 58, 59, 60]
+
+# Diffing the texts directly and reading back diff_text's output give the same rows.
+query I
+SELECT diff_lines(old_text, new_text) = diff_lines(diff_text(old_text, new_text)) FROM doc;
+----
+true
