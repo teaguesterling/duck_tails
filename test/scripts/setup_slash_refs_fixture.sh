@@ -17,6 +17,9 @@
 #   feature/foo         -> README.md ("feature branch content"), data/rows.csv (3 rows),
 #                          feature-only.txt
 #   fix/deep/nested     -> deep-only.txt  (multi-slash ref)
+#   at-sign             -> icon@2x.txt  (an '@' in a file name, which only the
+#                          ?ref= form can address: the deprecated @ form takes
+#                          the last '@' as the revision separator)
 #   tag release/v1.0    -> lightweight tag on the main commit (slash in a tag)
 #   tag release/v2.0    -> ANNOTATED tag on the feature/foo commit (slash + a tag
 #                          object that has to be peeled to reach the commit)
@@ -71,6 +74,13 @@ git checkout -q -b fix/deep/nested
 printf 'only on fix/deep/nested\n' > deep-only.txt
 git add deep-only.txt
 git commit -q -m "fix/deep/nested: add a branch-only file"
+
+# --- at-sign ---------------------------------------------------------
+git checkout -q main
+git checkout -q -b at-sign
+printf 'at-sign content\n' > 'icon@2x.txt'
+git add 'icon@2x.txt'
+git commit -q -m "at-sign: add a file with an '@' in its name"
 
 git checkout -q main
 

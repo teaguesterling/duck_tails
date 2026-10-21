@@ -27,6 +27,7 @@ void RegisterGitTreeFunction(ExtensionLoader &loader);
 void RegisterGitParentsFunction(ExtensionLoader &loader);
 void RegisterGitReadFunction(ExtensionLoader &loader);
 void RegisterGitUriFunction(ExtensionLoader &loader);
+void RegisterGitCanonicalizeFunction(ExtensionLoader &loader);
 void RegisterGitStatusFunction(ExtensionLoader &loader);
 void RegisterGitDiffTreeFunction(ExtensionLoader &loader);
 void RegisterGitBlameFunction(ExtensionLoader &loader);
@@ -39,6 +40,7 @@ void RegisterGitFunctions(ExtensionLoader &loader) {
 	RegisterGitParentsFunction(loader);
 	RegisterGitReadFunction(loader);
 	RegisterGitUriFunction(loader);
+	RegisterGitCanonicalizeFunction(loader);
 	RegisterGitStatusFunction(loader);
 	RegisterGitDiffTreeFunction(loader);
 	RegisterGitBlameFunction(loader);

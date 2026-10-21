@@ -1,0 +1,471 @@
+# name: test/sql/git_uri_ref_query.test
+# description: ?ref= is the canonical git URI revision; @rev still parses and canonicalizes to it (#69)
+# group: [sql]
+
+require duck_tails
+
+require notwindows
+
+statement ok
+SET extension_directory='__BUILD_DIRECTORY__/extension';
+
+# Fixture: test/tmp/slash-refs-repo, built by
+# test/scripts/setup_slash_refs_fixture.sh. HEAD is main.
+#   main             README.md = "main branch content",    data/rows.csv 2 rows
+#   feature/foo      README.md = "feature branch content", data/rows.csv 3 rows
+#   at-sign          icon@2x.txt = "at-sign content"
+#   tags             v1.0 (main), release/v2.0 (annotated, feature/foo)
+#
+# The form moved because `git://README.md@HEAD` puts the revision after the
+# file name, so every consumer that reads an extension has to parse
+# duck_tails' grammar to find it. With `?ref=` the path ends with the file
+# name. The assertions below check that the new spelling reads exactly what
+# the old one did, and that the old one keeps working.
+
+# ==============================================================
+# ?ref= names the revision
+# ==============================================================
+
+query I
+SELECT trim(text, chr(10)) FROM git_read('git://test/tmp/slash-refs-repo/README.md?ref=main');
+----
+main branch content
+
+# A slash-bearing ref is taken whole: '/' inside a query value is not a path
+# separator, so no repository probing is needed to find where the ref ends.
+query I
+SELECT trim(text, chr(10)) FROM git_read('git://test/tmp/slash-refs-repo/README.md?ref=feature/foo');
+----
+feature branch content
+
+query I
+SELECT trim(text, chr(10)) FROM git_read('git://test/tmp/slash-refs-repo/README.md?ref=refs/heads/feature/foo');
+----
+feature branch content
+
+# Annotated tag with a slash: the tag object has to be peeled to the commit.
+query I
+SELECT trim(text, chr(10)) FROM git_read('git://test/tmp/slash-refs-repo/README.md?ref=release/v2.0');
+----
+feature branch content
+
+# Reflog syntax carries its own '@'. In the query value it is just text.
+query I
+SELECT trim(text, chr(10)) FROM git_read('git://test/tmp/slash-refs-repo/README.md?ref=HEAD@{0}');
+----
+main branch content
+
+# The value is never split into ref + path. The deprecated form has to ask the
+# repository where "main/README.md" ends; the query form must not, or a ref
+# that happens to have a resolvable prefix would silently read another file.
+# (No message asserted: git_read reports any unresolvable ref as "unable to
+# parse OID" without naming it, in both spellings -- a separate defect.)
+statement error
+SELECT * FROM git_read('git://test/tmp/slash-refs-repo?ref=main/README.md');
+----
+
+# No revision means HEAD (#69 open question: the parser was right, the doc
+# that called this invalid was wrong).
+query I
+SELECT trim(text, chr(10)) FROM git_read('git://test/tmp/slash-refs-repo/README.md');
+----
+main branch content
+
+# An empty value means the default revision, exactly like the deprecated
+# trailing '@'.
+query I
+SELECT trim(text, chr(10)) FROM git_read('git://test/tmp/slash-refs-repo/README.md?ref=');
+----
+main branch content
+
+query I
+SELECT trim(text, chr(10)) FROM git_read('git://test/tmp/slash-refs-repo/README.md@');
+----
+main branch content
+
+# ==============================================================
+# Through DuckDB's own readers (the path every consumer takes)
+# ==============================================================
+
+# '?' is a glob metacharacter to DuckDB, so every ?ref= path is expanded by
+# GitFileSystem::Glob before it is opened. Before ?ref= was parsed this
+# returned zero rows and no error.
+query I
+SELECT COUNT(*) FROM read_csv('git://test/tmp/slash-refs-repo/data/rows.csv?ref=feature/foo');
+----
+3
+
+query I
+SELECT COUNT(*) FROM read_csv('git://test/tmp/slash-refs-repo/data/rows.csv?ref=main');
+----
+2
+
+# Glob results come back in the canonical form, so the filename a consumer
+# receives ends with the real extension and still names the revision.
+query I
+SELECT filename LIKE '%/slash-refs-repo/data/rows.csv?ref=feature/foo'
+FROM read_text('git://test/tmp/slash-refs-repo/data/rows.csv?ref=feature/foo');
+----
+true
+
+# The same holds for a file named in the deprecated form.
+query I
+SELECT filename LIKE '%/slash-refs-repo/data/rows.csv?ref=feature/foo'
+FROM read_text('git://test/tmp/slash-refs-repo/data/rows.csv@feature/foo');
+----
+true
+
+# A recursive glob with the ref in the query.
+query I
+SELECT COUNT(*) FROM read_csv('git://test/tmp/slash-refs-repo/**/*.csv?ref=v1.0');
+----
+2
+
+query I
+SELECT COUNT(*) FROM read_csv('git://test/tmp/slash-refs-repo/**/*.csv?ref=feature/foo');
+----
+3
+
+# A '?' that is not followed by "ref=" stays a single-character wildcard,
+# in both spellings.
+query I
+SELECT trim(content, chr(10)) FROM read_text('git://test/tmp/slash-refs-repo/READM?.md?ref=feature/foo');
+----
+feature branch content
+
+query I
+SELECT trim(content, chr(10)) FROM read_text('git://test/tmp/slash-refs-repo/READM?.md@feature/foo');
+----
+feature branch content
+
+# Pseudo-refs work in the query too, with the same match set as the old form.
+query I
+SELECT (SELECT COUNT(*) FROM glob('git://test/tmp/staged-glob-repo/src/*.py?ref=STAGED'))
+     = (SELECT COUNT(*) FROM glob('git://test/tmp/staged-glob-repo@STAGED/src/*.py'));
+----
+true
+
+query I
+SELECT COUNT(*) FROM glob('git://test/tmp/staged-glob-repo/src/*.py?ref=STAGED');
+----
+2
+
+# ==============================================================
+# '@' before ?ref= is part of the path
+# ==============================================================
+
+# A file name with an '@' in it is reachable only through ?ref=.
+query I
+SELECT trim(text, chr(10)) FROM git_read('git://test/tmp/slash-refs-repo/icon@2x.txt?ref=at-sign');
+----
+at-sign content
+
+# Combining the forms is an error, not a precedence rule: the path is taken
+# literally, so this names a file called "README.md@main", which does not
+# exist. It must not quietly read README.md at either main or feature/foo.
+statement error
+SELECT * FROM git_read('git://test/tmp/slash-refs-repo/README.md@main?ref=feature/foo');
+----
+README.md@main
+
+# ==============================================================
+# '..' in the path behaves the same in both spellings
+# ==============================================================
+
+# '..' is resolved lexically before repository discovery, so it cannot reach
+# the file-path component. The query component does not change that.
+query I
+SELECT trim(text, chr(10)) FROM git_read('git://test/tmp/slash-refs-repo/data/../README.md?ref=feature/foo');
+----
+feature branch content
+
+statement error
+SELECT * FROM git_read('git://test/tmp/slash-refs-repo/../../../../../../../../../../etc/passwd?ref=HEAD');
+----
+No git repository found
+
+statement error
+SELECT * FROM git_read('git://test/tmp/slash-refs-repo/../../../../../../../../../../etc/passwd@HEAD');
+----
+No git repository found
+
+# ==============================================================
+# A LATERAL ref cannot be added to a URI that already names one
+# ==============================================================
+
+# git_read_each appends a correlated ref to a git:// URI. Appended to a ?ref=
+# URI it would become part of the ref value ("main@feature/foo"); refuse
+# instead of reading a ref nobody wrote.
+statement error
+SELECT r.text
+FROM (VALUES ('git://test/tmp/slash-refs-repo/README.md?ref=main', 'feature/foo')) AS v(u, ref),
+     LATERAL git_read_each(v.u, v.ref) r;
+----
+already names a ref
+
+# Without a ref in the URI the correlated ref still applies.
+query I
+SELECT trim(r.text, chr(10))
+FROM (VALUES ('git://test/tmp/slash-refs-repo/README.md', 'feature/foo')) AS v(u, ref),
+     LATERAL git_read_each(v.u, v.ref) r;
+----
+feature branch content
+
+# ==============================================================
+# git_canonicalize: the CanonicalizePath rewrite, callable from SQL
+# ==============================================================
+
+query I
+SELECT git_canonicalize('git://README.md@HEAD');
+----
+git://README.md?ref=HEAD
+
+query I
+SELECT git_canonicalize('git://a.md@HEAD@{0}');
+----
+git://a.md?ref=HEAD@{0}
+
+# A glob after the revision moves back onto the path.
+query I
+SELECT git_canonicalize('git://repo@HEAD/**/*.csv');
+----
+git://repo/**/*.csv?ref=HEAD
+
+query I
+SELECT git_canonicalize('git://@HEAD');
+----
+git://?ref=HEAD
+
+query I
+SELECT git_canonicalize('git://a.md@');
+----
+git://a.md?ref=
+
+# A slash-bearing ref is settled against the repository, as the parser does.
+query I
+SELECT git_canonicalize('git://test/tmp/slash-refs-repo/README.md@feature/foo');
+----
+git://test/tmp/slash-refs-repo/README.md?ref=feature/foo
+
+query I
+SELECT git_canonicalize('git://test/tmp/slash-refs-repo@feature/foo/data/rows.csv');
+----
+git://test/tmp/slash-refs-repo/data/rows.csv?ref=feature/foo
+
+query I
+SELECT git_canonicalize('git://test/tmp/staged-glob-repo@STAGED/src/*.py');
+----
+git://test/tmp/staged-glob-repo/src/*.py?ref=STAGED
+
+# An empty path before a path suffix stays relative: "git:///README.md" would
+# be an absolute path.
+query I
+SELECT git_canonicalize('git://@HEAD/README.md');
+----
+git://./README.md?ref=HEAD
+
+# The '@' that separates the revision is the last one; an earlier '@' belongs
+# to the file name and stays there.
+query I
+SELECT git_canonicalize('git://test/tmp/slash-refs-repo/icon@2x.txt@at-sign');
+----
+git://test/tmp/slash-refs-repo/icon@2x.txt?ref=at-sign
+
+# Returned unchanged: already canonical, no revision, not a git URI, and a
+# slash-bearing ref with no repository to settle it.
+query I
+SELECT git_canonicalize('git://a.md?ref=v1.0');
+----
+git://a.md?ref=v1.0
+
+query I
+SELECT git_canonicalize('git://a.md');
+----
+git://a.md
+
+query I
+SELECT git_canonicalize('/tmp/a.md@HEAD');
+----
+/tmp/a.md@HEAD
+
+# (Absolute on purpose: a relative path that does not exist can still be
+# discovered inside the duck_tails checkout the tests run from.)
+query I
+SELECT git_canonicalize('git:///nonexistent-duck-tails-test/a.md@feature/foo');
+----
+git:///nonexistent-duck-tails-test/a.md@feature/foo
+
+# A '..' in a deprecated path suffix is applied inside the repository
+# ("../README.md", which does not exist there). Moved in front of ?ref= it
+# would be resolved before discovery and could name a different repository
+# and file, so the rewrite is refused rather than made lossy.
+query I
+SELECT git_canonicalize('git://test/tmp/slash-refs-repo@HEAD/../README.md');
+----
+git://test/tmp/slash-refs-repo@HEAD/../README.md
+
+query I
+SELECT git_canonicalize('git://test/tmp/slash-refs-repo@HEAD/../*.md');
+----
+git://test/tmp/slash-refs-repo@HEAD/../*.md
+
+query I
+SELECT git_canonicalize(NULL) IS NULL;
+----
+true
+
+# Idempotent.
+query I
+SELECT COUNT(*) FROM (VALUES
+    ('git://README.md@HEAD'), ('git://a.md@HEAD@{0}'), ('git://repo@HEAD/**/*.csv'),
+    ('git://test/tmp/slash-refs-repo@feature/foo/data/rows.csv'), ('git://a.md?ref=v1.0')
+) AS t(u)
+WHERE git_canonicalize(git_canonicalize(u)) <> git_canonicalize(u);
+----
+0
+
+# Lossless: the canonical URI reads the same file, at the same commit, with
+# the same content, as the deprecated URI it came from.
+query II
+SELECT COUNT(*),
+       COUNT(*) FILTER (WHERE a.commit_hash = b.commit_hash AND a.file_path = b.file_path AND a.text = b.text)
+FROM (VALUES
+    ('git://test/tmp/slash-refs-repo/README.md@main'),
+    ('git://test/tmp/slash-refs-repo/README.md@feature/foo'),
+    ('git://test/tmp/slash-refs-repo/README.md@release/v2.0'),
+    ('git://test/tmp/slash-refs-repo/README.md@HEAD@{0}'),
+    ('git://test/tmp/slash-refs-repo/data/rows.csv@refs/heads/feature/foo'),
+    ('git://test/tmp/slash-refs-repo@feature/foo/data/rows.csv'),
+    ('git://test/tmp/slash-refs-repo/icon@2x.txt@at-sign')
+) AS v(u),
+     LATERAL git_read_each(v.u) b,
+     LATERAL git_read_each(git_canonicalize(v.u)) a;
+----
+7	7
+
+# ==============================================================
+# The table functions read ?ref= exactly as they read @rev
+# ==============================================================
+
+# docs/git_uris.md shows git_tree, git_log, git_parents, read_git_diff and
+# the conflict check in the ?ref= form; each answer must match the @ form.
+query II
+SELECT (SELECT COUNT(*) FROM git_tree('git://test/tmp/slash-refs-repo?ref=feature/foo')),
+       (SELECT COUNT(*) FROM git_tree('git://test/tmp/slash-refs-repo@feature/foo'));
+----
+4	4
+
+query II
+SELECT (SELECT COUNT(*) FROM git_log('git://test/tmp/slash-refs-repo?ref=feature/foo')),
+       (SELECT COUNT(*) FROM git_log('git://test/tmp/slash-refs-repo@feature/foo'));
+----
+2	2
+
+query I
+SELECT (SELECT commit_hash FROM git_parents('git://test/tmp/slash-refs-repo?ref=feature/foo'))
+     = (SELECT commit_hash FROM git_parents('git://test/tmp/slash-refs-repo@feature/foo'));
+----
+true
+
+query I
+SELECT (SELECT string_agg(diff_text, '') FROM read_git_diff('git://test/tmp/slash-refs-repo/README.md?ref=main',
+                                                            'git://test/tmp/slash-refs-repo/README.md?ref=feature/foo'))
+     = (SELECT string_agg(diff_text, '') FROM read_git_diff('git://test/tmp/slash-refs-repo/README.md@main',
+                                                            'git://test/tmp/slash-refs-repo/README.md@feature/foo'));
+----
+true
+
+query II
+SELECT (SELECT COUNT(*) FROM git_blame('git://test/tmp/slash-refs-repo/README.md?ref=feature/foo')),
+       (SELECT COUNT(*) FROM git_blame('git://test/tmp/slash-refs-repo/README.md@feature/foo'));
+----
+1	1
+
+# A ref in the URI and a ref parameter conflict, in either spelling.
+statement error
+SELECT COUNT(*) FROM git_tree('git://test/tmp/slash-refs-repo?ref=main', 'feature/foo');
+----
+Conflicting ref specifications
+
+# repo_path is spliced into a relative URI that carries ?ref=.
+query I
+SELECT trim(text, chr(10)) FROM git_read('git://README.md?ref=feature/foo', repo_path := 'test/tmp/slash-refs-repo');
+----
+feature branch content
+
+query I
+SELECT COUNT(*) FROM git_log('git://?ref=feature/foo', repo_path := 'test/tmp/slash-refs-repo');
+----
+2
+
+# ==============================================================
+# The git_uri columns emit the canonical form
+# ==============================================================
+
+# @rev is still valid input, but every git_uri a function hands back is in
+# the canonical form, whichever spelling it was given.
+query I
+SELECT git_uri FROM git_read('git://test/tmp/slash-refs-repo/README.md@feature/foo');
+----
+git://test/tmp/slash-refs-repo/README.md?ref=feature/foo
+
+query I
+SELECT git_uri FROM git_read('git://test/tmp/slash-refs-repo/README.md?ref=feature/foo');
+----
+git://test/tmp/slash-refs-repo/README.md?ref=feature/foo
+
+# A filesystem path is turned into a git:// URI internally (with @); the
+# column still reports the canonical form. (The three-argument path + ref
+# form fails with "unable to parse OID" even for HEAD, before this branch
+# too, so it is not exercised here.)
+query I
+SELECT git_uri LIKE '%/slash-refs-repo/README.md?ref=HEAD'
+FROM git_read('test/tmp/slash-refs-repo/README.md');
+----
+true
+
+query I
+SELECT r.git_uri
+FROM (VALUES ('git://test/tmp/slash-refs-repo/README.md@main')) AS v(u), LATERAL git_read_each(v.u) r;
+----
+git://test/tmp/slash-refs-repo/README.md?ref=main
+
+query I
+SELECT COUNT(*) FILTER (WHERE git_uri NOT LIKE 'git://%?ref=%')
+FROM git_tree('git://test/tmp/slash-refs-repo?ref=feature/foo');
+----
+0
+
+query I
+SELECT COUNT(*) > 0 AND COUNT(*) FILTER (WHERE git_uri NOT LIKE '%?ref=STAGED') = 0
+FROM git_tree('git://test/tmp/staged-glob-repo?ref=STAGED');
+----
+true
+
+query I
+SELECT COUNT(*) > 0 AND COUNT(*) FILTER (WHERE git_uri NOT LIKE '%?ref=WORKDIR') = 0
+FROM git_tree('git://test/tmp/staged-glob-repo?ref=WORKDIR');
+----
+true
+
+# A git_tree URI feeds straight back into a reader.
+query I
+SELECT trim(r.text, chr(10))
+FROM git_tree('git://test/tmp/slash-refs-repo?ref=feature/foo') t, LATERAL git_read_each(t.git_uri) r
+WHERE t.file_path = 'README.md';
+----
+feature branch content
+
+# ==============================================================
+# git_uri() emits the canonical form
+# ==============================================================
+
+query I
+SELECT git_uri('test/tmp/slash-refs-repo', 'README.md', 'feature/foo');
+----
+git://test/tmp/slash-refs-repo/README.md?ref=feature/foo
+
+query I
+SELECT trim(text, chr(10)) FROM git_read(git_uri('test/tmp/slash-refs-repo', 'icon@2x.txt', 'at-sign'));
+----
+at-sign content

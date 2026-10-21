@@ -15,7 +15,7 @@ PRAGMA enable_verification;
 
 # Test git_uri helper function integration with git_tree git_uri  
 query T
-SELECT git_uri LIKE '%/README.md@' || commit_hash as uri_matches
+SELECT git_uri LIKE '%/README.md?ref=' || commit_hash as uri_matches
 FROM git_tree('test/tmp/main-repo', 'HEAD') 
 WHERE file_path = 'README.md'
 ----
@@ -57,7 +57,7 @@ LIMIT 1
 
 # Test git_uri construction with dynamic parameters from git_log_each
 query T
-SELECT git_uri('test/tmp/main-repo', 'README.md', l.commit_hash) LIKE 'git://test/tmp/main-repo/README.md@%' as uri_ok
+SELECT git_uri('test/tmp/main-repo', 'README.md', l.commit_hash) LIKE 'git://test/tmp/main-repo/README.md?ref=%' as uri_ok
 FROM git_log_each('test/tmp/main-repo') l
 LIMIT 1
 ----
