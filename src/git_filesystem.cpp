@@ -703,8 +703,8 @@ vector<OpenFileInfo> GitFileSystem::Glob(const string &pattern, FileOpener *open
 						if (StringUtil::StartsWith(rel_path, workdir_prefix)) {
 							rel_path = rel_path.substr(workdir_prefix.length());
 						}
-						results.emplace_back(
-						    OpenFileInfo {"git://" + git_path.repository_path + "/" + rel_path + REF_QUERY + "WORKDIR"});
+						results.emplace_back(OpenFileInfo {"git://" + git_path.repository_path + "/" + rel_path +
+						                                   REF_QUERY + "WORKDIR"});
 					}
 				} catch (...) {
 					// Return empty on error

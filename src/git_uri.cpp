@@ -131,7 +131,8 @@ static void GitCanonicalizeFunction(DataChunk &args, ExpressionState &state, Vec
 }
 
 void RegisterGitCanonicalizeFunction(ExtensionLoader &loader) {
-	auto func = ScalarFunction("git_canonicalize", {LogicalType::VARCHAR}, LogicalType::VARCHAR, GitCanonicalizeFunction);
+	auto func =
+	    ScalarFunction("git_canonicalize", {LogicalType::VARCHAR}, LogicalType::VARCHAR, GitCanonicalizeFunction);
 	CreateScalarFunctionInfo info(std::move(func));
 	info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
 	FunctionDescription desc;
