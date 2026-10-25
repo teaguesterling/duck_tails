@@ -55,6 +55,17 @@ jobs:
       DUCKDB_VERSION: v2.0.0
       DUCKDB_CI_TOOLS: v2.0-cyanoptera
       DUCKDB_VARIANT: v1.5.6
+      # The next line duckdb-next-build tests: the v2.0-cyanoptera tip, pinned as an
+      # explicit STAGED VERSION + COMMIT pair (Teague, 2026-10-25; same form as
+      # duckdb_mcp #109). Not the branch name: ci-tools' prebuilt path (ci_phase.py)
+      # resolves a non-semver duckdb_version to the tip's staged version for the
+      # download only and never writes it back, so the extension's stamp and the
+      # linked library disagree and no test can load it. A staged version matches
+      # ci-tools' STAGED_DUCKDB_VERSION_PATTERN and is used as given. Bump both
+      # together when the tip moves: the version is the commit's
+      # https://duckdb-staging.duckdb.org/<commit[:10]>/latest_alpha_version.txt
+      DUCKDB_NEXT: v2.0.1-alpha50125
+      DUCKDB_NEXT_COMMIT: bb5bdadda4ee51d39b359fe8f4d1960973191175
       # Flip day (spec §3 step 3) keeps a duckdb-legacy-build at the outgoing version
       # for one release; set this to that version then so the stray-literal scan below
       # exempts it instead of flagging it. Empty the rest of the time.
@@ -80,7 +91,7 @@ jobs:
           echo "registry default commit -> ${DUCKDB_COMMIT} (${DUCKDB_VERSION})"
           echo "submodule pin           -> ${have}"
           [ "$DUCKDB_COMMIT" = "$have" ] || { echo "::error::duckdb submodule pin ${have} is not the registry default commit ${DUCKDB_COMMIT}; run: git -C duckdb fetch origin ${DUCKDB_CI_TOOLS} && git -C duckdb checkout ${DUCKDB_COMMIT}"; exit 1; }
-          for want in "duckdb_commit: ${DUCKDB_COMMIT}" "duckdb_version: ${DUCKDB_VERSION}" "ci_tools_version: ${DUCKDB_CI_TOOLS}" "duckdb_version: ${DUCKDB_VARIANT}"; do
+          for want in "duckdb_commit: ${DUCKDB_COMMIT}" "duckdb_version: ${DUCKDB_VERSION}" "ci_tools_version: ${DUCKDB_CI_TOOLS}" "duckdb_version: ${DUCKDB_VARIANT}" "duckdb_version: ${DUCKDB_NEXT}" "duckdb_commit: ${DUCKDB_NEXT_COMMIT}"; do
             c=$(grep -c "${want}$" "$wf" || true)
             [ "$c" -ge 1 ] || { echo "::error::no build job in this workflow uses ${want}; this job's constants have drifted"; exit 1; }
           done
@@ -104,6 +115,7 @@ jobs:
             for v in $(printf '%s\n' "$line" | grep -oE "$ver_re" || true); do
               [ "$v" = "$DUCKDB_VERSION" ] && continue
               [ "$v" = "$DUCKDB_VARIANT" ] && continue
+              [ "$v" = "$DUCKDB_NEXT" ] && continue
               [ -n "$DUCKDB_LEGACY" ] && [ "$v" = "$DUCKDB_LEGACY" ] && continue
               echo "::error::line ${lineno}: ${line} -- a DuckDB version literal that is not the shipped ${DUCKDB_VERSION} or ${DUCKDB_VARIANT}: derive it from the shipped version or bump it"
               bad=1
@@ -118,6 +130,7 @@ jobs:
             printf '%s\n' "$line" | grep -qE '^[[:space:]]*vcpkg_commit:' && continue
             for h in $(printf '%s\n' "$line" | grep -oE '[0-9a-f]{40}' || true); do
               [ "$h" = "$DUCKDB_COMMIT" ] && continue
+              [ "$h" = "$DUCKDB_NEXT_COMMIT" ] && continue
               echo "::error::line ${lineno}: ${line} -- a commit literal that is not the registry default ${DUCKDB_COMMIT}: derive it from the pinned commit or bump it"
               bad=1
             done
@@ -196,15 +209,10 @@ jobs:
   # the flip this same job was the forward-looking leg; after it, the branch tip is
   # one step past the tag the stable job ships.
   #
-  # KNOWN RED, and avoidable from this side: with the BRANCH NAME as
-  # duckdb_version, ci-tools resolves the tip's staged version
-  # (v2.0.1-alpha50125) but keeps it local to ci_phase.py instead of exporting it
-  # (extension-ci-tools scripts/ci_phase.py, the STAGED_DUCKDB_VERSION_PATTERN
-  # branch), so the extension's version stamp and the linked library disagree and
-  # every `require duck_tails` fails: `Extension ".../repository/v2.0.1-alpha50125/
-  # linux_amd64/duck_tails.duckdb_extension" not found` (PR #72's run 40212481885).
-  # A release-shaped duckdb_version is taken as given and avoids it; which form
-  # (a pinned staged pair, or a floating label) is pending Teague's fleet ruling.
+  # Pinned to the DUCKDB_NEXT / DUCKDB_NEXT_COMMIT pair in duckdb-pin (see the note
+  # there). With the BRANCH NAME as duckdb_version this leg failed every
+  # `require duck_tails`: `Extension ".../repository/v2.0.1-alpha50125/linux_amd64/
+  # duck_tails.duckdb_extension" not found` (PR #72's run 40212481885).
   duckdb-next-build:
     # Renamed from "duckdb main canary": its input is v2.0-cyanoptera, not DuckDB
     # main. No branch protection keys on check names (measured 2026-10-25).
@@ -215,7 +223,9 @@ jobs:
     # would build it twice. Runs on PRs, on push to main, and on dispatch.
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     with:
-      duckdb_version: v2.0-cyanoptera
+      # The DUCKDB_NEXT pair from the duckdb-pin job; bump them together.
+      duckdb_version: v2.0.1-alpha50125
+      duckdb_commit: bb5bdadda4ee51d39b359fe8f4d1960973191175
       ci_tools_version: main
       extension_name: duck_tails
       # wasm: libgit2 (the extension's core dependency) has no wasm build.
