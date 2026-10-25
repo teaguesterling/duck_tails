@@ -4,7 +4,7 @@
 
 Duck Tails is a DuckDB extension that brings git-aware data analysis capabilities to your database. Query your git history, access files at any revision, and perform version-aware data analysis - all with SQL.
 
-**Status: Functional** - Git filesystem access and diff analysis capabilities with comprehensive test coverage. Cross-platform support for Linux, macOS, and Windows.
+**Status: Functional** - Git filesystem access and diff analysis capabilities with comprehensive test coverage. Runs on Linux, macOS, and Windows; Git LFS files are not supported on Windows.
 
 ## ✨ Features
 
@@ -283,7 +283,7 @@ Duck Tails implements a custom DuckDB FileSystem that intercepts `git://` URLs a
 - **vcpkg Integration**: Robust dependency management for cross-platform libgit2 builds
 
 ### Key Technical Features
-- **Cross-Platform Support**: Native support for Linux, macOS, and Windows (including mingw)
+- **Cross-Platform Support**: Linux, macOS, and Windows (including mingw). Git LFS files are not supported on Windows.
 - **Flexible Repository Paths**: Support for relative (`../other-repo`), absolute (`/path/to/repo`), and current directory access
 - **Git Submodule Support**: Query submodules directly by path with automatic worktree resolution
 - **Smart Repository Discovery**: Automatic git repository detection using libgit2's native discovery for cross-platform compatibility
@@ -345,7 +345,7 @@ All new features should include comprehensive tests. Our test suite is designed 
 
 ### ✅ Implemented Features
 - **Git Filesystem**: `git://` protocol implementation with revision support
-- **Cross-Platform**: Full support for Linux, macOS, and Windows
+- **Cross-Platform**: Linux, macOS, and Windows, except Git LFS files on Windows
 - **Repository Path Support**: Flexible relative (`../repo`), absolute (`/path/to/repo`), and current directory access
 - **Git Submodule Support**: Query submodules directly with automatic worktree resolution
 - **Smart Repository Discovery**: Automatic git repository detection using libgit2's native cross-platform discovery
