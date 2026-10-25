@@ -102,34 +102,47 @@ jobs:
           # a bump left them stale and this job went green over a red build. Comment
           # lines (first non-space char `#`) are exempt, and so are `uses:` lines (a
           # `- uses:` list item too): a third-party action pin like `@v2.0.4` is not a
-          # DuckDB version. Branch names like `v2.0-cyanoptera` and `v1.5-variegata`
-          # have no third numeric component and so never match this pattern. The
-          # optional pre-release suffix makes a `v2.0.0-alpha1`-style tag match whole, while
-          # `v1.5.6-extension-wasm_eh` in an artifact name still reads as `v1.5.6`.
-          # DUCKDB_LEGACY, when set (flip day, see above), is exempt too.
+          # DuckDB version. A `uses: duckdb/extension-ci-tools/...` line is NOT exempt:
+          # it pins the DuckDB line, and a bump can leave it on the old one while every
+          # other assertion here passes (duckdb_markdown #88). Branch names like
+          # `v2.0-cyanoptera` and `v1.5-variegata` have no third numeric component and
+          # so never match this pattern. The optional pre-release suffix makes a
+          # `v2.0.0-alpha1`-style tag match whole, while `v1.5.6-extension-wasm_eh` in
+          # an artifact name still reads as `v1.5.6`. DUCKDB_LEGACY, when set (flip
+          # day, see above), is exempt too.
           #
           # A version literal is exempt ONLY on a line that declares a version: a
           # `duckdb_version:` / `duckdb_commit:` / `ci_tools_version:` input, or one
-          # of this job's own DUCKDB_* constants. Exempting by VALUE alone left every
-          # other line unchecked, so a stale `v1.5.6` in a CLI download URL or an
-          # artifact name passed the gate. A wrong artifact name fails loudly at
-          # download; a wrong CLI URL silently tests against the wrong DuckDB.
+          # of this job's own DUCKDB_* constants, and then only for that constant's
+          # own value (by indirection, so a repo's extra DUCKDB_* names need no edit
+          # here). Exempting by VALUE alone left every other line unchecked, so a
+          # stale `v1.5.6` in a CLI download URL or an artifact name passed the gate.
+          # A wrong artifact name fails loudly at download; a wrong CLI URL silently
+          # tests against the wrong DuckDB.
           decl_re='^[[:space:]]*(duckdb_version|duckdb_commit|ci_tools_version|DUCKDB_[A-Z_]+):[[:space:]]'
           ver_re='v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc|dev)[0-9.]*)?'
           bad=0
           while IFS=: read -r lineno line; do
             printf '%s\n' "$line" | grep -qE '^[[:space:]]*#' && continue
-            printf '%s\n' "$line" | grep -qE '^[[:space:]]*-?[[:space:]]*uses:' && continue
+            if printf '%s\n' "$line" | grep -qE '^[[:space:]]*-?[[:space:]]*uses:' \
+               && ! printf '%s\n' "$line" | grep -qE 'duckdb/extension-ci-tools'; then
+              continue
+            fi
             is_decl=0
             printf '%s\n' "$line" | grep -qE "$decl_re" && is_decl=1
+            own_name=$(printf '%s\n' "$line" | sed -n 's/^[[:space:]]*\(DUCKDB_[A-Z_]*\):.*/\1/p')
             for v in $(printf '%s\n' "$line" | grep -oE "$ver_re" || true); do
               if [ "$is_decl" = 1 ]; then
+                if [ -n "$own_name" ]; then
+                  eval "own_val=\${$own_name-}"
+                  [ -n "$own_val" ] && [ "$v" = "$own_val" ] && continue
+                fi
                 [ "$v" = "$DUCKDB_VERSION" ] && continue
                 [ "$v" = "$DUCKDB_VARIANT" ] && continue
                 [ "$v" = "$DUCKDB_NEXT" ] && continue
                 [ -n "$DUCKDB_LEGACY" ] && [ "$v" = "$DUCKDB_LEGACY" ] && continue
               fi
-              echo "::error::line ${lineno}: ${line} -- a DuckDB version literal outside a version declaration, or not one of the declared versions: derive it from the DUCKDB_* constants rather than hardcoding it"
+              echo "::error::line ${lineno}: ${line} -- a DuckDB version literal outside a version declaration, or not that declaration's own value: derive it from the DUCKDB_* constants rather than hardcoding it"
               bad=1
             done
           done < <(grep -nE "$ver_re" "$wf" || true)
@@ -146,8 +159,13 @@ jobs:
             printf '%s\n' "$line" | grep -qE '^[[:space:]]*vcpkg_commit:' && continue
             is_decl=0
             printf '%s\n' "$line" | grep -qE "$decl_re" && is_decl=1
+            own_name=$(printf '%s\n' "$line" | sed -n 's/^[[:space:]]*\(DUCKDB_[A-Z_]*\):.*/\1/p')
             for h in $(printf '%s\n' "$line" | grep -oE '[0-9a-f]{40}' || true); do
               if [ "$is_decl" = 1 ]; then
+                if [ -n "$own_name" ]; then
+                  eval "own_val=\${$own_name-}"
+                  [ -n "$own_val" ] && [ "$h" = "$own_val" ] && continue
+                fi
                 [ "$h" = "$DUCKDB_COMMIT" ] && continue
                 [ "$h" = "$DUCKDB_NEXT_COMMIT" ] && continue
               fi
