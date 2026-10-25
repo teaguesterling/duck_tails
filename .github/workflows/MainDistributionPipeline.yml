@@ -196,16 +196,19 @@ jobs:
   # the flip this same job was the forward-looking leg; after it, the branch tip is
   # one step past the tag the stable job ships.
   #
-  # KNOWN RED at the flip, upstream and not this repo: the cyanoptera tip now
-  # reports v2.0.1-alpha50125, and every `require duck_tails` fails with
-  # `Extension ".../repository/v2.0.1-alpha50125/linux_amd64/duck_tails.duckdb_extension"
-  # not found` (PR #72's run 40212481885). duckdb_webbed's identical leg fails the
-  # same way. Kept gating rather than silenced: red here is the registry's own next
-  # build being broken, which is the signal the job exists for.
+  # KNOWN RED, and avoidable from this side: with the BRANCH NAME as
+  # duckdb_version, ci-tools resolves the tip's staged version
+  # (v2.0.1-alpha50125) but keeps it local to ci_phase.py instead of exporting it
+  # (extension-ci-tools scripts/ci_phase.py, the STAGED_DUCKDB_VERSION_PATTERN
+  # branch), so the extension's version stamp and the linked library disagree and
+  # every `require duck_tails` fails: `Extension ".../repository/v2.0.1-alpha50125/
+  # linux_amd64/duck_tails.duckdb_extension" not found` (PR #72's run 40212481885).
+  # A release-shaped duckdb_version is taken as given and avoids it; which form
+  # (a pinned staged pair, or a floating label) is pending Teague's fleet ruling.
   duckdb-next-build:
-    # Name kept: the check has carried it since this was the canary. It is the
-    # build_next.yml line, not DuckDB main.
-    name: Build extension binaries (duckdb main canary)
+    # Renamed from "duckdb main canary": its input is v2.0-cyanoptera, not DuckDB
+    # main. No branch protection keys on check names (measured 2026-10-25).
+    name: Build extension binaries (DuckDB next, v2.0-cyanoptera)
     uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@main
     # Gated to run once, not twice, per PR: a push to a PR branch fires both a
     # push run and a pull_request run for the same commit, so an ungated job
