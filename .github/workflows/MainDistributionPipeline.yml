@@ -229,9 +229,9 @@ jobs:
       ci_tools_version: main
       extension_name: duck_tails
       # wasm: libgit2 (the extension's core dependency) has no wasm build.
-      # windows_amd64(_mingw): excluded for this repo -- the git:// LFS object
-      # transport this extension is built around is unsupported on Windows, so
-      # Windows builds/tests are not maintained here.
+      # Windows is built and tested. Only Git LFS is out of scope there (Teague,
+      # 2026-10-25): git_lfs_local_cache.test is the one `require notwindows` file,
+      # so a Windows leg reports exactly 1 skip. More skips than that is a finding.
       exclude_archs: 'wasm_mvp;wasm_eh;wasm_threads'
       # Fixtures: test/Makefile.inc hooks `test_setup` onto both the
       # test_<type> targets this runner uses and the test_<type>_internal ones
