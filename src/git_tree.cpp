@@ -116,9 +116,9 @@ static string oid_to_hex(const git_oid *oid) {
 
 static string BuildGitFileUri(const string &repo_path, const string &file_path, const string &commit_hash) {
 	if (file_path.empty()) {
-		return "git://" + repo_path + "@" + commit_hash;
+		return "git://" + repo_path + "?ref=" + commit_hash;
 	}
-	return "git://" + repo_path + "/" + file_path + "@" + commit_hash;
+	return "git://" + repo_path + "/" + file_path + "?ref=" + commit_hash;
 }
 
 static string ExtractFileExtension(const string &path) {
@@ -401,7 +401,7 @@ static void ProcessWorkdirTree(git_repository *repo, const string &repo_path, co
 					row.commit_hash = ""; // NULL for WORKDIR
 					row.tree_hash = "";   // NULL for WORKDIR
 					row.ref = "WORKDIR";
-					row.git_uri = "git://" + repo_path + "/" + row.file_path + "@WORKDIR";
+					row.git_uri = "git://" + repo_path + "/" + row.file_path + "?ref=WORKDIR";
 					rows.push_back(std::move(row));
 				}
 
@@ -443,7 +443,7 @@ static void ProcessWorkdirTree(git_repository *repo, const string &repo_path, co
 				}
 
 				GitTreeRow row;
-				row.git_uri = "git://" + repo_path + "/" + file_path + "@WORKDIR";
+				row.git_uri = "git://" + repo_path + "/" + file_path + "?ref=WORKDIR";
 				row.repo_path = repo_path;
 				row.file_path = file_path;
 				row.file_ext = ExtractFileExtension(file_path);
@@ -520,7 +520,7 @@ static void ProcessIndexTree(git_repository *repo, const string &repo_path, cons
 		}
 
 		GitTreeRow row;
-		row.git_uri = "git://" + repo_path + "/" + file_path + "@STAGED";
+		row.git_uri = "git://" + repo_path + "/" + file_path + "?ref=STAGED";
 		row.repo_path = repo_path;
 		row.file_path = file_path;
 		row.file_ext = ExtractFileExtension(file_path);

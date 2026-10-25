@@ -83,7 +83,7 @@ SELECT COUNT(*) FROM glob('git://test/tmp/staged-glob-repo@STAGED/src/[!m]*.py')
 
 # An exact path names exactly that file...
 query I
-SELECT file LIKE '%/staged-glob-repo/src/util.py@STAGED' FROM glob('git://test/tmp/staged-glob-repo/src/util.py@STAGED');
+SELECT file LIKE '%/staged-glob-repo/src/util.py?ref=STAGED' FROM glob('git://test/tmp/staged-glob-repo/src/util.py@STAGED');
 ----
 true
 

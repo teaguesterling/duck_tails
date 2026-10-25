@@ -19,7 +19,7 @@ SELECT git_uri, mode, kind, is_text, encoding, size_bytes > 0 as has_size, trunc
        text IS NOT NULL as has_text, blob IS NULL as no_blob
 FROM git_read('git://test/tmp/main-repo/README.md@HEAD')
 ----
-git://test/tmp/main-repo/README.md@HEAD	33188	file	true	utf8	true	false	true	true
+git://test/tmp/main-repo/README.md?ref=HEAD	33188	file	true	utf8	true	false	true	true
 
 # Test git_read with non-existent file (should throw exception)
 statement error

@@ -18,7 +18,7 @@ namespace duckdb {
 
 static string ConstructGitUri(const string &repo_path, const string &file_path, const string &commit_ref) {
 	if (file_path.empty()) {
-		return "git://" + repo_path + "@" + commit_ref;
+		return "git://" + repo_path + "?ref=" + commit_ref;
 	}
 
 	// Normalize paths to avoid double slashes
@@ -35,7 +35,7 @@ static string ConstructGitUri(const string &repo_path, const string &file_path, 
 		normalized_file.erase(0, 1);
 	}
 
-	return "git://" + normalized_repo + "/" + normalized_file + "@" + commit_ref;
+	return "git://" + normalized_repo + "/" + normalized_file + "?ref=" + commit_ref;
 }
 
 //===--------------------------------------------------------------------===//
@@ -107,6 +107,41 @@ static void GitUriFunction(DataChunk &args, ExpressionState &state, Vector &resu
 
 		result_data[i] = StringVector::AddString(result, uri);
 	}
+}
+
+//===--------------------------------------------------------------------===//
+// git_canonicalize() Scalar Function - the CanonicalizePath rewrite, in SQL
+//===--------------------------------------------------------------------===//
+
+static void GitCanonicalizeFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+	UnifiedVectorFormat uri_format;
+	CompatToUnifiedFormat(args.data[0], args.size(), uri_format);
+	auto uri_data = UnifiedVectorFormat::GetData<string_t>(uri_format);
+
+	result.SetVectorType(VectorType::FLAT_VECTOR);
+	auto result_data = CompatFlatDataMutable<string_t>(result);
+	for (idx_t i = 0; i < args.size(); i++) {
+		auto idx = uri_format.sel->get_index(i);
+		if (!uri_format.validity.RowIsValid(idx)) {
+			FlatVector::SetNull(result, i, true);
+			continue;
+		}
+		result_data[i] = StringVector::AddString(result, GitPath::Canonicalize(uri_data[idx].GetString()));
+	}
+}
+
+void RegisterGitCanonicalizeFunction(ExtensionLoader &loader) {
+	auto func =
+	    ScalarFunction("git_canonicalize", {LogicalType::VARCHAR}, LogicalType::VARCHAR, GitCanonicalizeFunction);
+	CreateScalarFunctionInfo info(std::move(func));
+	info.on_conflict = OnCreateConflict::ALTER_ON_CONFLICT;
+	FunctionDescription desc;
+	desc.parameter_names = {"uri"};
+	desc.description = "Rewrite a deprecated git://path@rev URI into the canonical git://path?ref=rev form.";
+	desc.examples = {"git_canonicalize('git://README.md@HEAD')"};
+	desc.categories = {"git"};
+	info.descriptions.push_back(desc);
+	loader.RegisterFunction(std::move(info));
 }
 
 void RegisterGitUriFunction(ExtensionLoader &loader) {
