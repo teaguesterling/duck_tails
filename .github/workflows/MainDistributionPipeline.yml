@@ -136,14 +136,22 @@ jobs:
           # The commit appears in duckdb_commit: inputs, which the version scan above
           # cannot see, so a commit bump could leave a stale sha behind. Any 40-hex
           # literal outside comments, `uses:` pins and `vcpkg_commit:` must be it.
+          # Scoped like the version scan above: the commit exemptions apply ONLY on a
+          # declaration line (decl_re), so a declared sha written into a cache key or
+          # a pinned URL is flagged rather than passed. A legitimate 40-hex literal on
+          # some other kind of line needs its own explicit skip here, with a reason.
           while IFS=: read -r lineno line; do
             printf '%s\n' "$line" | grep -qE '^[[:space:]]*#' && continue
             printf '%s\n' "$line" | grep -qE '^[[:space:]]*-?[[:space:]]*uses:' && continue
             printf '%s\n' "$line" | grep -qE '^[[:space:]]*vcpkg_commit:' && continue
+            is_decl=0
+            printf '%s\n' "$line" | grep -qE "$decl_re" && is_decl=1
             for h in $(printf '%s\n' "$line" | grep -oE '[0-9a-f]{40}' || true); do
-              [ "$h" = "$DUCKDB_COMMIT" ] && continue
-              [ "$h" = "$DUCKDB_NEXT_COMMIT" ] && continue
-              echo "::error::line ${lineno}: ${line} -- a commit literal that is not the registry default ${DUCKDB_COMMIT}: derive it from the pinned commit or bump it"
+              if [ "$is_decl" = 1 ]; then
+                [ "$h" = "$DUCKDB_COMMIT" ] && continue
+                [ "$h" = "$DUCKDB_NEXT_COMMIT" ] && continue
+              fi
+              echo "::error::line ${lineno}: ${line} -- a commit literal outside a version declaration, or not one of the declared commits: derive it from the DUCKDB_* constants rather than hardcoding it"
               bad=1
             done
           done < <(grep -nE '[0-9a-f]{40}' "$wf" || true)
