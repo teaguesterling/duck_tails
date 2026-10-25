@@ -83,7 +83,7 @@ Duck Tails supports:
 
 - **Linux** (x86_64, aarch64)
 - **macOS** (x86_64, Apple Silicon)
-- **Windows** (coming soon)
+- **Windows** (x86_64; Git LFS files are not supported)
 
 ## Getting Help
 
