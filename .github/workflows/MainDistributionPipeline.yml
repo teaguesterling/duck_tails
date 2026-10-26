@@ -229,9 +229,10 @@ jobs:
           echo "duckdb-pin: OK, pin ${have:0:10} == ${DUCKDB_COMMIT:0:10} (${DUCKDB_VERSION}); jobs ship it and ${DUCKDB_VARIANT}; ${mode}" | tee -a "$summary"
 
   # THE NEXT LINE: the v2.0-cyanoptera tip, RESOLVED at run time rather than
-  # pinned (fleet recipe "promote plus resolve", Teague 2026-10-25; copied from
-  # plinking_duck #73). duckdb_commit must be a hex sha -- DuckDB's CMake rejects
-  # a ref name with `Invalid DuckDB commit` -- so the tip is read with ls-remote.
+  # pinned (fleet recipe "promote plus resolve", Teague 2026-10-25; the resolve
+  # step is copied verbatim from plinking_duck #74, so every repo carries the same
+  # code). duckdb_commit must be a hex sha -- DuckDB's CMake rejects a ref name
+  # with `Invalid DuckDB commit` -- so the resolver walks the branch by sha.
   # duckdb_version must be the commit's STAGED version, not the branch name: with
   # the branch name ci-tools downloads the staged prebuilt but stamps the branch
   # name into the extension, the two disagree, and every `require duck_tails`
@@ -250,16 +251,69 @@ jobs:
       commit: ${{ steps.resolve.outputs.commit }}
       version: ${{ steps.resolve.outputs.version }}
     steps:
+      # WALK BACK FROM THE TIP to the newest commit that duckdb-staging actually
+      # built. Resolving the tip alone is what this job used to do, and it is red
+      # whenever staging lags -- measured 2026-10-26: of the 8 newest cyanoptera
+      # commits, only 2 had a staged build, and the tip was not one of them:
+      #
+      #   af2d380a19  404      <- tip
+      #   99b013ad36  404
+      #   c4d7b8bd7e  200  v2.0.1-alpha50398
+      #   defed5fd79  404
+      #   3ea22a8bc3  404
+      #   bb5bdadda4  200  v2.0.1-alpha50125
+      #
+      # So the premise "the tip has a staged build" is false most of the time. The
+      # walk keeps what the resolver was for -- no manual bump, and a version that
+      # matches the prebuilt libduckdb the build will download -- while taking the
+      # newest commit that can actually be built. It still fails loudly when NO
+      # commit in range is staged, which is a real staging outage rather than lag.
+      # Teague ruled the SHAPE (walk back to the newest staged commit). The CAP is
+      # fleet-ci-plan-a's (plinking_duck #74), and unlike the two invented values before it (25, then the
+      # coordinator's 50) this one is measured.
+      #
+      # Staging does not keep a trailing window of recent builds; it builds SOME
+      # commits and skips runs of others. Probing the newest 60 commits found only
+      # 2 staged, with a run of 54 CONSECUTIVE unstaged commits spanning just 0.8
+      # days -- while a staged build 3.1 days old was still being served. Age does
+      # not explain it, so a burst of commits can get one build for the whole burst.
+      #
+      # That makes the run length the thing the cap must clear, and 50 does not
+      # clear it: on 2026-10-23 around 10:13, when 420d03f67 was the tip, a walk of
+      # depth 50 would have found nothing and failed. 150 gives roughly 3x the
+      # worst run measured. It costs nothing in the normal case, because the loop
+      # breaks at the first staged commit -- today the 3rd probe.
       - id: resolve
+        shell: bash
         run: |
-          commit=$(git ls-remote https://github.com/duckdb/duckdb.git refs/heads/v2.0-cyanoptera | cut -f1)
-          [ -n "$commit" ] || { echo "::error::could not resolve duckdb v2.0-cyanoptera"; exit 1; }
-          version=$(curl -sSfL "https://duckdb-staging.duckdb.org/${commit:0:10}/latest_alpha_version.txt" | tr -d '[:space:]') || version=
-          if ! [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|rc|dev)[0-9]+)?$ ]]; then
-            echo "::error::no staged DuckDB version for v2.0-cyanoptera at $commit (got '$version')"
+          set -euo pipefail
+          DEPTH=150
+          tip=$(git ls-remote https://github.com/duckdb/duckdb.git refs/heads/v2.0-cyanoptera | cut -f1)
+          [ -n "$tip" ] || { echo "::error::could not resolve duckdb v2.0-cyanoptera"; exit 1; }
+
+          tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+          git clone --quiet --filter=blob:none --no-checkout --depth "$DEPTH" \
+              --branch v2.0-cyanoptera https://github.com/duckdb/duckdb.git "$tmp/duckdb"
+
+          commit=""; version=""; behind=0
+          for sha in $(git -C "$tmp/duckdb" log --format=%H -n "$DEPTH"); do
+            v=$(curl -sSfL "https://duckdb-staging.duckdb.org/${sha:0:10}/latest_alpha_version.txt" 2>/dev/null | tr -d '[:space:]') || { behind=$((behind+1)); continue; }
+            if [[ "$v" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|rc|dev)[0-9]+)?$ ]]; then
+              commit="$sha"; version="$v"; break
+            fi
+            behind=$((behind+1))
+          done
+
+          if [ -z "$commit" ]; then
+            echo "::error::no staged DuckDB build for v2.0-cyanoptera in its last $DEPTH commits (tip $tip)"
             exit 1
           fi
-          echo "v2.0-cyanoptera -> $commit, version $version"
+
+          echo "v2.0-cyanoptera tip is $tip"
+          echo "resolved $commit, version $version ($behind commit(s) behind the tip)"
+          if [ "$behind" -gt 0 ]; then
+            echo "::notice::the v2.0-cyanoptera tip ($tip) has no staged build; using $commit ($version), $behind commit(s) back"
+          fi
           echo "commit=$commit" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
