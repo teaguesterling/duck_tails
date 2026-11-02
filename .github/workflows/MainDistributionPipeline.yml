@@ -348,6 +348,80 @@ jobs:
       # v1.5-variegata the variable is silently ignored -- hence `make test-require`.
       test_config: '{"test_env_variables": {"T": "--test-flags \"--require duck_tails\" \"test/*\""}}'
 
+  # THE CANARY: DuckDB main, resolved per run, and it RUNS THE TESTS.
+  #
+  # duck_tails had no main canary at all. The two obvious ways to build main both
+  # fail, and both were measured on sibling repos before this shape was chosen:
+  #
+  #   duckdb_version: main  -- `main` is also the checkout ref, so the engine
+  #     stamps NormalizeVersionTag("main") as `vmain`. A version with no
+  #     pre-release suffix is treated as a release, the stamp never matches the
+  #     extension's, every load is refused, and every test SKIPS behind a green
+  #     check. duckdb_webbed measured `0 passed, 130 skipped` that way.
+  #   duckdb_commit: main  -- DuckDB's CMake wants 10-64 hex and dies at
+  #     configure with `Invalid DuckDB commit 'main'` (job 121265722800).
+  #
+  # A third shape defeats both: resolve main's tip to a TRUE PAIR, the real hex
+  # HEAD plus the version duckdb's own CMake computes for a dev build,
+  # `v<release_version.txt>.0-dev<rev-list --count>`. The `-dev` suffix is what
+  # stops NormalizeVersionTag treating it as a release, and the string stays
+  # inside ci_phase.py's STAGED_DUCKDB_VERSION_PATTERN. Proven on duckdb_webbed,
+  # run 41145603281: `ran tests: 131 passed, 0 skipped` at v2.1.0-dev91066.
+  #
+  # ADVISORY. main breaks for reasons that are not ours, so this leg must never
+  # gate a merge; keep it out of the required checks.
+  duckdb-main-ref:
+    name: Canary build — resolve DuckDB main
+    # NOT on pull_request, unlike duckdb-next-ref above. Staging has no prebuilt
+    # for a main commit, so ci_phase.py's lookup 404s, the caller falls back, and
+    # ci-tools builds DuckDB from source -- about 84 minutes. Affordable once per
+    # push to main; not once per PR commit.
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    outputs:
+      commit: ${{ steps.resolve.outputs.commit }}
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+          # Commits only, and NOT --filter=blob:none: `rev-list --count` needs the
+          # whole commit history, only the trees are skippable.
+          git clone --quiet --filter=tree:0 --no-checkout --single-branch --branch main \
+              https://github.com/duckdb/duckdb.git "$tmp/duckdb"
+          commit=$(git -C "$tmp/duckdb" rev-parse HEAD)
+          release=$(git -C "$tmp/duckdb" show HEAD:scripts/ci/release_version.txt | tr -d '[:space:]')
+          count=$(git -C "$tmp/duckdb" rev-list --count HEAD)
+          version="v${release}.0-dev${count}"
+          if ! [[ "$version" =~ ^v[0-9]+\.[0-9]+\.0-dev[0-9]+$ ]]; then
+            echo "::error::could not build a dev version for duckdb main at $commit (got '$version')"
+            exit 1
+          fi
+          echo "duckdb main -> $commit, version $version"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  duckdb-main-canary:
+    name: Canary build — DuckDB main (advisory)
+    needs: duckdb-main-ref
+    uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@main
+    with:
+      duckdb_version: ${{ needs.duckdb-main-ref.outputs.version }}
+      duckdb_commit: ${{ needs.duckdb-main-ref.outputs.commit }}
+      ci_tools_version: main
+      extension_name: duck_tails
+      # Same exclusion as every other leg here: libgit2, the extension's core
+      # dependency, has no wasm build.
+      exclude_archs: 'wasm_mvp;wasm_eh;wasm_threads'
+      # The guard is what makes this leg measurable at all. Without `--require
+      # duck_tails` a failed load is a silent skip and the leg reports success
+      # over nothing. The Windows leg reports exactly 1 skip
+      # (git_lfs_local_cache.test is the one `require notwindows` file); more
+      # skips than that is a finding, not noise.
+      test_config: '{"test_env_variables": {"T": "--test-flags \"--require duck_tails\" \"test/*\""}}'
+
   # The registry default line: the same commit, version and ci-tools branch as
   # community-extensions' build.yml. Artifacts are named from duckdb_version, so
   # they land as `duck_tails-v2.0.0-extension-<arch>`. Since
