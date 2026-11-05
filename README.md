@@ -366,7 +366,7 @@ All new features should include comprehensive tests. Our test suite is designed 
 
 ## 📜 License
 
-[License details to be added]
+Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 
 ## 🙏 Acknowledgments
 
