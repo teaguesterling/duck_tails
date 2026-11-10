@@ -15,8 +15,11 @@ The `path` component can be:
 The `?ref=` part is optional. `git://README.md` names `README.md` at `HEAD`.
 
 Because the revision is not part of the path, the path ends with the file name.
-A reader can get the file extension with an ordinary `?`/`#` cut and needs no
-knowledge of git.
+To get the file extension, a reader cuts at the first `?ref=` and takes the
+last path component. A generic `?`/`#` cut is wrong for git URIs: `#`, and a
+`?` not followed by `ref=`, can be part of the file name (`git://notes#1.md`,
+`git://data/file?.csv`). duckdb_panduck#149 and duckdb_markdown#107 were both
+this defect.
 
 ### Deprecated: `@revision`
 
@@ -68,8 +71,9 @@ After repository discovery, the remaining path becomes the file path:
   git table functions, the same as the deprecated `git://README.md@`. DuckDB's
   readers (`read_text`, `read_csv`) reject an empty revision in both forms.
 - Do not combine the two forms. In `git://a.md@HEAD?ref=v1.0` the path is the
-  file name `a.md@HEAD`, so the URI fails with a file-not-found error unless a
-  file with that exact name exists.
+  file name `a.md@HEAD`, so the URI names no file unless a file with that exact
+  name exists. `git_read` and `read_csv` raise a not-found error. `read_text`
+  returns no rows, as it does for any missing file on DuckDB v2.0.
 
 ### Revision in the deprecated `@` form
 - The revision follows the **last** `@` that is not followed by `{`, so reflog
